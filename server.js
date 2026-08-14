@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.4
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.5
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -7,10 +7,12 @@
 //  2. Reply ก่อน ถ้า token หมดอายุ -> fallback เป็น Push
 //  3. จำบทสนทนาต่อเนื่องผ่าน Dify conversations API (ไม่ต้องมี DB)
 //  4. หน้าแอดมิน /admin ดีไซน์แบบ LINE OA Manager + ปุ่ม ⏸/▶ หยุด/เปิดบอทรายแชท
-//  5. v2.4: แชทเก่าเก็บถาวรลงดิสก์ (Railway Volume ที่ /data) — redeploy แล้วไม่หาย
+//  5. แชทเก่าเก็บถาวรลงดิสก์ (Railway Volume ที่ /data) — redeploy แล้วไม่หาย
 //     + Real-time: แชทใหม่เด้งขึ้นเองทันทีผ่าน SSE ไม่ต้องกด refresh
-//     + ประวัติเก็บ 200 ข้อความ/แชท
-//  6. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+//  6. v2.5: ช่องพิมพ์ตอบลูกค้าจากหน้าแอดมินได้เลย (ส่งในนาม OA ผ่าน Push API)
+//     ⚠️ ข้อความที่แอดมินส่งจากหน้านี้ใช้โควต้า Push รายเดือนของ LINE OA
+//        (บอทตอบเองใช้ Reply API ไม่กินโควต้า) ถ้าจะคุยยาวๆ ใช้ LINE OA Manager ตามเดิม
+//  7. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -409,8 +411,15 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .user .bub { background: #f1f2f4; border-top-left-radius: 4px; }
   .bot .bub { background: #cce4ff; border-top-right-radius: 4px; }
   .mtime { font-size: 10.5px; color: #98a2ad; flex: none; padding-bottom: 2px; }
+  .bot .bub.ab { background: #d4f5dd; }
   .chat-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #b3bcc5; gap: 10px; }
   .chat-empty .big { font-size: 44px; }
+  .composer { display: none; gap: 8px; padding: 10px 14px; border-top: 1px solid #e3e6ea; background: #fff; align-items: flex-end; }
+  .composer.on { display: flex; }
+  .composer textarea { flex: 1; resize: none; border: 1px solid #d8dde3; border-radius: 18px; padding: 9px 14px; font-size: 14px; font-family: inherit; line-height: 1.45; max-height: 110px; background: #fff; color: #1f2329; outline: none; }
+  .composer textarea:focus { border-color: #06c755; }
+  .sendbtn { background: #06c755; color: #fff; border-radius: 50%; width: 40px; height: 40px; font-size: 17px; flex: none; }
+  .sendbtn:disabled { opacity: .45; cursor: default; }
 
   @media (max-width: 760px) {
     .app.on { display: block; }
@@ -442,7 +451,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
       <button class="rf" id="refreshbtn">⟳</button>
     </div>
     <div class="items" id="items"></div>
-    <div class="side-note"><span id="ps"></span>🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · แสดงเฉพาะข้อความ ลูกค้า↔บอท</div>
+    <div class="side-note"><span id="ps"></span>🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · พิมพ์ตอบจากหน้านี้ = ส่งในนามน้องลัดดา (ใช้โควต้า Push ของ LINE OA)</div>
   </div>
   <div class="main" id="main">
     <div class="chat-head" id="chead">
@@ -456,6 +465,10 @@ const ADMIN_HTML = `<!DOCTYPE html>
     </div>
     <div class="msgs" id="msgs">
       <div class="chat-empty"><div class="big">💬</div><div>เลือกแชทจากรายการด้านซ้าย<br>เพื่อดูบทสนทนาและควบคุมบอท</div></div>
+    </div>
+    <div class="composer" id="composer">
+      <textarea id="ta" rows="1" placeholder="พิมพ์ตอบลูกค้าในนามน้องลัดดา… (Enter = ส่ง, Shift+Enter = ขึ้นบรรทัดใหม่)"></textarea>
+      <button class="sendbtn" id="sendbtn" title="ส่ง">➤</button>
     </div>
   </div>
 </div>
@@ -639,7 +652,8 @@ function fetchHist(id) {
         var mav = s.pic ? '<img src="' + esc(s.pic) + '" alt="">' : (s.type === 'group' ? '👥' : '👤');
         h += '<div class="mrow user"><div class="mav">' + mav + '</div><div class="bub">' + esc(m.t) + '</div><div class="mtime">' + hhmm(m.at) + '</div></div>';
       } else {
-        h += '<div class="mrow bot"><div class="mtime">' + hhmm(m.at) + '</div><div class="bub">' + esc(m.t) + '</div></div>';
+        var isAdm = m.r === 'a';
+        h += '<div class="mrow bot"><div class="mtime">' + (isAdm ? '🧑‍💼 แอดมิน · ' : '🤖 ') + hhmm(m.at) + '</div><div class="bub' + (isAdm ? ' ab' : '') + '">' + esc(m.t) + '</div></div>';
       }
     }
     var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
@@ -656,8 +670,39 @@ function selectChat(id) {
   renderHead();
   document.getElementById('msgs').dataset.for = '';
   document.getElementById('msgs').innerHTML = '<div class="chat-empty"><div class="big">⏳</div></div>';
+  document.getElementById('composer').classList.add('on');
   fetchHist(id);
   document.getElementById('main').classList.add('show');
+}
+
+var sending = false;
+function autoGrow() {
+  var ta = document.getElementById('ta');
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 110) + 'px';
+}
+function doSend() {
+  var ta = document.getElementById('ta');
+  var btn = document.getElementById('sendbtn');
+  var t = ta.value.trim();
+  if (!t || !sel || sending) return;
+  sending = true;
+  btn.disabled = true;
+  api('/admin/api/send', { method: 'POST', body: JSON.stringify({ id: sel, text: t }) })
+    .then(function() {
+      ta.value = '';
+      autoGrow();
+      sending = false;
+      btn.disabled = false;
+      ta.focus();
+      fetchHist(sel);
+      load();
+    })
+    .catch(function() {
+      sending = false;
+      btn.disabled = false;
+      alert('ส่งไม่สำเร็จ — เช็คโควต้า Push รายเดือนของ LINE OA หรือ token');
+    });
 }
 
 document.getElementById('loginbtn').addEventListener('click', login);
@@ -676,6 +721,12 @@ document.getElementById('tglbtn').addEventListener('click', function() {
   api('/admin/api/mute', { method: 'POST', body: JSON.stringify({ id: sel, minutes: m }) })
     .then(function() { load(); })
     .catch(function(e) { alert(e.message); });
+});
+
+document.getElementById('sendbtn').addEventListener('click', doSend);
+document.getElementById('ta').addEventListener('input', autoGrow);
+document.getElementById('ta').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
 });
 
 if (KEY) load();
@@ -760,6 +811,30 @@ function handleAdmin(req, res, path, body) {
     return sendJson(res, 200, { ok: true, id, mutedUntil: s.mutedUntil, handoff: !!s.handoff });
   }
 
+  // แอดมินส่งข้อความหาลูกค้าในนาม OA (ใช้ Push API — กินโควต้ารายเดือน)
+  if (path === '/admin/api/send' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = data.id;
+    const text = String(data.text || '').trim().slice(0, 4900);
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    if (!text) return sendJson(res, 400, { ok: false, error: 'empty text' });
+    const s = sessions.get(id);
+    linePush(id, text).then((ok) => {
+      if (ok) {
+        pushHist(s, 'a', text);
+        s.lastText = text.slice(0, 120);
+        s.lastAt = Date.now();
+        markDirty();
+        broadcast();
+        console.log(`[admin-send] ${id.slice(0, 8)} len=${text.length}`);
+        return sendJson(res, 200, { ok: true });
+      }
+      return sendJson(res, 502, { ok: false, error: 'push failed' });
+    }).catch(() => sendJson(res, 502, { ok: false, error: 'push failed' }));
+    return;
+  }
+
   return sendJson(res, 404, { ok: false, error: 'not found' });
 }
 
@@ -782,7 +857,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.4, persist: persistOK, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.5, persist: persistOK, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -809,4 +884,4 @@ const server = http.createServer((req, res) => {
 });
 
 initPersist();
-server.listen(PORT, () => console.log(`line-dify-bridge v2.4 (persist=${persistOK} + SSE realtime) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v2.5 (send+persist=${persistOK} + SSE realtime) running on port ${PORT}`));
