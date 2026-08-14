@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.2
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.3
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -7,25 +7,24 @@
 //  2. ประมวลผลต่อเบื้องหลัง (เซิร์ฟเวอร์รันค้างตลอด ไม่มีลิมิตเวลา)
 //  3. Reply ก่อน ถ้า token หมดอายุ -> fallback เป็น Push
 //  4. จำบทสนทนาต่อเนื่องผ่าน Dify conversations API (ไม่ต้องมี DB)
-//  5. ระบบปิดเสียงบอท (mute) รายแชท:
-//     - ลูกค้าพิมพ์ "คุยกับแอดมิน" -> บอทเงียบ MUTE_MINUTES นาที + ติดธง "ลูกค้าขอแอดมิน"
+//  5. ระบบปิดเสียงบอท (mute) รายแชท + หน้าแอดมิน /admin ดีไซน์แบบ LINE OA Manager:
+//     - ลิสต์แชทซ้าย (รูปโปรไฟล์จริง + ข้อความล่าสุด + เวลา), หน้าต่างแชทขวาแบบ bubble
+//     - ลูกค้าพิมพ์ "คุยกับแอดมิน" -> บอทเงียบ MUTE_MINUTES นาที + ธง "ลูกค้าขอแอดมิน"
 //     - ลูกค้าพิมพ์ "คุยกับบอท" -> บอทกลับมาตอบ
-//     - หน้าแอดมิน /admin: เห็นแชท ลูกค้า↔บอท ย้อนหลัง (30 ข้อความ/แชท),
-//       ปุ่ม ⏸ หยุดบอท (แอดมินตอบเอง) / ▶ เปิดบอทตอบต่อ รายแชท
+//     - ปุ่ม ⏸ หยุดบอท (แอดมินตอบเอง) / ▶ เปิดบอท ที่หัวแชท
 //  6. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
 //  LINE_CHANNEL_ACCESS_TOKEN  จาก LINE Developers -> Messaging API
 //  DIFY_API_KEY               จาก Dify -> แอปน้องลัดดา -> API Access (app-...)
-//  ADMIN_KEY                  รหัสผ่านหน้าแอดมิน (ตั้งเองอะไรก็ได้ อังกฤษ/ตัวเลข)
+//  ADMIN_KEY                  รหัสผ่านหน้าแอดมิน (อังกฤษ/ตัวเลข)
 //  MUTE_MINUTES               (ไม่บังคับ) นาทีที่บอทเงียบเมื่อลูกค้าขอแอดมิน ค่าเริ่ม 60
-//  PORT                       Railway ตั้งให้อัตโนมัติ ไม่ต้องเพิ่มเอง
+//  PORT                       Railway ตั้งให้อัตโนมัติ
 //
 // หมายเหตุ:
-//  - ประวัติแชท/สถานะปิดเสียง เก็บในหน่วยความจำ -> redeploy แล้วรีเซ็ต
-//  - หน้าแอดมินเห็นเฉพาะข้อความที่ผ่านระบบนี้ (ลูกค้า + บอท)
-//    ข้อความที่แอดมินพิมพ์เองใน LINE OA Manager จะไม่แสดง (LINE ไม่ส่ง event มา)
+//  - ประวัติแชท/สถานะเก็บในหน่วยความจำ -> redeploy แล้วรีเซ็ต
+//  - หน้าแอดมินเห็นเฉพาะข้อความ ลูกค้า <-> บอท (ที่แอดมินพิมพ์ใน LINE OA ไม่แสดง)
 // ============================================================
 
 const http = require('http');
@@ -39,15 +38,15 @@ const DIFY_KEY = process.env.DIFY_API_KEY || '';
 const ADMIN_KEY = (process.env.ADMIN_KEY || '').trim();
 const MUTE_MINUTES = Math.max(1, parseInt(process.env.MUTE_MINUTES || '60', 10) || 60);
 const DIFY_BASE = 'https://api.dify.ai/v1';
-const FOREVER = 8640000000000000; // ค่า timestamp สูงสุดของ JS = ปิดจนกว่าจะเปิด
+const FOREVER = 8640000000000000;
 
-// ---------- ทะเบียนแชท + สถานะปิดเสียง + ประวัติ (in-memory) ----------
-const sessions = new Map(); // id -> {name,type,lastText,lastAt,mutedUntil,handoff,history}
+// ---------- ทะเบียนแชท + สถานะ + ประวัติ (in-memory) ----------
+const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history}
 
 function touchSession(id, type, text) {
   let s = sessions.get(id);
   if (!s) {
-    s = { name: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [] };
+    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [] };
     sessions.set(id, s);
     if (sessions.size > 500) {
       let oldestId = null, oldestAt = Infinity;
@@ -71,11 +70,14 @@ function fetchProfile(s, userId) {
   request('GET', 'https://api.line.me/v2/bot/profile/' + encodeURIComponent(userId), {
     Authorization: 'Bearer ' + CH_TOKEN
   }).then((r) => {
-    s.name = (r.status === 200 && r.data && r.data.displayName) ? String(r.data.displayName).slice(0, 60) : '';
+    if (r.status === 200 && r.data) {
+      s.name = String(r.data.displayName || '').slice(0, 60);
+      s.pic = String(r.data.pictureUrl || '').slice(0, 500);
+    } else { s.name = ''; }
   }).catch(() => { s.name = ''; });
 }
 
-// ---------- HTTP helper (ไม่ใช้ axios/fetch lib) ----------
+// ---------- HTTP helper ----------
 function request(method, url, headers, bodyObj) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
@@ -182,16 +184,16 @@ function wantsBot(t) {
   return UNMUTE_WORDS.some((w) => x.includes(w));
 }
 
-// ---------- Event processing (เบื้องหลัง หลัง ack แล้ว) ----------
+// ---------- Event processing ----------
 async function handleEvent(ev) {
   if (ev.type !== 'message' || !ev.message) return;
-  if (ev.deliveryContext && ev.deliveryContext.isRedelivery) return; // กัน event ยิงซ้ำ
+  if (ev.deliveryContext && ev.deliveryContext.isRedelivery) return;
 
   const src = ev.source || {};
   const userId = src.userId || 'unknown';
   const sessionId = src.groupId || src.roomId || userId;
   const stype = src.groupId ? 'group' : (src.roomId ? 'room' : 'user');
-  const pushTarget = src.groupId || src.roomId || userId; // push เข้ากลุ่มถ้าเป็นกลุ่ม
+  const pushTarget = src.groupId || src.roomId || userId;
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
@@ -201,15 +203,13 @@ async function handleEvent(ev) {
   const shown = ev.message.type === 'text' ? text : '(สติกเกอร์)';
   const s = touchSession(sessionId, stype, shown);
   pushHist(s, 'u', shown);
-  fetchProfile(s, userId); // ยิงเบื้องหลัง ไม่รอ
+  fetchProfile(s, userId);
 
   const now = Date.now();
 
-  // mute หมดเวลาแล้ว -> เคลียร์สถานะ
   if (s.mutedUntil && s.mutedUntil <= now) { s.mutedUntil = 0; s.handoff = false; }
 
   if (ev.message.type === 'text') {
-    // ลูกค้าขอกลับมาคุยกับบอท
     if (wantsBot(text)) {
       s.mutedUntil = 0;
       s.handoff = false;
@@ -217,7 +217,6 @@ async function handleEvent(ev) {
       await sendAnswer(s, ev, pushTarget, 'น้องลัดดากลับมาแล้วค่ะ 😊 สอบถามเรื่องสินค้าได้เลยนะคะ');
       return;
     }
-    // ลูกค้าขอคุยกับแอดมิน -> ปิดเสียงบอทชั่วคราว + ติดธงขอแอดมิน
     if (wantsAdmin(text)) {
       s.mutedUntil = now + MUTE_MINUTES * 60000;
       s.handoff = true;
@@ -228,7 +227,6 @@ async function handleEvent(ev) {
     }
   }
 
-  // แชทนี้ถูกปิดเสียงอยู่ -> บอทเงียบ ให้แอดมินตอบเอง
   if (s.mutedUntil > now) {
     console.log(`[muted] ${sessionId.slice(0, 8)} skip: ${String(text).slice(0, 40)}`);
     return;
@@ -241,7 +239,7 @@ async function handleEvent(ev) {
   await sendAnswer(s, ev, pushTarget, answer.slice(0, 4900));
 }
 
-// ---------- หน้าแอดมิน ----------
+// ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
 const ADMIN_HTML = `<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -249,85 +247,168 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>น้องลัดดา — ควบคุมบอท</title>
 <style>
-  :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: #0f1420; color: #e8ecf4; padding: 16px; max-width: 640px; margin: 0 auto; }
-  h1 { font-size: 18px; margin-bottom: 4px; }
-  .sub { color: #93a0b4; font-size: 12.5px; margin-bottom: 16px; }
-  .card { background: #1a2233; border: 1px solid #2a3550; border-radius: 12px; padding: 14px; margin-bottom: 10px; }
-  .card.ho { border-color: #c97d1e; box-shadow: 0 0 0 1px #c97d1e33; }
-  input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #2a3550; background: #0f1420; color: #e8ecf4; font-size: 15px; }
-  button { border: 0; border-radius: 10px; padding: 10px 14px; font-size: 13.5px; cursor: pointer; font-family: inherit; }
-  .primary { background: #2f6fed; color: #fff; width: 100%; margin-top: 10px; padding: 12px; font-size: 15px; }
-  .row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
-  .b-mute { background: #3a2a12; color: #ffb454; }
-  .b-on { background: #12321f; color: #4ade80; }
-  .name { font-weight: 600; font-size: 15px; }
-  .last { color: #93a0b4; font-size: 13px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { color: #6b7891; font-size: 11.5px; margin-top: 3px; }
-  .badge { display: inline-block; font-size: 11.5px; border-radius: 99px; padding: 2px 9px; margin-left: 6px; vertical-align: 1px; }
-  .on { background: #12321f; color: #4ade80; }
-  .off { background: #3a1620; color: #ff7a90; }
-  .hoff { background: #3a2a12; color: #ffb454; }
-  .empty { color: #6b7891; text-align: center; padding: 30px 10px; font-size: 14px; }
-  .note { color: #6b7891; font-size: 12px; margin-top: 14px; line-height: 1.6; }
-  #err { color: #ff7a90; font-size: 13px; margin-top: 8px; display: none; }
-  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-  .refresh { background: #223050; color: #9fb4d8; }
-  .chead { cursor: pointer; }
-  .chatbox { background: #0f1420; border: 1px solid #223050; border-radius: 10px; margin-top: 10px; padding: 10px; max-height: 320px; overflow-y: auto; }
-  .msg { margin-bottom: 8px; display: flex; flex-direction: column; }
-  .mu { align-items: flex-start; }
-  .mb { align-items: flex-end; }
-  .bub { max-width: 85%; padding: 8px 11px; border-radius: 12px; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
-  .mu .bub { background: #223050; }
-  .mb .bub { background: #14532d; }
-  .mt { font-size: 10.5px; color: #6b7891; margin-top: 2px; }
+  html, body { height: 100%; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #e9ebee; color: #1f2329; }
+  button { font-family: inherit; cursor: pointer; border: 0; }
+
+  /* ---------- login ---------- */
+  .login-wrap { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .login-card { background: #fff; border-radius: 14px; padding: 28px 24px; width: 100%; max-width: 380px; box-shadow: 0 6px 24px rgba(0,0,0,.08); text-align: center; }
+  .login-card .logo { font-size: 40px; margin-bottom: 8px; }
+  .login-card h1 { font-size: 17px; margin-bottom: 2px; }
+  .login-card .sub { color: #8a95a1; font-size: 12.5px; margin-bottom: 18px; }
+  .login-card input { width: 100%; padding: 12px 14px; border: 1px solid #d8dde3; border-radius: 10px; font-size: 15px; background: #fff; color: #1f2329; }
+  .login-card .go { width: 100%; margin-top: 12px; padding: 12px; border-radius: 10px; background: #06c755; color: #fff; font-size: 15px; font-weight: 600; }
+  #err { color: #e5484d; font-size: 13px; margin-top: 10px; display: none; }
+
+  /* ---------- app ---------- */
+  .app { display: none; height: 100dvh; max-width: 1280px; margin: 0 auto; background: #fff; box-shadow: 0 0 24px rgba(0,0,0,.06); }
+  .app.on { display: flex; }
+
+  /* list */
+  .side { width: 340px; flex: none; border-right: 1px solid #e3e6ea; display: flex; flex-direction: column; background: #fff; }
+  .side-head { padding: 13px 16px; border-bottom: 1px solid #e3e6ea; display: flex; align-items: center; justify-content: space-between; }
+  .side-head b { font-size: 16px; }
+  .cnt { display: inline-block; background: #06c755; color: #fff; font-size: 11px; border-radius: 99px; padding: 1px 7px; margin-left: 6px; vertical-align: 2px; }
+  .rf { background: #f1f3f5; color: #55606b; border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+  .items { flex: 1; overflow-y: auto; }
+  .item { display: flex; gap: 10px; padding: 11px 14px; cursor: pointer; border-bottom: 1px solid #f4f5f7; align-items: center; }
+  .item:hover { background: #f7f9fb; }
+  .item.sel { background: #eef4fb; }
+  .item.ho { background: #fff6e8; }
+  .item.ho.sel { background: #ffefd6; }
+  .av { width: 46px; height: 46px; border-radius: 50%; flex: none; background: #cfd8e3; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; position: relative; overflow: visible; }
+  .av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+  .stdot { position: absolute; right: -3px; bottom: -3px; font-size: 14px; line-height: 1; filter: drop-shadow(0 0 1px #fff); }
+  .icol { flex: 1; min-width: 0; }
+  .irow1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .iname { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .itime { font-size: 11px; color: #98a2ad; flex: none; }
+  .ilast { font-size: 12.5px; color: #8a95a1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+  .ilast.hotxt { color: #d97706; font-weight: 600; }
+  .side-note { padding: 9px 14px; border-top: 1px solid #eef0f2; font-size: 11px; color: #98a2ad; line-height: 1.7; }
+  .empty { text-align: center; color: #98a2ad; padding: 40px 16px; font-size: 13.5px; line-height: 1.8; }
+
+  /* chat */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #fff; }
+  .chat-head { padding: 9px 16px; border-bottom: 1px solid #e3e6ea; display: none; align-items: center; gap: 11px; background: #fff; }
+  .chat-head.on { display: flex; }
+  .backbtn { display: none; background: none; font-size: 24px; color: #55606b; padding: 0 6px 2px 0; }
+  .av.s { width: 38px; height: 38px; font-size: 16px; }
+  .hinfo { flex: 1; min-width: 0; }
+  .hname { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hstat { font-size: 11.5px; margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill { border-radius: 99px; padding: 1.5px 9px; font-size: 11px; font-weight: 600; }
+  .pill.g { background: #e6f9ee; color: #0a9a4a; }
+  .pill.r { background: #fdebec; color: #d33a41; }
+  .pill.o { background: #fff1dd; color: #d97706; }
+  .tgl { border-radius: 9px; padding: 9px 14px; font-size: 13px; font-weight: 700; flex: none; }
+  .tgl.stop { background: #fdebec; color: #d33a41; }
+  .tgl.start { background: #06c755; color: #fff; }
+  .msgs { flex: 1; overflow-y: auto; padding: 18px 18px 24px; background: #fff; }
+  .day { text-align: center; margin: 6px 0 14px; }
+  .day span { background: #eef0f3; color: #8a95a1; font-size: 11px; border-radius: 99px; padding: 3px 12px; }
+  .mrow { display: flex; margin-bottom: 13px; gap: 8px; align-items: flex-end; }
+  .mrow.user { justify-content: flex-start; }
+  .mrow.bot { justify-content: flex-end; }
+  .mav { width: 30px; height: 30px; border-radius: 50%; background: #cfd8e3; color: #fff; flex: none; display: flex; align-items: center; justify-content: center; font-size: 13px; overflow: hidden; }
+  .mav img { width: 100%; height: 100%; object-fit: cover; }
+  .bub { max-width: 62%; padding: 9px 13px; border-radius: 15px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .user .bub { background: #f1f2f4; border-top-left-radius: 4px; }
+  .bot .bub { background: #cce4ff; border-top-right-radius: 4px; }
+  .mtime { font-size: 10.5px; color: #98a2ad; flex: none; padding-bottom: 2px; }
+  .chat-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #b3bcc5; gap: 10px; }
+  .chat-empty .big { font-size: 44px; }
+
+  /* mobile */
+  @media (max-width: 760px) {
+    .app.on { display: block; }
+    .side { width: 100%; height: 100dvh; }
+    .main { position: fixed; inset: 0; background: #fff; transform: translateX(102%); transition: transform .18s ease; z-index: 5; }
+    .main.show { transform: none; }
+    .backbtn { display: block; }
+    .bub { max-width: 78%; }
+  }
 </style>
 </head>
 <body>
-<h1>🤖 น้องลัดดา — ควบคุมบอทรายแชท</h1>
-<div class="sub">แตะการ์ดเพื่อดูแชท · ⏸ หยุดบอทเมื่อจะตอบเอง · ▶ เปิดกลับเมื่อตอบเสร็จ</div>
 
-<div id="login" class="card">
-  <div style="margin-bottom:8px; font-size:14px;">ใส่รหัสแอดมิน (ADMIN_KEY)</div>
-  <input id="key" type="password" placeholder="รหัสแอดมิน" autocomplete="current-password">
-  <button class="primary" id="loginbtn">เข้าสู่ระบบ</button>
-  <div id="err"></div>
+<div id="login" class="login-wrap">
+  <div class="login-card">
+    <div class="logo">🤖</div>
+    <h1>น้องลัดดา — ควบคุมบอทรายแชท</h1>
+    <div class="sub">ใส่รหัสแอดมิน (ADMIN_KEY) เพื่อเข้าใช้งาน</div>
+    <input id="key" type="password" placeholder="รหัสแอดมิน" autocomplete="current-password">
+    <button class="go" id="loginbtn">เข้าสู่ระบบ</button>
+    <div id="err"></div>
+  </div>
 </div>
 
-<div id="app" style="display:none;">
-  <div class="topbar">
-    <div class="sub" style="margin:0;" id="count"></div>
-    <button class="refresh" id="refreshbtn">รีเฟรช ⟳</button>
+<div id="app" class="app">
+  <div class="side">
+    <div class="side-head">
+      <b>แชท<span class="cnt" id="count">0</span></b>
+      <button class="rf" id="refreshbtn">⟳</button>
+    </div>
+    <div class="items" id="items"></div>
+    <div class="side-note">🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · แสดงเฉพาะข้อความ ลูกค้า↔บอท ตั้งแต่เปิดระบบรอบนี้ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา</div>
   </div>
-  <div id="list"></div>
-  <div class="note">
-    🙋 การ์ดขอบส้ม = ลูกค้าพิมพ์ขอคุยกับแอดมิน (บอทหยุดให้แล้ว รอแอดมินไปตอบใน LINE OA)<br>
-    💬 หน้านี้เห็นเฉพาะข้อความ ลูกค้า ↔ บอท — ที่แอดมินพิมพ์ตอบใน LINE OA จะไม่แสดงที่นี่<br>
-    💡 ลูกค้าพิมพ์ "คุยกับแอดมิน" = บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" = บอทกลับมา<br>
-    ⚠️ ประวัติ/สถานะเก็บในหน่วยความจำ ถ้าระบบ redeploy จะเริ่มนับใหม่
+  <div class="main" id="main">
+    <div class="chat-head" id="chead">
+      <button class="backbtn" id="backbtn">‹</button>
+      <div class="av s" id="hav">👤</div>
+      <div class="hinfo">
+        <div class="hname" id="hname"></div>
+        <div class="hstat" id="hstat"></div>
+      </div>
+      <button class="tgl stop" id="tglbtn"></button>
+    </div>
+    <div class="msgs" id="msgs">
+      <div class="chat-empty"><div class="big">💬</div><div>เลือกแชทจากรายการด้านซ้าย<br>เพื่อดูบทสนทนาและควบคุมบอท</div></div>
+    </div>
   </div>
 </div>
 
 <script>
 var KEY = sessionStorage.getItem('nladda_key') || '';
 var timer = null;
-var open = {};
+var sel = null;
+var cache = [];
+var COLORS = ['#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
 
 function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-function ago(t) {
-  if (!t) return '-';
-  var m = Math.floor((Date.now() - t) / 60000);
-  if (m < 1) return 'เมื่อครู่';
-  if (m < 60) return m + ' นาทีที่แล้ว';
-  var h = Math.floor(m / 60);
-  if (h < 24) return h + ' ชม.ที่แล้ว';
-  return Math.floor(h / 24) + ' วันที่แล้ว';
+function colorOf(id) {
+  var n = 0;
+  for (var i = 0; i < id.length; i++) n = (n + id.charCodeAt(i)) % COLORS.length;
+  return COLORS[n];
 }
 
-function hhmm(t) { return new Date(t).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }); }
+function hhmm(t) { return new Date(t).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }).replace(':', '.') + ' น.'; }
+
+function listTime(t) {
+  if (!t) return '';
+  var d = new Date(t), now = new Date();
+  if (d.toDateString() === now.toDateString()) return hhmm(t);
+  var y = new Date(now.getTime() - 86400000);
+  if (d.toDateString() === y.toDateString()) return 'เมื่อวาน';
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+}
+
+function avatarHtml(s, cls) {
+  var inner;
+  if (s.type === 'group') inner = '👥';
+  else if (s.pic) inner = '<img src="' + esc(s.pic) + '" alt="">';
+  else {
+    var ch = (s.name && s.name !== '…') ? s.name.trim().charAt(0) : '👤';
+    inner = esc(ch);
+  }
+  var bg = (s.pic || s.type === 'group') ? '' : ' style="background:' + colorOf(s.id) + '"';
+  return '<div class="av ' + (cls || '') + '"' + bg + '>' + inner + '</div>';
+}
+
+function dispName(s) { return (s.name && s.name !== '…') ? s.name : (s.id.slice(0, 10) + '…'); }
 
 function login() {
   KEY = document.getElementById('key').value.trim();
@@ -350,97 +431,121 @@ function load(fromLogin) {
   api('/admin/api/list').then(function(d) {
     sessionStorage.setItem('nladda_key', KEY);
     document.getElementById('login').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
+    document.getElementById('app').classList.add('on');
     document.getElementById('mm').textContent = d.muteMinutes;
-    render(d.sessions);
-    for (var id in open) if (open[id]) fetchHist(id);
-    if (!timer) timer = setInterval(load, 10000);
+    cache = d.sessions;
+    renderList();
+    if (sel) { renderHead(); fetchHist(sel); }
+    if (!timer) timer = setInterval(load, 8000);
   }).catch(function(e) {
     if (fromLogin) { var el = document.getElementById('err'); el.style.display = 'block'; el.textContent = e.message; }
     sessionStorage.removeItem('nladda_key');
   });
 }
 
-function render(list) {
+function findSel() {
+  for (var i = 0; i < cache.length; i++) if (cache[i].id === sel) return cache[i];
+  return null;
+}
+
+function renderList() {
   var now = Date.now();
-  document.getElementById('count').textContent = 'แชททั้งหมด ' + list.length + ' รายการ';
-  if (!list.length) {
-    document.getElementById('list').innerHTML = '<div class="card empty">ยังไม่มีแชทเข้ามาหลังระบบเริ่มทำงาน<br>เมื่อลูกค้าทักไลน์ จะขึ้นรายการที่นี่</div>';
+  document.getElementById('count').textContent = cache.length;
+  if (!cache.length) {
+    document.getElementById('items').innerHTML = '<div class="empty">ยังไม่มีแชทเข้ามา<br>หลังระบบเริ่มทำงานรอบนี้<br>เมื่อลูกค้าทักไลน์จะขึ้นที่นี่</div>';
     return;
   }
   var h = '';
-  for (var i = 0; i < list.length; i++) {
-    var s = list[i];
+  for (var i = 0; i < cache.length; i++) {
+    var s = cache[i];
     var muted = s.mutedUntil > now;
-    var forever = s.mutedUntil >= 8000000000000000;
-    var badge = muted
-      ? '<span class="badge off">🔇 ' + (forever ? 'หยุดอยู่ · แอดมินตอบ' : 'หยุดถึง ' + hhmm(s.mutedUntil) + ' น.') + '</span>'
-      : '<span class="badge on">🔊 บอทตอบอยู่</span>';
-    var hobadge = (muted && s.handoff) ? '<span class="badge hoff">🙋 ลูกค้าขอแอดมิน</span>' : '';
-    var icon = s.type === 'group' ? '👥' : (s.type === 'room' ? '💬' : '👤');
-    var nm = s.name && s.name !== '…' ? s.name : (s.id.slice(0, 10) + '…');
-    var toggleBtn = muted
-      ? '<button class="b-on" data-id="' + s.id + '" data-m="0">▶ เปิดบอทตอบต่อ</button>'
-      : '<button class="b-mute" data-id="' + s.id + '" data-m="-1">⏸ หยุดบอท (แอดมินตอบเอง)</button>';
-    h += '<div class="card' + ((muted && s.handoff) ? ' ho' : '') + '">'
-      + '<div class="chead" data-open="' + s.id + '">'
-      + '<div class="name">' + icon + ' ' + esc(nm) + badge + hobadge + '</div>'
-      + '<div class="last">' + esc(s.lastText || '-') + '</div>'
-      + '<div class="meta">ข้อความล่าสุด ' + ago(s.lastAt) + ' · แตะเพื่อดู/ซ่อนแชท</div>'
-      + '</div>'
-      + '<div class="chatbox" id="cb-' + s.id + '" style="display:' + (open[s.id] ? 'block' : 'none') + '"></div>'
-      + '<div class="row">' + toggleBtn + '</div>'
-      + '</div>';
+    var isHo = muted && s.handoff;
+    var dot = muted ? '<span class="stdot">' + (isHo ? '🙋' : '🔇') + '</span>' : '';
+    var av = avatarHtml(s, '').replace('</div>', dot + '</div>');
+    h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isHo ? ' ho' : '') + '" data-id="' + s.id + '">'
+      + av
+      + '<div class="icol">'
+      + '<div class="irow1"><span class="iname">' + esc(dispName(s)) + '</span><span class="itime">' + listTime(s.lastAt) + '</span></div>'
+      + '<div class="ilast' + (isHo ? ' hotxt' : '') + '">' + (isHo ? '🙋 ขอคุยกับแอดมิน · ' : '') + esc(s.lastText || '-') + '</div>'
+      + '</div></div>';
   }
-  document.getElementById('list').innerHTML = h;
+  document.getElementById('items').innerHTML = h;
+}
+
+function renderHead() {
+  var s = findSel();
+  if (!s) return;
+  var now = Date.now();
+  var muted = s.mutedUntil > now;
+  var forever = s.mutedUntil >= 8000000000000000;
+  document.getElementById('chead').classList.add('on');
+  document.getElementById('hav').outerHTML = avatarHtml(s, 's').replace('class="av "', 'class="av s"');
+  document.querySelector('#chead .av').id = 'hav';
+  document.getElementById('hname').textContent = dispName(s);
+  var st = muted
+    ? '<span class="pill r">🔇 ' + (forever ? 'บอทหยุดอยู่ · แอดมินตอบ' : 'หยุดถึง ' + hhmm(s.mutedUntil)) + '</span>'
+    : '<span class="pill g">🔊 บอทตอบอัตโนมัติ</span>';
+  if (muted && s.handoff) st += '<span class="pill o">🙋 ลูกค้าขอแอดมิน</span>';
+  document.getElementById('hstat').innerHTML = st;
+  var b = document.getElementById('tglbtn');
+  if (muted) { b.className = 'tgl start'; b.textContent = '▶ เปิดบอทตอบต่อ'; b.dataset.m = '0'; }
+  else { b.className = 'tgl stop'; b.textContent = '⏸ หยุดบอท ตอบเอง'; b.dataset.m = '-1'; }
 }
 
 function fetchHist(id) {
   api('/admin/api/history?id=' + encodeURIComponent(id)).then(function(d) {
-    var el = document.getElementById('cb-' + id);
-    if (!el) return;
-    if (!d.history.length) { el.innerHTML = '<div class="meta" style="padding:6px;">ยังไม่มีข้อความหลังระบบเริ่มทำงานรอบนี้</div>'; return; }
-    var h = '';
+    if (id !== sel) return;
+    var el = document.getElementById('msgs');
+    var s = findSel() || { pic: '', name: '', id: id, type: 'user' };
+    if (!d.history.length) {
+      el.innerHTML = '<div class="chat-empty"><div class="big">🕐</div><div>ยังไม่มีข้อความในรอบนี้</div></div>';
+      return;
+    }
+    var h = '<div class="day"><span>บทสนทนาล่าสุด</span></div>';
     for (var i = 0; i < d.history.length; i++) {
       var m = d.history[i];
-      h += '<div class="msg ' + (m.r === 'u' ? 'mu' : 'mb') + '">'
-        + '<div class="bub">' + esc(m.t) + '</div>'
-        + '<div class="mt">' + (m.r === 'u' ? '👤 ลูกค้า' : '🤖 บอท') + ' · ' + hhmm(m.at) + '</div>'
-        + '</div>';
+      if (m.r === 'u') {
+        var mav = s.pic ? '<img src="' + esc(s.pic) + '" alt="">' : (s.type === 'group' ? '👥' : '👤');
+        h += '<div class="mrow user"><div class="mav">' + mav + '</div><div class="bub">' + esc(m.t) + '</div><div class="mtime">' + hhmm(m.at) + '</div></div>';
+      } else {
+        h += '<div class="mrow bot"><div class="mtime">' + hhmm(m.at) + '</div><div class="bub">' + esc(m.t) + '</div></div>';
+      }
     }
-    var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    var wasFilled = el.dataset.for === id;
     el.innerHTML = h;
-    if (atBottom || !el.dataset.filled) { el.scrollTop = el.scrollHeight; el.dataset.filled = '1'; }
+    if (!wasFilled || atBottom) el.scrollTop = el.scrollHeight;
+    el.dataset.for = id;
   }).catch(function() {});
+}
+
+function selectChat(id) {
+  sel = id;
+  renderList();
+  renderHead();
+  document.getElementById('msgs').dataset.for = '';
+  document.getElementById('msgs').innerHTML = '<div class="chat-empty"><div class="big">⏳</div></div>';
+  fetchHist(id);
+  document.getElementById('main').classList.add('show');
 }
 
 document.getElementById('loginbtn').addEventListener('click', login);
 document.getElementById('key').addEventListener('keydown', function(e) { if (e.key === 'Enter') login(); });
 document.getElementById('refreshbtn').addEventListener('click', function() { load(); });
+document.getElementById('backbtn').addEventListener('click', function() { document.getElementById('main').classList.remove('show'); });
 
-document.getElementById('list').addEventListener('click', function(e) {
-  var b = e.target.closest('button[data-id]');
-  if (b) {
-    mute(b.getAttribute('data-id'), parseInt(b.getAttribute('data-m'), 10));
-    return;
-  }
-  var hd = e.target.closest('[data-open]');
-  if (hd) {
-    var id = hd.getAttribute('data-open');
-    open[id] = !open[id];
-    var el = document.getElementById('cb-' + id);
-    if (el) {
-      el.style.display = open[id] ? 'block' : 'none';
-      if (open[id]) fetchHist(id);
-    }
-  }
+document.getElementById('items').addEventListener('click', function(e) {
+  var it = e.target.closest('.item');
+  if (it) selectChat(it.getAttribute('data-id'));
 });
 
-function mute(id, minutes) {
-  api('/admin/api/mute', { method: 'POST', body: JSON.stringify({ id: id, minutes: minutes }) })
+document.getElementById('tglbtn').addEventListener('click', function() {
+  if (!sel) return;
+  var m = parseInt(this.dataset.m, 10);
+  api('/admin/api/mute', { method: 'POST', body: JSON.stringify({ id: sel, minutes: m }) })
     .then(function() { load(); })
     .catch(function(e) { alert(e.message); });
-}
+});
 
 if (KEY) load();
 </script>
@@ -448,7 +553,7 @@ if (KEY) load();
 </html>`;
 
 function adminAuthed(req) {
-  if (!ADMIN_KEY) return null; // ยังไม่ได้ตั้งค่า
+  if (!ADMIN_KEY) return null;
   const k = req.headers['x-admin-key'] || '';
   try {
     return k.length === ADMIN_KEY.length && crypto.timingSafeEqual(Buffer.from(k), Buffer.from(ADMIN_KEY));
@@ -467,7 +572,7 @@ function handleAdmin(req, res, path, body) {
 
   if (path === '/admin/api/list' && req.method === 'GET') {
     const list = [...sessions.entries()]
-      .map(([id, s]) => ({ id, name: s.name, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff }))
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff }))
       .sort((a, b) => ((b.handoff && b.mutedUntil > Date.now()) ? 1 : 0) - ((a.handoff && a.mutedUntil > Date.now()) ? 1 : 0) || b.lastAt - a.lastAt)
       .slice(0, 100);
     return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, now: Date.now(), sessions: list });
@@ -487,10 +592,10 @@ function handleAdmin(req, res, path, body) {
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     const s = sessions.get(id);
     const m = data.minutes;
-    if (m === 0) { s.mutedUntil = 0; s.handoff = false; }   // ▶ เปิดบอท
-    else if (m === -1) s.mutedUntil = FOREVER;               // ⏸ หยุดจนกว่าจะเปิด
+    if (m === 0) { s.mutedUntil = 0; s.handoff = false; }
+    else if (m === -1) s.mutedUntil = FOREVER;
     else if (typeof m === 'number' && m > 0) s.mutedUntil = Date.now() + m * 60000;
-    else s.mutedUntil = Date.now() + MUTE_MINUTES * 60000;   // ค่าเริ่มต้น
+    else s.mutedUntil = Date.now() + MUTE_MINUTES * 60000;
     console.log(`[admin] ${id.slice(0, 8)} mutedUntil=${s.mutedUntil}`);
     return sendJson(res, 200, { ok: true, id, mutedUntil: s.mutedUntil, handoff: !!s.handoff });
   }
@@ -502,13 +607,11 @@ function handleAdmin(req, res, path, body) {
 const server = http.createServer((req, res) => {
   const path = (req.url || '/').split('?')[0];
 
-  // หน้าแอดมิน (HTML)
   if (req.method === 'GET' && path === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(ADMIN_HTML);
   }
 
-  // Admin API
   if (path.startsWith('/admin/api/')) {
     if (req.method === 'GET') return handleAdmin(req, res, path, Buffer.alloc(0));
     let chunks = [];
@@ -517,10 +620,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Health check
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.2, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.3, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -530,14 +632,12 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     const body = Buffer.concat(chunks);
 
-    // ตรวจลายเซ็น LINE
     const sig = req.headers['x-line-signature'] || '';
     const expected = crypto.createHmac('sha256', CH_SECRET).update(body).digest('base64');
     let valid = false;
     try { valid = sig.length > 0 && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig)); } catch (_) {}
     if (!valid) { res.writeHead(401); return res.end('Invalid signature'); }
 
-    // ✨ ack ทันที แล้วค่อยประมวลผล
     res.writeHead(200); res.end('OK');
 
     let data = {};
@@ -548,4 +648,4 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => console.log(`line-dify-bridge v2.2 (mute+admin+history) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v2.3 (LINE-style admin) running on port ${PORT}`));
