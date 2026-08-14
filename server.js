@@ -352,13 +352,20 @@ function render(list) {
       + '<div class="meta">ข้อความล่าสุด ' + ago(s.lastAt) + '</div>'
       + '<div class="row">'
       + (muted
-          ? '<button class="b-on" onclick="mute(\'' + s.id + '\',0)">🔊 เปิดเสียงบอท</button>'
-          : '<button class="b-mute" onclick="mute(\'' + s.id + '\',null)">🔇 ปิดชั่วคราว</button>'
-            + '<button class="b-forever" onclick="mute(\'' + s.id + '\',-1)">🔇 ปิดจนกว่าจะเปิด</button>')
+          ? '<button class="b-on" data-id="' + s.id + '" data-m="0">🔊 เปิดเสียงบอท</button>'
+          : '<button class="b-mute" data-id="' + s.id + '" data-m="d">🔇 ปิดชั่วคราว</button>'
+            + '<button class="b-forever" data-id="' + s.id + '" data-m="-1">🔇 ปิดจนกว่าจะเปิด</button>')
       + '</div></div>';
   }
   document.getElementById('list').innerHTML = h;
 }
+
+document.getElementById('list').addEventListener('click', function(e) {
+  var b = e.target.closest('button[data-id]');
+  if (!b) return;
+  var m = b.getAttribute('data-m');
+  mute(b.getAttribute('data-id'), m === 'd' ? null : parseInt(m, 10));
+});
 
 function mute(id, minutes) {
   api('/admin/api/mute', { method: 'POST', body: JSON.stringify({ id: id, minutes: minutes }) })
@@ -437,7 +444,7 @@ const server = http.createServer((req, res) => {
   // Health check
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.1, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
