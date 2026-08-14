@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.6
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.7
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -44,7 +44,9 @@ const CH_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
 const DIFY_KEY = process.env.DIFY_API_KEY || '';
 const ADMIN_KEY = (process.env.ADMIN_KEY || '').trim();
 const MUTE_MINUTES = Math.max(1, parseInt(process.env.MUTE_MINUTES || '60', 10) || 60);
-const STATE_DIR = process.env.STATE_DIR || '/data';
+const RAILWAY_VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+const STATE_DIR = process.env.STATE_DIR || RAILWAY_VOL || '/data';
+const HAS_VOLUME = !!RAILWAY_VOL && STATE_DIR.startsWith(RAILWAY_VOL); // ถาวรจริงเฉพาะเมื่อ Railway Attach Volume แล้ว (Railway ตั้ง RAILWAY_VOLUME_MOUNT_PATH ให้เอง) และ STATE_DIR ชี้เข้า Volume นั้น
 const DIFY_BASE = 'https://api.dify.ai/v1';
 const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
@@ -54,7 +56,8 @@ const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,h
 
 // ---------- Persistence (เก็บถาวรลงดิสก์ ถ้ามี Volume) ----------
 const STATE_FILE = pathmod.join(STATE_DIR, 'nladda-state.json');
-let persistOK = false;
+let canWrite = false;   // เขียนดิสก์ได้ (เซฟกันแครชได้ แต่ redeploy อาจหาย)
+let persistOK = false;  // ถาวรจริง = เขียนได้ + มี Volume ต่ออยู่จริง
 let dirty = false;
 let saveTimer = null;
 
@@ -63,12 +66,18 @@ function initPersist() {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(pathmod.join(STATE_DIR, '.write-test'), 'ok');
     fs.unlinkSync(pathmod.join(STATE_DIR, '.write-test'));
-    persistOK = true;
+    canWrite = true;
   } catch (e) {
-    persistOK = false;
-    console.log(`[persist] OFF — เขียน ${STATE_DIR} ไม่ได้ (${e.code}) ต่อ Volume ใน Railway ที่ mount path /data เพื่อเก็บแชทถาวร`);
-    return;
+    canWrite = false;
+    console.log(`[persist] เขียน ${STATE_DIR} ไม่ได้ (${e.code})`);
   }
+  persistOK = canWrite && HAS_VOLUME;
+  if (!persistOK) {
+    console.log(`[persist] NOT PERMANENT — ${canWrite ? 'ยังไม่ได้ Attach Volume ใน Railway (คลิกขวาที่ service -> Attach Volume)' : 'ดิสก์เขียนไม่ได้'} — แชทจะหายเมื่อ redeploy`);
+  } else {
+    console.log(`[persist] ON — volume at ${STATE_DIR}`);
+  }
+  if (!canWrite) return;
   try {
     if (fs.existsSync(STATE_FILE)) {
       const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
@@ -91,7 +100,7 @@ function initPersist() {
 }
 
 function saveNow() {
-  if (!persistOK || !dirty) return;
+  if (!canWrite || !dirty) return;
   dirty = false;
   const data = JSON.stringify({ v: 1, savedAt: Date.now(), sessions: [...sessions.entries()] });
   const tmp = STATE_FILE + '.tmp';
@@ -110,7 +119,7 @@ function markDirty() {
 
 process.on('SIGTERM', () => {
   try {
-    if (persistOK && dirty) {
+    if (canWrite && dirty) {
       fs.writeFileSync(STATE_FILE, JSON.stringify({ v: 1, savedAt: Date.now(), sessions: [...sessions.entries()] }));
     }
   } catch (_) {}
@@ -930,7 +939,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.6, persist: persistOK, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.7, persist: persistOK, chats: sessions.size, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -958,4 +967,4 @@ const server = http.createServer((req, res) => {
 
 initPersist();
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v2.6 (backfill+send+persist=${persistOK}+SSE) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v2.7 (backfill+send+persist=${persistOK}+SSE) running on port ${PORT}`));
