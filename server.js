@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.5
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.6
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -9,10 +9,14 @@
 //  4. หน้าแอดมิน /admin ดีไซน์แบบ LINE OA Manager + ปุ่ม ⏸/▶ หยุด/เปิดบอทรายแชท
 //  5. แชทเก่าเก็บถาวรลงดิสก์ (Railway Volume ที่ /data) — redeploy แล้วไม่หาย
 //     + Real-time: แชทใหม่เด้งขึ้นเองทันทีผ่าน SSE ไม่ต้องกด refresh
-//  6. v2.5: ช่องพิมพ์ตอบลูกค้าจากหน้าแอดมินได้เลย (ส่งในนาม OA ผ่าน Push API)
+//  6. ช่องพิมพ์ตอบลูกค้าจากหน้าแอดมินได้เลย (ส่งในนาม OA ผ่าน Push API)
 //     ⚠️ ข้อความที่แอดมินส่งจากหน้านี้ใช้โควต้า Push รายเดือนของ LINE OA
 //        (บอทตอบเองใช้ Reply API ไม่กินโควต้า) ถ้าจะคุยยาวๆ ใช้ LINE OA Manager ตามเดิม
-//  7. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+//  7. v2.6: ดึงประวัติสนทนาเก่า (ลูกค้า↔บอท) กลับมาจาก Dify อัตโนมัติ
+//     - ตอนบูท: เติมประวัติเก่าให้ทุกแชทที่รู้จัก + แชทจาก SEED_USER_IDS
+//     - ลูกค้า(เก่า)ทักครั้งแรก: ประวัติเดิมทั้งหมดโผล่ตามมาเองใน 1-2 วิ
+//     - หมายเหตุ: ข้อความที่แอดมินเคยพิมพ์ใน LINE OA Manager ดึงไม่ได้ (LINE ไม่มี API)
+//  8. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -23,6 +27,8 @@
 //  STATE_DIR                  (ไม่บังคับ) โฟลเดอร์เก็บไฟล์ถาวร ค่าเริ่ม /data
 //                             *** ต้อง Attach Volume ใน Railway ที่ mount path /data
 //                                 ไม่งั้นไฟล์หายตอน redeploy (ระบบยังทำงานได้ แค่ไม่ถาวร)
+//  SEED_USER_IDS              (ไม่บังคับ) LINE userId คั่นด้วย , เพื่อดึงลูกค้าเก่า
+//                             เข้าลิสต์พร้อมประวัติทันทีตอนบูท (ใส่ครั้งเดียวพอ)
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -75,7 +81,7 @@ function initPersist() {
             name: s.name || '', pic: s.pic || '', type: s.type || 'user',
             lastText: s.lastText || '', lastAt: s.lastAt || 0,
             mutedUntil: s.mutedUntil || 0, handoff: !!s.handoff,
-            history: s.history.slice(-HIST_MAX)
+            history: s.history.slice(-HIST_MAX), bf: !!s.bf
           });
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
@@ -137,7 +143,7 @@ setInterval(() => {
 function touchSession(id, type, text) {
   let s = sessions.get(id);
   if (!s) {
-    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [] };
+    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false };
     sessions.set(id, s);
     if (sessions.size > 500) {
       let oldestId = null, oldestAt = Infinity;
@@ -203,6 +209,70 @@ function request(method, url, headers, bodyObj) {
     if (body) req.write(body);
     req.end();
   });
+}
+
+// ---------- ดึงประวัติเก่าจาก Dify (backfill) ----------
+async function backfillFromDify(id, s) {
+  try {
+    const rc = await request('GET', `${DIFY_BASE}/conversations?user=${encodeURIComponent(id)}&limit=20`, {
+      Authorization: `Bearer ${DIFY_KEY}`
+    });
+    if (rc.status !== 200 || !rc.data || !Array.isArray(rc.data.data)) {
+      console.log(`[backfill] ${id.slice(0, 8)} conv list failed (${rc.status})`);
+      return;
+    }
+    const convs = rc.data.data.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0)).slice(0, 5);
+    const entries = [];
+    for (const c of convs) {
+      const rm = await request('GET', `${DIFY_BASE}/messages?user=${encodeURIComponent(id)}&conversation_id=${encodeURIComponent(c.id)}&limit=100`, {
+        Authorization: `Bearer ${DIFY_KEY}`
+      });
+      if (rm.status === 200 && rm.data && Array.isArray(rm.data.data)) {
+        for (const m of rm.data.data) {
+          const at = (m.created_at || 0) * 1000;
+          if (!at) continue;
+          if (m.query) entries.push({ r: 'u', t: String(m.query).slice(0, 600), at });
+          if (m.answer) entries.push({ r: 'b', t: String(m.answer).slice(0, 600), at: at + 1 });
+        }
+      }
+    }
+    entries.sort((a, b) => a.at - b.at);
+    // เติมเฉพาะข้อความที่เก่ากว่าที่มีอยู่ (กันซ้ำกับที่ระบบบันทึกสดไว้แล้ว)
+    const minAt = s.history.length ? s.history[0].at : Infinity;
+    const older = entries.filter((e) => e.at < minAt - 2000);
+    if (older.length) s.history = older.concat(s.history).slice(-HIST_MAX);
+    if (!s.lastAt && s.history.length) {
+      const last = s.history[s.history.length - 1];
+      s.lastAt = last.at;
+      s.lastText = String(last.t).slice(0, 120);
+    }
+    s.bf = true;
+    markDirty();
+    broadcast();
+    console.log(`[backfill] ${id.slice(0, 8)} +${older.length} old msgs from ${convs.length} convs`);
+  } catch (e) { console.log(`[backfill] ${id.slice(0, 8)} error:`, e.message); }
+}
+
+function bootBackfill() {
+  // นำเข้าลูกค้าเก่าจาก SEED_USER_IDS (ถ้าตั้งไว้)
+  const seeds = (process.env.SEED_USER_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
+  for (const id of seeds) {
+    if (!sessions.has(id)) {
+      sessions.set(id, { name: '', pic: '', type: 'user', lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false });
+      fetchProfile(sessions.get(id), id);
+    }
+  }
+  if (seeds.length) console.log(`[backfill] seeded ${seeds.length} user ids`);
+  // ไล่เติมประวัติเก่าให้ทุกแชทที่ยังไม่เคยเติม
+  const pending = [...sessions.entries()].filter(([, s]) => !s.bf);
+  let i = 0;
+  const next = () => {
+    if (i >= pending.length) return;
+    const [id, s] = pending[i++];
+    backfillFromDify(id, s).catch(() => {}).then(() => setTimeout(next, 300));
+  };
+  if (pending.length) console.log(`[backfill] sweeping ${pending.length} chats...`);
+  next();
 }
 
 // ---------- Dify ----------
@@ -297,8 +367,11 @@ async function handleEvent(ev) {
 
   const shown = ev.message.type === 'text' ? text : '(สติกเกอร์)';
   const s = touchSession(sessionId, stype, shown);
+  const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
   fetchProfile(s, userId);
+  // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
+  if (isNewChat) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
 
   const now = Date.now();
 
@@ -857,7 +930,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.5, persist: persistOK, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.6, persist: persistOK, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -884,4 +957,5 @@ const server = http.createServer((req, res) => {
 });
 
 initPersist();
-server.listen(PORT, () => console.log(`line-dify-bridge v2.5 (send+persist=${persistOK} + SSE realtime) running on port ${PORT}`));
+setTimeout(bootBackfill, 3000);
+server.listen(PORT, () => console.log(`line-dify-bridge v2.6 (backfill+send+persist=${persistOK}+SSE) running on port ${PORT}`));
