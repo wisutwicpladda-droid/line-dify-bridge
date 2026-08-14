@@ -1,17 +1,15 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.3
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.4
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
 //  1. ตอบ ack ให้ LINE ทันที (กัน timeout/redelivery storm)
-//  2. ประมวลผลต่อเบื้องหลัง (เซิร์ฟเวอร์รันค้างตลอด ไม่มีลิมิตเวลา)
-//  3. Reply ก่อน ถ้า token หมดอายุ -> fallback เป็น Push
-//  4. จำบทสนทนาต่อเนื่องผ่าน Dify conversations API (ไม่ต้องมี DB)
-//  5. ระบบปิดเสียงบอท (mute) รายแชท + หน้าแอดมิน /admin ดีไซน์แบบ LINE OA Manager:
-//     - ลิสต์แชทซ้าย (รูปโปรไฟล์จริง + ข้อความล่าสุด + เวลา), หน้าต่างแชทขวาแบบ bubble
-//     - ลูกค้าพิมพ์ "คุยกับแอดมิน" -> บอทเงียบ MUTE_MINUTES นาที + ธง "ลูกค้าขอแอดมิน"
-//     - ลูกค้าพิมพ์ "คุยกับบอท" -> บอทกลับมาตอบ
-//     - ปุ่ม ⏸ หยุดบอท (แอดมินตอบเอง) / ▶ เปิดบอท ที่หัวแชท
+//  2. Reply ก่อน ถ้า token หมดอายุ -> fallback เป็น Push
+//  3. จำบทสนทนาต่อเนื่องผ่าน Dify conversations API (ไม่ต้องมี DB)
+//  4. หน้าแอดมิน /admin ดีไซน์แบบ LINE OA Manager + ปุ่ม ⏸/▶ หยุด/เปิดบอทรายแชท
+//  5. v2.4: แชทเก่าเก็บถาวรลงดิสก์ (Railway Volume ที่ /data) — redeploy แล้วไม่หาย
+//     + Real-time: แชทใหม่เด้งขึ้นเองทันทีผ่าน SSE ไม่ต้องกด refresh
+//     + ประวัติเก็บ 200 ข้อความ/แชท
 //  6. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
@@ -20,16 +18,17 @@
 //  DIFY_API_KEY               จาก Dify -> แอปน้องลัดดา -> API Access (app-...)
 //  ADMIN_KEY                  รหัสผ่านหน้าแอดมิน (อังกฤษ/ตัวเลข)
 //  MUTE_MINUTES               (ไม่บังคับ) นาทีที่บอทเงียบเมื่อลูกค้าขอแอดมิน ค่าเริ่ม 60
+//  STATE_DIR                  (ไม่บังคับ) โฟลเดอร์เก็บไฟล์ถาวร ค่าเริ่ม /data
+//                             *** ต้อง Attach Volume ใน Railway ที่ mount path /data
+//                                 ไม่งั้นไฟล์หายตอน redeploy (ระบบยังทำงานได้ แค่ไม่ถาวร)
 //  PORT                       Railway ตั้งให้อัตโนมัติ
-//
-// หมายเหตุ:
-//  - ประวัติแชท/สถานะเก็บในหน่วยความจำ -> redeploy แล้วรีเซ็ต
-//  - หน้าแอดมินเห็นเฉพาะข้อความ ลูกค้า <-> บอท (ที่แอดมินพิมพ์ใน LINE OA ไม่แสดง)
 // ============================================================
 
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const fs = require('fs');
+const pathmod = require('path');
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -37,11 +36,101 @@ const CH_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
 const DIFY_KEY = process.env.DIFY_API_KEY || '';
 const ADMIN_KEY = (process.env.ADMIN_KEY || '').trim();
 const MUTE_MINUTES = Math.max(1, parseInt(process.env.MUTE_MINUTES || '60', 10) || 60);
+const STATE_DIR = process.env.STATE_DIR || '/data';
 const DIFY_BASE = 'https://api.dify.ai/v1';
 const FOREVER = 8640000000000000;
+const HIST_MAX = 200;
 
-// ---------- ทะเบียนแชท + สถานะ + ประวัติ (in-memory) ----------
+// ---------- ทะเบียนแชท + สถานะ + ประวัติ ----------
 const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history}
+
+// ---------- Persistence (เก็บถาวรลงดิสก์ ถ้ามี Volume) ----------
+const STATE_FILE = pathmod.join(STATE_DIR, 'nladda-state.json');
+let persistOK = false;
+let dirty = false;
+let saveTimer = null;
+
+function initPersist() {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(pathmod.join(STATE_DIR, '.write-test'), 'ok');
+    fs.unlinkSync(pathmod.join(STATE_DIR, '.write-test'));
+    persistOK = true;
+  } catch (e) {
+    persistOK = false;
+    console.log(`[persist] OFF — เขียน ${STATE_DIR} ไม่ได้ (${e.code}) ต่อ Volume ใน Railway ที่ mount path /data เพื่อเก็บแชทถาวร`);
+    return;
+  }
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      if (raw && Array.isArray(raw.sessions)) {
+        for (const [id, s] of raw.sessions) {
+          if (!id || !s) continue;
+          if (s.name === '…') s.name = '';
+          if (!Array.isArray(s.history)) s.history = [];
+          sessions.set(id, {
+            name: s.name || '', pic: s.pic || '', type: s.type || 'user',
+            lastText: s.lastText || '', lastAt: s.lastAt || 0,
+            mutedUntil: s.mutedUntil || 0, handoff: !!s.handoff,
+            history: s.history.slice(-HIST_MAX)
+          });
+        }
+        console.log(`[persist] loaded ${sessions.size} chats from disk`);
+      }
+    }
+  } catch (e) { console.log('[persist] load error:', e.message); }
+}
+
+function saveNow() {
+  if (!persistOK || !dirty) return;
+  dirty = false;
+  const data = JSON.stringify({ v: 1, savedAt: Date.now(), sessions: [...sessions.entries()] });
+  const tmp = STATE_FILE + '.tmp';
+  fs.writeFile(tmp, data, (err) => {
+    if (err) { console.log('[persist] write error:', err.message); return; }
+    fs.rename(tmp, STATE_FILE, (err2) => {
+      if (err2) console.log('[persist] rename error:', err2.message);
+    });
+  });
+}
+
+function markDirty() {
+  dirty = true;
+  if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; saveNow(); }, 3000);
+}
+
+process.on('SIGTERM', () => {
+  try {
+    if (persistOK && dirty) {
+      fs.writeFileSync(STATE_FILE, JSON.stringify({ v: 1, savedAt: Date.now(), sessions: [...sessions.entries()] }));
+    }
+  } catch (_) {}
+  process.exit(0);
+});
+
+// ---------- Real-time (SSE) ----------
+const sseClients = new Set();
+const sseTokens = new Map(); // token -> expiry
+let bcTimer = null;
+
+function broadcast() {
+  if (bcTimer) return;
+  bcTimer = setTimeout(() => {
+    bcTimer = null;
+    for (const res of sseClients) {
+      try { res.write('data: u\n\n'); } catch (_) { sseClients.delete(res); }
+    }
+  }, 250);
+}
+
+setInterval(() => {
+  for (const res of sseClients) {
+    try { res.write(': hb\n\n'); } catch (_) { sseClients.delete(res); }
+  }
+  const now = Date.now();
+  for (const [t, exp] of sseTokens) if (exp < now) sseTokens.delete(t);
+}, 25000);
 
 function touchSession(id, type, text) {
   let s = sessions.get(id);
@@ -61,7 +150,9 @@ function touchSession(id, type, text) {
 
 function pushHist(s, role, text) {
   s.history.push({ r: role, t: String(text).slice(0, 600), at: Date.now() });
-  if (s.history.length > 30) s.history.splice(0, s.history.length - 30);
+  if (s.history.length > HIST_MAX) s.history.splice(0, s.history.length - HIST_MAX);
+  markDirty();
+  broadcast();
 }
 
 function fetchProfile(s, userId) {
@@ -73,6 +164,8 @@ function fetchProfile(s, userId) {
     if (r.status === 200 && r.data) {
       s.name = String(r.data.displayName || '').slice(0, 60);
       s.pic = String(r.data.pictureUrl || '').slice(0, 500);
+      markDirty();
+      broadcast();
     } else { s.name = ''; }
   }).catch(() => { s.name = ''; });
 }
@@ -207,7 +300,7 @@ async function handleEvent(ev) {
 
   const now = Date.now();
 
-  if (s.mutedUntil && s.mutedUntil <= now) { s.mutedUntil = 0; s.handoff = false; }
+  if (s.mutedUntil && s.mutedUntil <= now) { s.mutedUntil = 0; s.handoff = false; markDirty(); broadcast(); }
 
   if (ev.message.type === 'text') {
     if (wantsBot(text)) {
@@ -252,7 +345,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
   body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #e9ebee; color: #1f2329; }
   button { font-family: inherit; cursor: pointer; border: 0; }
 
-  /* ---------- login ---------- */
   .login-wrap { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 20px; }
   .login-card { background: #fff; border-radius: 14px; padding: 28px 24px; width: 100%; max-width: 380px; box-shadow: 0 6px 24px rgba(0,0,0,.08); text-align: center; }
   .login-card .logo { font-size: 40px; margin-bottom: 8px; }
@@ -262,15 +354,15 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .login-card .go { width: 100%; margin-top: 12px; padding: 12px; border-radius: 10px; background: #06c755; color: #fff; font-size: 15px; font-weight: 600; }
   #err { color: #e5484d; font-size: 13px; margin-top: 10px; display: none; }
 
-  /* ---------- app ---------- */
   .app { display: none; height: 100dvh; max-width: 1280px; margin: 0 auto; background: #fff; box-shadow: 0 0 24px rgba(0,0,0,.06); }
   .app.on { display: flex; }
 
-  /* list */
   .side { width: 340px; flex: none; border-right: 1px solid #e3e6ea; display: flex; flex-direction: column; background: #fff; }
   .side-head { padding: 13px 16px; border-bottom: 1px solid #e3e6ea; display: flex; align-items: center; justify-content: space-between; }
   .side-head b { font-size: 16px; }
   .cnt { display: inline-block; background: #06c755; color: #fff; font-size: 11px; border-radius: 99px; padding: 1px 7px; margin-left: 6px; vertical-align: 2px; }
+  .live { font-size: 10.5px; color: #0a9a4a; margin-left: 8px; }
+  .live.off { color: #d33a41; }
   .rf { background: #f1f3f5; color: #55606b; border-radius: 8px; padding: 6px 10px; font-size: 14px; }
   .items { flex: 1; overflow-y: auto; }
   .item { display: flex; gap: 10px; padding: 11px 14px; cursor: pointer; border-bottom: 1px solid #f4f5f7; align-items: center; }
@@ -290,7 +382,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .side-note { padding: 9px 14px; border-top: 1px solid #eef0f2; font-size: 11px; color: #98a2ad; line-height: 1.7; }
   .empty { text-align: center; color: #98a2ad; padding: 40px 16px; font-size: 13.5px; line-height: 1.8; }
 
-  /* chat */
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #fff; }
   .chat-head { padding: 9px 16px; border-bottom: 1px solid #e3e6ea; display: none; align-items: center; gap: 11px; background: #fff; }
   .chat-head.on { display: flex; }
@@ -321,7 +412,6 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .chat-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #b3bcc5; gap: 10px; }
   .chat-empty .big { font-size: 44px; }
 
-  /* mobile */
   @media (max-width: 760px) {
     .app.on { display: block; }
     .side { width: 100%; height: 100dvh; }
@@ -348,11 +438,11 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <div id="app" class="app">
   <div class="side">
     <div class="side-head">
-      <b>แชท<span class="cnt" id="count">0</span></b>
+      <b>แชท<span class="cnt" id="count">0</span><span class="live off" id="live">● กำลังเชื่อมต่อ…</span></b>
       <button class="rf" id="refreshbtn">⟳</button>
     </div>
     <div class="items" id="items"></div>
-    <div class="side-note">🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · แสดงเฉพาะข้อความ ลูกค้า↔บอท ตั้งแต่เปิดระบบรอบนี้ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา</div>
+    <div class="side-note"><span id="ps"></span>🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · แสดงเฉพาะข้อความ ลูกค้า↔บอท</div>
   </div>
   <div class="main" id="main">
     <div class="chat-head" id="chead">
@@ -375,6 +465,8 @@ var KEY = sessionStorage.getItem('nladda_key') || '';
 var timer = null;
 var sel = null;
 var cache = [];
+var es = null;
+var esRetry = null;
 var COLORS = ['#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
 
 function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -394,6 +486,14 @@ function listTime(t) {
   var y = new Date(now.getTime() - 86400000);
   if (d.toDateString() === y.toDateString()) return 'เมื่อวาน';
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+}
+
+function dayLabel(t) {
+  var d = new Date(t), now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'วันนี้';
+  var y = new Date(now.getTime() - 86400000);
+  if (d.toDateString() === y.toDateString()) return 'เมื่อวาน';
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function avatarHtml(s, cls) {
@@ -426,6 +526,30 @@ function api(path, opts) {
   });
 }
 
+function setLive(on) {
+  var el = document.getElementById('live');
+  if (on) { el.className = 'live'; el.textContent = '● เรียลไทม์'; }
+  else { el.className = 'live off'; el.textContent = '● กำลังเชื่อมต่อ…'; }
+}
+
+function connectStream() {
+  if (es) return;
+  api('/admin/api/token', { method: 'POST' }).then(function(d) {
+    if (es) return;
+    es = new EventSource('/admin/api/stream?t=' + encodeURIComponent(d.token));
+    es.onopen = function() { setLive(true); };
+    es.onmessage = function() { load(); };
+    es.onerror = function() {
+      setLive(false);
+      try { es.close(); } catch (e) {}
+      es = null;
+      if (!esRetry) esRetry = setTimeout(function() { esRetry = null; connectStream(); }, 5000);
+    };
+  }).catch(function() {
+    if (!esRetry) esRetry = setTimeout(function() { esRetry = null; connectStream(); }, 8000);
+  });
+}
+
 function load(fromLogin) {
   if (!KEY) return;
   api('/admin/api/list').then(function(d) {
@@ -433,10 +557,14 @@ function load(fromLogin) {
     document.getElementById('login').style.display = 'none';
     document.getElementById('app').classList.add('on');
     document.getElementById('mm').textContent = d.muteMinutes;
+    document.getElementById('ps').innerHTML = d.persist
+      ? '💾 เก็บแชทถาวร: <b style="color:#0a9a4a">เปิด</b> · '
+      : '💾 เก็บแชทถาวร: <b style="color:#d33a41">ปิด</b> (ต่อ Volume ที่ /data ใน Railway) · ';
     cache = d.sessions;
     renderList();
     if (sel) { renderHead(); fetchHist(sel); }
-    if (!timer) timer = setInterval(load, 8000);
+    if (!timer) timer = setInterval(load, 20000);
+    connectStream();
   }).catch(function(e) {
     if (fromLogin) { var el = document.getElementById('err'); el.style.display = 'block'; el.textContent = e.message; }
     sessionStorage.removeItem('nladda_key');
@@ -452,7 +580,7 @@ function renderList() {
   var now = Date.now();
   document.getElementById('count').textContent = cache.length;
   if (!cache.length) {
-    document.getElementById('items').innerHTML = '<div class="empty">ยังไม่มีแชทเข้ามา<br>หลังระบบเริ่มทำงานรอบนี้<br>เมื่อลูกค้าทักไลน์จะขึ้นที่นี่</div>';
+    document.getElementById('items').innerHTML = '<div class="empty">ยังไม่มีแชทเข้ามา<br>เมื่อลูกค้าทักไลน์จะเด้งขึ้นที่นี่เอง</div>';
     return;
   }
   var h = '';
@@ -498,12 +626,15 @@ function fetchHist(id) {
     var el = document.getElementById('msgs');
     var s = findSel() || { pic: '', name: '', id: id, type: 'user' };
     if (!d.history.length) {
-      el.innerHTML = '<div class="chat-empty"><div class="big">🕐</div><div>ยังไม่มีข้อความในรอบนี้</div></div>';
+      el.innerHTML = '<div class="chat-empty"><div class="big">🕐</div><div>ยังไม่มีข้อความ</div></div>';
       return;
     }
-    var h = '<div class="day"><span>บทสนทนาล่าสุด</span></div>';
+    var h = '';
+    var lastDay = '';
     for (var i = 0; i < d.history.length; i++) {
       var m = d.history[i];
+      var dl = dayLabel(m.at);
+      if (dl !== lastDay) { h += '<div class="day"><span>' + dl + '</span></div>'; lastDay = dl; }
       if (m.r === 'u') {
         var mav = s.pic ? '<img src="' + esc(s.pic) + '" alt="">' : (s.type === 'group' ? '👥' : '👤');
         h += '<div class="mrow user"><div class="mav">' + mav + '</div><div class="bub">' + esc(m.t) + '</div><div class="mtime">' + hhmm(m.at) + '</div></div>';
@@ -566,16 +697,43 @@ function sendJson(res, status, obj) {
 }
 
 function handleAdmin(req, res, path, body) {
+  // SSE stream ใช้ token (EventSource ตั้ง header เองไม่ได้)
+  if (path === '/admin/api/stream' && req.method === 'GET') {
+    const t = new URL(req.url, 'http://x').searchParams.get('t') || '';
+    const exp = sseTokens.get(t);
+    if (!exp || exp < Date.now()) return sendJson(res, 401, { ok: false, error: 'bad token' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.write(': connected\n\n');
+    sseClients.add(res);
+    req.on('close', () => sseClients.delete(res));
+    return;
+  }
+
   const authed = adminAuthed(req);
   if (authed === null) return sendJson(res, 503, { ok: false, error: 'ADMIN_KEY not set' });
   if (!authed) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+
+  if (path === '/admin/api/token' && req.method === 'POST') {
+    const token = crypto.randomBytes(16).toString('hex');
+    sseTokens.set(token, Date.now() + 24 * 3600000);
+    if (sseTokens.size > 50) {
+      const oldest = sseTokens.keys().next().value;
+      sseTokens.delete(oldest);
+    }
+    return sendJson(res, 200, { ok: true, token });
+  }
 
   if (path === '/admin/api/list' && req.method === 'GET') {
     const list = [...sessions.entries()]
       .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff }))
       .sort((a, b) => ((b.handoff && b.mutedUntil > Date.now()) ? 1 : 0) - ((a.handoff && a.mutedUntil > Date.now()) ? 1 : 0) || b.lastAt - a.lastAt)
       .slice(0, 100);
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, now: Date.now(), sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, now: Date.now(), sessions: list });
   }
 
   if (path === '/admin/api/history' && req.method === 'GET') {
@@ -596,6 +754,8 @@ function handleAdmin(req, res, path, body) {
     else if (m === -1) s.mutedUntil = FOREVER;
     else if (typeof m === 'number' && m > 0) s.mutedUntil = Date.now() + m * 60000;
     else s.mutedUntil = Date.now() + MUTE_MINUTES * 60000;
+    markDirty();
+    broadcast();
     console.log(`[admin] ${id.slice(0, 8)} mutedUntil=${s.mutedUntil}`);
     return sendJson(res, 200, { ok: true, id, mutedUntil: s.mutedUntil, handoff: !!s.handoff });
   }
@@ -622,7 +782,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.3, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.4, persist: persistOK, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -648,4 +808,5 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => console.log(`line-dify-bridge v2.3 (LINE-style admin) running on port ${PORT}`));
+initPersist();
+server.listen(PORT, () => console.log(`line-dify-bridge v2.4 (persist=${persistOK} + SSE realtime) running on port ${PORT}`));
