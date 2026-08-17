@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.1
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.2
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -40,6 +40,8 @@
 //     เสร็จแล้ว: เบอร์ตรงกับ POS + ชื่อสอดคล้อง -> ผูกอัตโนมัติ · ไม่พบใน POS -> สร้างแถวใหม่ในตาราง customers ให้เลย
 //     (พร้อม name/phone/province/first_name/last_name/line_user_id — POS ไม่ต้องเพิ่มลูกค้าซ้ำ) · เบอร์ตรงแต่ชื่อไม่ตรง -> ให้แอดมินยืนยัน
 //     แอดมินกด "✓ ถือว่าลงทะเบียนแล้ว" / "➕ สร้างใน POS" ในแผงโปรไฟล์ได้ · REGISTER=soft ถามตอนแอดเพื่อนแต่ไม่บังคับ · off ปิด
+//     v3.2: ลูกค้าพิมพ์ "ลงทะเบียน" เพื่อเริ่มเอง (ทุกโหมด) / "แก้ไขข้อมูล" เพื่ออัปเดตชื่อ-เบอร์-จังหวัด (อัปเดตแถว POS ที่ผูกอยู่ให้ด้วย)
+//     แอดมินกด "📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน" ส่ง Push ชวนลงทะเบียนทีเดียวทุกแชท (หรือรายแชท) — ลูกค้าตอบกลับแล้วบอทเดินขั้นตอนต่อเอง
 // 12. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
@@ -84,6 +86,7 @@ const RAILWAY_VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
 const STATE_DIR = process.env.STATE_DIR || RAILWAY_VOL || '/data';
 const HAS_VOLUME = !!RAILWAY_VOL && STATE_DIR.startsWith(RAILWAY_VOL); // ถาวรจริงเฉพาะเมื่อ Railway Attach Volume แล้ว (Railway ตั้ง RAILWAY_VOLUME_MOUNT_PATH ให้เอง) และ STATE_DIR ชี้เข้า Volume นั้น
 const DIFY_BASE = 'https://api.dify.ai/v1';
+const LINE_API = (process.env.LINE_API_BASE || 'https://api.line.me').replace(/\/+$/, ''); // override ได้เฉพาะตอนเทส
 const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
 const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
@@ -246,7 +249,7 @@ function pushHist(s, role, text) {
 function fetchProfile(s, userId) {
   if (s.name || s.type !== 'user' || !userId || userId === 'unknown') return;
   s.name = '…';
-  request('GET', 'https://api.line.me/v2/bot/profile/' + encodeURIComponent(userId), {
+  request('GET', LINE_API + '/v2/bot/profile/' + encodeURIComponent(userId), {
     Authorization: 'Bearer ' + CH_TOKEN
   }).then((r) => {
     if (r.status === 200 && r.data) {
@@ -396,7 +399,7 @@ async function lineReply(replyToken, text) {
   const messages = lineMsgs(text);
   if (!messages.length) return false;
   try {
-    const r = await request('POST', 'https://api.line.me/v2/bot/message/reply',
+    const r = await request('POST', LINE_API + '/v2/bot/message/reply',
       { Authorization: `Bearer ${CH_TOKEN}` },
       { replyToken, messages });
     if (r.status !== 200) console.log('reply error:', r.status, JSON.stringify(r.data).slice(0, 300));
@@ -408,7 +411,7 @@ async function linePush(to, text) {
   const messages = lineMsgs(text);
   if (!messages.length) return false;
   try {
-    const r = await request('POST', 'https://api.line.me/v2/bot/message/push',
+    const r = await request('POST', LINE_API + '/v2/bot/message/push',
       { Authorization: `Bearer ${CH_TOKEN}` },
       { to, messages });
     if (r.status !== 200) console.log('push error:', r.status, JSON.stringify(r.data).slice(0, 300));
@@ -1010,11 +1013,44 @@ function regClean(str) {
 }
 function regDone(c) { return !!(c && (c.pos_id || (c.auto && c.auto.reg && c.auto.reg.done_at))); }
 function regNeeded(c) { return REG_MODE === 'on' && !regDone(c); }
-function regStart(s, pendingText) {
-  s.reg = { step: 'name', data: {}, tries: {}, pending: '', at: Date.now() };
+function regStart(s, pendingText, opts) {
+  s.reg = { step: 'name', data: {}, tries: {}, pending: '', at: Date.now(), update: !!(opts && opts.update), invited: !!(opts && opts.invited) };
   const t = String(pendingText || '').trim();
   if (t && t.length >= 6 && !REG_GREET_RX.test(t) && REG_QUESTION_RX.test(t)) s.reg.pending = t.slice(0, 500);
   markDirty();
+}
+// คำสั่งจากลูกค้า: "ลงทะเบียน/สมัคร" (เริ่มลงทะเบียน) และ "แก้ไขข้อมูล" (อัปเดตข้อมูลที่ลงทะเบียนไว้)
+const REG_CMD_RX = /^(ขอ|อยาก)?(ลงทะเบียน|สมัครสมาชิก|สมัคร|register)(สมาชิก|ใหม่|ด้วย|หน่อย|เลย|ค่ะ|ครับ|คะ|จ้า|นะ|ค่า)*[\s.!]*$/i;
+const REG_EDIT_RX = /^(ขอ|อยาก)?(แก้ไขข้อมูล|แก้ข้อมูล|อัปเดตข้อมูล|อัพเดทข้อมูล|เปลี่ยนเบอร์|แก้ไขการลงทะเบียน|แก้ทะเบียน|เปลี่ยนข้อมูล)(ส่วนตัว|ลงทะเบียน|โทร|ใหม่|ด้วย|หน่อย|เลย|ค่ะ|ครับ|คะ|จ้า|นะ|ค่า)*[\s.!]*$/i;
+function regCmd(t) { const x = String(t || '').trim(); return REG_CMD_RX.test(x) ? 'register' : (REG_EDIT_RX.test(x) ? 'edit' : ''); }
+function regSummaryText(c) {
+  const r = (c && c.auto && c.auto.reg) || {};
+  const name = c.real_name || r.name || '-', phone = c.phone || r.phone || '-', prov = c.province || r.province || '-';
+  return `ชื่อ ${name} · เบอร์ ${phone} · จ.${prov}`;
+}
+// ข้อความเชิญลงทะเบียน (Push ถึงลูกค้าเก่าที่ยังไม่ลงทะเบียน)
+function regInviteMsg(s) {
+  return 'สวัสดีค่ะ 🙏 น้องลัดดา ผู้ช่วยจาก ICP Ladda ขอรบกวนคุณลูกค้าลงทะเบียนสั้นๆ 3 ข้อ เพื่อให้ทีมงานในพื้นที่ดูแลได้ตรงจุด และรับข่าวสาร/โปรโมชั่นตรงพื้นที่นะคะ (ไม่ถึงนาทีค่ะ)\n\n' + regPrompt('name', s) + '\n(พิมพ์ตอบข้อความนี้ได้เลยค่ะ)';
+}
+async function regInvite(id) {
+  const s = sessions.get(id);
+  const c = crmGet(id);
+  if (!s || s.type !== 'user') return { ok: false, err: 'ไม่ใช่แชทลูกค้า' };
+  if (regDone(c)) return { ok: false, err: 'ลงทะเบียนแล้ว' };
+  regStart(s, '', { invited: true });
+  s.reg.invitedAt = Date.now();
+  c.auto = c.auto || {}; c.auto.reg_asked = true;
+  const msg = regInviteMsg(s);
+  const ok = await linePush(id, msg);
+  if (ok) { pushHist(s, 'b', msg); s.lastText = msg.slice(0, 120); }
+  markDirty(); broadcast();
+  console.log(`[reg] invite ${id.slice(0, 8)} -> ${ok ? 'sent' : 'FAILED'}`);
+  return { ok, err: ok ? undefined : 'ส่ง Push ไม่สำเร็จ (ลูกค้าบล็อก OA / โควต้า / token)' };
+}
+function regUnregisteredIds() {
+  const out = [];
+  for (const [id, s] of sessions) if (s.type === 'user' && id !== 'unknown' && !regDone(crm.get(id))) out.push(id);
+  return out;
 }
 function regParse(text) {
   const raw = String(text || '').trim();
@@ -1024,14 +1060,15 @@ function regParse(text) {
   if (province) rest = rest.replace(PROVINCE_ALL_RX, ' ');
   return { phone: phones[0] || '', province, name: regClean(rest) };
 }
-function regNameOk(n) { return n && n.length >= 2 && n.length <= 60 && /\p{L}/u.test(n) && !REG_QUESTION_RX.test(n); }
+function regNameOk(n) { return n && n.length >= 2 && n.length <= 60 && /\p{L}/u.test(n) && !REG_QUESTION_RX.test(n) && !REG_CMD_RX.test(n) && !REG_EDIT_RX.test(n) && !/^(ข้าม|ไม่|ไม่มี|ไม่สะดวก|ไม่บอก|ไม่รู้)$/.test(n); }
 function regPrompt(step, s) {
   const d = s.reg.data;
   if (step === 'name') return '1️⃣ ขอทราบชื่อ-นามสกุลของคุณลูกค้าค่ะ (พิมพ์ตอบได้เลย เช่น สมชาย ใจดี)';
   if (step === 'phone') return (d.name ? `ขอบคุณค่ะ คุณ${d.name} 😊\n` : '') + '2️⃣ ขอเบอร์โทรศัพท์ที่ติดต่อได้ค่ะ (ตัวเลข 10 หลัก เช่น 0812345678)';
   return '3️⃣ อยู่จังหวัดอะไรคะ (พิมพ์ชื่อจังหวัด เช่น จันทบุรี, ขอนแก่น)';
 }
-function regWelcome(s) {
+function regWelcome(s, c) {
+  if (s.reg && s.reg.update) return 'ได้เลยค่ะ มาอัปเดตข้อมูลกันนะคะ ✍️' + (c ? '\n(ข้อมูลเดิม: ' + regSummaryText(c) + ')' : '') + '\nพิมพ์ตอบทีละข้อ หรือพิมพ์ครบในข้อความเดียวก็ได้ค่ะ\n\n' + regPrompt('name', s);
   return 'สวัสดีค่ะ 🙏 น้องลัดดา ผู้ช่วยจาก ICP Ladda ยินดีต้อนรับค่ะ 🌾\nก่อนเริ่มใช้งาน ขอข้อมูลสั้นๆ 3 อย่าง เพื่อให้ทีมงานในพื้นที่ดูแลคุณลูกค้าได้ตรงจุดนะคะ (ไม่ถึงนาทีค่ะ)\n\n' + regPrompt('name', s)
     + (s.reg.pending ? '\n\n(คำถามเรื่อง “' + s.reg.pending.slice(0, 40) + (s.reg.pending.length > 40 ? '…' : '') + '” น้องลัดดาจะตอบให้ทันทีหลังลงทะเบียนเสร็จค่ะ)' : '');
 }
@@ -1078,35 +1115,69 @@ function regHandle(id, s, c, text) {
   if (next) { r.step = next; markDirty(); return { replies: [regPrompt(next, s)], done: false }; }
   return { replies: [], done: true };
 }
+// อัปเดตแถวใน POS (เช่น ลูกค้าเปลี่ยนเบอร์/จังหวัดตอน "แก้ไขข้อมูล") + ปรับดัชนีในหน่วยความจำ
+async function posUpdateRow(rec, fields) {
+  const k = pos.cols;
+  if (!POS_ON || !k || !rec) return false;
+  const body = {};
+  if (fields.phone !== undefined && k.phone[0]) body[k.phone[0]] = fields.phone || null;
+  if (fields.province !== undefined && k.province) body[k.province] = fields.province || null;
+  if (fields.name !== undefined && k.name.length === 1) body[k.name[0]] = fields.name;
+  if (!Object.keys(body).length) return false;
+  try {
+    const r = await sb('PATCH', `/${POS_TABLE}?${encodeURIComponent(k.id)}=eq.${encodeURIComponent(rec.id)}`, body, Object.assign({ Prefer: 'return=minimal' }, POS_HEADERS));
+    if (r.status >= 300) { console.log('[pos] update failed:', r.status, JSON.stringify(r.data).slice(0, 160)); return false; }
+    if (fields.phone !== undefined) {
+      for (const p of rec.phones) { const arr = (pos.byPhone.get(p) || []).filter((x) => x !== rec); if (arr.length) pos.byPhone.set(p, arr); else pos.byPhone.delete(p); }
+      rec.phones = phonesOf(fields.phone);
+      for (const p of rec.phones) { const arr = pos.byPhone.get(p) || []; arr.push(rec); pos.byPhone.set(p, arr); }
+    }
+    if (fields.province !== undefined) rec.province = fields.province || '';
+    if (fields.name !== undefined && k.name.length === 1) { rec.name = fields.name; rec.names[0] = fields.name; rec.nnames[0] = normName(fields.name); }
+    return true;
+  } catch (e) { console.log('[pos] update error:', e.message); return false; }
+}
 async function regFinish(id, s, c) {
   const d = s.reg.data;
+  const isUpdate = !!s.reg.update;
   const phone = d.phone && d.phone !== '-' ? d.phone : '';
   c.auto = c.auto || {};
-  if (!c.real_name || (c.auto.pos_filled && c.auto.pos_filled.real_name === c.real_name)) c.real_name = d.name;
-  if (phone) { c.phone = phone; c.auto.phone = c.auto.phone || phone; }
-  if (d.province && !c.province) c.province = d.province;
-  c.auto.reg = { done_at: new Date().toISOString(), source: 'chat', name: d.name, phone, province: d.province || '' };
+  const oldPhone = c.phone || '', oldProv = c.province || '';
+  if (isUpdate || !c.real_name || (c.auto.pos_filled && c.auto.pos_filled.real_name === c.real_name)) c.real_name = d.name;
+  if (phone) { c.phone = phone; c.auto.phone = isUpdate ? phone : (c.auto.phone || phone); }
+  if (d.province && (isUpdate || !c.province)) c.province = d.province;
+  c.auto.reg = { done_at: new Date().toISOString(), source: isUpdate ? 'chat-update' : 'chat', name: d.name, phone, province: d.province || '' };
   c.updated_at = new Date().toISOString();
   markDirty();
   broadcast();
   if (SB_ON) sbUpsert(c);
-  crmAddNote(id, `📝 ลูกค้าลงทะเบียนผ่านแชท: ${d.name}${phone ? ' · ' + phone : ''}${d.province ? ' · ' + d.province : ''}`, 'system').catch(() => {});
+  crmAddNote(id, `📝 ลูกค้า${isUpdate ? 'อัปเดตข้อมูล' : 'ลงทะเบียน'}ผ่านแชท: ${d.name}${phone ? ' · ' + phone : ''}${d.province ? ' · ' + d.province : ''}`, 'system').catch(() => {});
   let posNote = '';
   if (POS_ON) {
     if (!pos.rows.length && !pos.loading) posRefresh().catch(() => {});
-    const m = phone && !c.pos_id ? posMatch(id) : null;
-    if (c.pos_id) posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
-    else if (m && m.linked) posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
-    else if (m && m.candidates && m.candidates.length) posNote = ''; // เบอร์ตรงกับรายชื่ออื่น -> ให้แอดมินยืนยัน (ไม่สร้างซ้ำ)
-    else if (pos.cols) { const r = await posCreate(id, 'reg'); if (r.ok) posNote = 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว ✅'; }
+    if (c.pos_id) {
+      posNote = isUpdate ? '' : 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
+      if (isUpdate) { // ผูก POS อยู่แล้ว -> อัปเดตเบอร์/จังหวัดในแถว POS ให้ตรงกัน
+        const rec = pos.byId.get(String(c.pos_id));
+        const fields = {};
+        if (phone && phone !== oldPhone) fields.phone = phone;
+        if (d.province && d.province !== oldProv) fields.province = d.province;
+        if (rec && Object.keys(fields).length) { const okU = await posUpdateRow(rec, fields); if (okU) posNote = 'อัปเดตข้อมูลสมาชิกในระบบเรียบร้อยแล้ว ✅'; }
+      }
+    } else {
+      const m = phone ? posMatch(id) : null;
+      if (m && m.linked) posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
+      else if (m && m.candidates && m.candidates.length) posNote = ''; // เบอร์ตรงกับรายชื่ออื่น -> ให้แอดมินยืนยัน (ไม่สร้างซ้ำ)
+      else if (pos.cols) { const r = await posCreate(id, 'reg'); if (r.ok) posNote = 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว ✅'; }
+    }
   }
   const z = zoneInfo(c.province || d.province || '');
   const zoneLine = z ? `\nทีมงานดูแลพื้นที่ของคุณ (เขต ${z.zone}): ${z.team}` : '';
-  const doneMsg = `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณคุณ${d.name}${d.province ? ' จ.' + d.province : ''} 🙏${posNote ? '\n' + posNote : ''}${zoneLine}\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾`;
+  const doneMsg = (isUpdate ? `✅ อัปเดตข้อมูลเรียบร้อยค่ะ (${regSummaryText(c)}) 🙏` : `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณคุณ${d.name}${d.province ? ' จ.' + d.province : ''} 🙏`) + `${posNote ? '\n' + posNote : ''}${zoneLine}\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾`;
   const pending = s.reg.pending;
   s.reg = null;
   markDirty();
-  console.log(`[reg] ${id.slice(0, 8)} registered: ${d.name} / ${phone || '-'} / ${d.province || '-'}`);
+  console.log(`[reg] ${id.slice(0, 8)} ${isUpdate ? 'updated' : 'registered'}: ${d.name} / ${phone || '-'} / ${d.province || '-'}`);
   return { doneMsg, pending };
 }
 function regInfo(s, c) {
@@ -1278,23 +1349,38 @@ async function handleEvent(ev) {
   }
 
   // ลงทะเบียนก่อนใช้งาน (REGISTER=on): ยังไม่ลงทะเบียน -> ถาม ชื่อ/เบอร์/จังหวัด ก่อน แล้วค่อยตอบคำถามที่ค้างไว้
+  // + คำสั่ง "ลงทะเบียน" (ทุกโหมด) และ "แก้ไขข้อมูล" (อัปเดตข้อมูลที่ลงทะเบียนไว้)
   if (stype === 'user') {
     const c = crmGet(sessionId);
-    if (REG_MODE === 'off' && s.reg) { s.reg = null; markDirty(); }
-    else if (s.reg || regNeeded(c)) {
+    const cmd = ev.message.type === 'text' ? regCmd(text) : '';
+    if (cmd === 'register' && regDone(c)) {
+      await sendAnswer(s, ev, pushTarget, `คุณลูกค้าลงทะเบียนไว้แล้วค่ะ 🙏 (${regSummaryText(c)})\nถ้าต้องการแก้ไข พิมพ์ว่า "แก้ไขข้อมูล" ได้เลยค่ะ`, { system: true });
+      return;
+    }
+    if (cmd === 'register' && s.reg) { await sendAnswer(s, ev, pushTarget, 'กำลังลงทะเบียนอยู่ค่ะ 😊\n' + regPrompt(s.reg.step, s), { system: true }); return; }
+    if (cmd === 'edit' || cmd === 'register') {
+      const upd = cmd === 'edit' && regDone(c);
+      regStart(s, '', { update: upd });
+      c.auto = c.auto || {}; c.auto.reg_asked = true;
+      console.log(`[reg] ${sessionId.slice(0, 8)} ${upd ? 'update' : 'start'} by keyword`);
+      await sendAnswer(s, ev, pushTarget, regWelcome(s, c), { system: true });
+      return;
+    }
+    if (s.reg || regNeeded(c)) {
       const isText = ev.message.type === 'text';
+      const forced = REG_MODE === 'on' && !(s.reg && s.reg.update); // โหมดบังคับ (ยกเว้นตอนแก้ไขข้อมูล = ไม่บังคับ)
       if (!s.reg) {
         regStart(s, isText ? text : '');
         console.log(`[reg] ${sessionId.slice(0, 8)} start (pending=${s.reg.pending ? 'yes' : 'no'})`);
         await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true });
         return;
       }
-      if (!isText) { if (REG_MODE === 'on') { await sendAnswer(s, ev, pushTarget, regPrompt(s.reg.step, s), { system: true }); return; } }
+      if (!isText) { if (forced) { await sendAnswer(s, ev, pushTarget, regPrompt(s.reg.step, s), { system: true }); return; } }
       else {
         const h = regHandle(sessionId, s, c, text);
         if (!h.done) {
-          if (REG_MODE === 'on' || !h.invalid) { await sendAnswer(s, ev, pushTarget, h.replies, { system: true }); return; }
-          s.reg = null; markDirty(); // soft: ลูกค้าไม่ตอบคำถามลงทะเบียน -> เลิกถาม ตอบคำถามปกติ (ระบบยังเก็บเบอร์/จังหวัดจากแชทให้เอง)
+          if (forced || !h.invalid) { await sendAnswer(s, ev, pushTarget, h.replies, { system: true }); return; }
+          s.reg = null; markDirty(); // ไม่บังคับ: ลูกค้าไม่ตอบคำถามลงทะเบียน -> เลิกถาม ตอบคำถามปกติ (ระบบยังเก็บเบอร์/จังหวัดจากแชทให้เอง)
         } else {
           const fin = await regFinish(sessionId, s, c);
           const msgs = [fin.doneMsg];
@@ -1549,6 +1635,7 @@ var crmOpen = false;
 var crmData = null;
 var crmTags = [];
 var posOn = false;
+var unreg = 0;
 var PRESET_TAGS = ['ลูกค้าใหม่', 'ลูกค้าประจำ', 'ตัวแทนจำหน่าย', 'เกษตรกร', 'สนใจสินค้า', 'รอตัดสินใจ', 'ซื้อแล้ว', 'ห้ามรบกวน'];
 var STATUS_TH = { new: 'ใหม่', interested: 'สนใจ', quoted: 'เสนอราคาแล้ว', customer: 'ซื้อแล้ว', inactive: 'เงียบ/ไม่สนใจ' };
 var COLORS = ['#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
@@ -1655,7 +1742,9 @@ function load(fromLogin) {
       : (p.error
         ? '🔗 POS: <b style="color:#d33a41">ผิดพลาด</b> <span title="' + esc(p.error) + '">' + esc(String(p.error).slice(0, 60)) + '</span> · '
         : '🔗 POS: <b style="color:#0a9a4a">' + (p.rows || 0).toLocaleString('th-TH') + ' รายชื่อ</b>' + (p.loadedAt ? ' (อัปเดต ' + hhmm(p.loadedAt) + ')' : ' (กำลังโหลด…)') + (p.writeback ? ' · เขียน LINE ID กลับ POS: เปิด' : '') + ' · ');
-    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b> · ';
+    unreg = d.unregistered || 0;
+    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b>'
+      + (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว') + ' · ';
     cache = d.sessions;
     var pend = d.pending || 0;
     var cbEl = document.getElementById('cbcount');
@@ -1775,7 +1864,7 @@ function renderCrm(d) {
   var regHtml = '';
   if (rg.mode === 'off') regHtml = '<div class="auto" style="color:#98a2ad;margin-bottom:6px">📝 ระบบลงทะเบียน: ปิด (REGISTER=off)</div>';
   else if (rg.done) regHtml = '<div class="posbox" style="margin-bottom:6px">📝 ลงทะเบียนแล้ว' + (rg.done_at ? ' · ' + dayLabel(Date.parse(rg.done_at)) + ' ' + hhmm(Date.parse(rg.done_at)) : '') + ' · ' + (rg.source === 'chat' ? 'ลูกค้ากรอกในแชท' : (rg.source === 'admin' ? 'แอดมินยืนยัน' : 'ผูกกับ POS')) + (rg.data && rg.data.name ? '<br><small style="color:#55606b">' + esc(rg.data.name) + (rg.data.phone ? ' · ' + esc(rg.data.phone) : '') + (rg.data.province ? ' · ' + esc(rg.data.province) : '') + '</small>' : '') + '<span class="unl" id="cf_regreset" title="ลบสถานะลงทะเบียน บอทจะถามลูกค้าใหม่">↺ ให้ถามใหม่</span></div>';
-  else regHtml = '<div class="auto" style="margin-bottom:6px;border-color:#f5c6c6;background:#fff8f8">📝 <b>ยังไม่ลงทะเบียน</b>' + (rg.inProgress ? ' · บอทกำลังถาม: <b>' + ({ name: 'ชื่อ-นามสกุล', phone: 'เบอร์โทร', province: 'จังหวัด' }[rg.step] || rg.step) + '</b>' : (rg.mode === 'on' ? ' · บอทจะถามเมื่อลูกค้าทักครั้งถัดไป' : ' (โหมด soft ไม่บังคับ)')) + '<br><small style="color:#55606b">กรอก ชื่อ+เบอร์+จังหวัด แล้วบันทึก = ลงทะเบียนให้ลูกค้าเอง หรือ </small><span class="unl" id="cf_regdone" style="color:#2f5fa3">✓ ถือว่าลงทะเบียนแล้ว</span></div>';
+  else regHtml = '<div class="auto" style="margin-bottom:6px;border-color:#f5c6c6;background:#fff8f8">📝 <b>ยังไม่ลงทะเบียน</b>' + (rg.inProgress ? ' · บอทกำลังถาม: <b>' + ({ name: 'ชื่อ-นามสกุล', phone: 'เบอร์โทร', province: 'จังหวัด' }[rg.step] || rg.step) + '</b>' : (rg.mode === 'on' ? ' · บอทจะถามเมื่อลูกค้าทักครั้งถัดไป' : ' (โหมด soft ไม่บังคับ)')) + '<br><small style="color:#55606b">กรอก ชื่อ+เบอร์+จังหวัด แล้วบันทึก = ลงทะเบียนให้ลูกค้าเอง หรือ </small><span class="unl" id="cf_regdone" style="color:#2f5fa3">✓ ถือว่าลงทะเบียนแล้ว</span> · <span class="unl" id="cf_reginvite" style="color:#2f5fa3" title="ส่งข้อความเชิญลงทะเบียนถึงลูกค้ารายนี้ (Push 1 ข้อความ)">📣 ส่งคำเชิญลงทะเบียน</span></div>';
   var h = ''
     + '<div style="display:flex;justify-content:space-between;align-items:center"><h4>👤 โปรไฟล์ลูกค้า</h4><span class="exp" id="crmclose">✕ ปิด</span></div>'
     + regHtml
@@ -1850,6 +1939,23 @@ function posCreateUi() {
     loadCrm(sel);
     load();
   }).catch(function(e) { alert('สร้างไม่สำเร็จ: ' + e.message); });
+}
+
+function inviteUi() {
+  if (!sel || !confirm('ส่งข้อความเชิญลงทะเบียน (ชื่อ/เบอร์/จังหวัด) ถึงลูกค้ารายนี้ทาง LINE? (ใช้โควต้า Push 1 ข้อความ)')) return;
+  api('/admin/api/reg/invite', { method: 'POST', body: JSON.stringify({ id: sel }) }).then(function() {
+    loadCrm(sel); load();
+  }).catch(function(e) { alert('ส่งไม่สำเร็จ: ' + e.message); });
+}
+
+function inviteAllUi() {
+  if (!confirm('ส่งข้อความเชิญลงทะเบียนถึงลูกค้าที่ยังไม่ลงทะเบียน ' + unreg + ' แชท ทาง LINE?\\n(ใช้โควต้า Push ' + unreg + ' ข้อความ · คนที่เพิ่งได้รับคำเชิญใน 24 ชม. จะไม่ส่งซ้ำ)')) return;
+  var el = document.getElementById('invbtn');
+  if (el) el.textContent = '📣 กำลังส่ง…';
+  api('/admin/api/reg/invite', { method: 'POST', body: JSON.stringify({ all: true }) }).then(function(d) {
+    alert('ส่งคำเชิญแล้ว ' + d.sent + ' แชท' + (d.failed ? ' · ส่งไม่ได้ ' + d.failed + ' แชท (บล็อก OA/โควต้า)' : '') + '\\nเมื่อลูกค้าตอบกลับ บอทจะเดินขั้นตอนลงทะเบียนต่อให้เอง');
+    load();
+  }).catch(function(e) { alert('ส่งไม่สำเร็จ: ' + e.message); load(); });
 }
 
 function regActionUi(action) {
@@ -2083,6 +2189,9 @@ document.getElementById('cbbtn').addEventListener('click', function() {
 document.getElementById('q').addEventListener('input', function() { q = this.value.trim().toLowerCase(); renderList(); });
 document.getElementById('crmbtn').addEventListener('click', function() { toggleCrm(); });
 document.getElementById('expbtn').addEventListener('click', exportCsv);
+document.getElementById('posst').addEventListener('click', function(e) {
+  if (e.target && e.target.id === 'invbtn') inviteAllUi();
+});
 document.getElementById('crm').addEventListener('click', function(e) {
   var t = e.target;
   if (t.id === 'crmclose') { toggleCrm(false); return; }
@@ -2093,6 +2202,7 @@ document.getElementById('crm').addEventListener('click', function(e) {
   if (t.id === 'cf_poscreate') { if (!t.disabled) posCreateUi(); return; }
   if (t.id === 'cf_regdone') { regActionUi('done'); return; }
   if (t.id === 'cf_regreset') { regActionUi('reset'); return; }
+  if (t.id === 'cf_reginvite') { inviteUi(); return; }
   var lk = t.closest ? t.closest('.lnk') : null;
   if (lk) {
     var pid = lk.getAttribute('data-pos');
@@ -2186,7 +2296,7 @@ function handleAdmin(req, res, path, body) {
       .slice(0, 100);
     const pending = [...sessions.values()].filter((s) => s.cb).length;
     const posSt = POS_ON ? { on: true, rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, writeback: !!(pos.cols && pos.cols.line) } : { on: false };
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, pending, now, sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, unregistered: regUnregisteredIds().length, pending, now, sessions: list });
   }
 
   // ---- CRM ----
@@ -2221,6 +2331,26 @@ function handleAdmin(req, res, path, body) {
     if (SB_ON) sbUpsert(c);
     console.log(`[admin] ${id.slice(0, 8)} reg ${data.action}`);
     return sendJson(res, 200, { ok: true, reg: regInfo(s, c) });
+  }
+  // เชิญลงทะเบียน (Push): {id} = แชทเดียว, {all:true} = ทุกแชทลูกค้าที่ยังไม่ลงทะเบียน (ข้ามคนที่เพิ่งเชิญไปใน 24 ชม.)
+  if (path === '/admin/api/reg/invite' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    if (data.all === true) {
+      const dayAgo = Date.now() - 24 * 3600000;
+      const ids = regUnregisteredIds().filter((id) => { const s = sessions.get(id); return !(s.reg && s.reg.invitedAt && s.reg.invitedAt > dayAgo); }).slice(0, 300);
+      (async () => {
+        let sent = 0, failed = 0;
+        for (const id of ids) { const r = await regInvite(id); if (r.ok) sent++; else failed++; await new Promise((rs) => setTimeout(rs, 120)); }
+        console.log(`[admin] invite all: sent=${sent} failed=${failed}`);
+        sendJson(res, 200, { ok: true, total: ids.length, sent, failed, remaining: regUnregisteredIds().length });
+      })().catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+      return;
+    }
+    const id = data.id;
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    regInvite(id).then((r) => sendJson(res, r.ok ? 200 : 400, Object.assign({ ok: r.ok, error: r.err }, r.ok ? { reg: regInfo(sessions.get(id), crmGet(id)) } : {})));
+    return;
   }
   if (path === '/admin/api/pos/create' && req.method === 'POST') {
     let data = {};
@@ -2379,7 +2509,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.1, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.2, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -2422,4 +2552,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.1 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.2 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
