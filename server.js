@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.0
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.1
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -34,8 +34,13 @@
 //       เบอร์ตรง 1 คน + ชื่อสอดคล้อง (ชื่อจริง/ชื่อ LINE/ข้อความที่พิมพ์เบอร์มา) -> ผูกอัตโนมัติ ใส่ชื่อ/จังหวัดจาก POS + แท็ก "ลูกค้า POS"
 //       เบอร์ตรงหลายคน หรือชื่อไม่สอดคล้อง -> โชว์ "รายชื่อที่น่าจะใช่" ในแผง CRM ให้แอดมินกดผูกเอง
 //     - แอดมินค้นหาชื่อ/เบอร์ใน POS แล้วกดผูก/ยกเลิกผูกได้ · ถ้าตาราง POS มี column line_user_id ระบบเขียน LINE userId กลับให้
-//     - ต้องเพิ่ม column pos_* ใน crm_customers (ดูไฟล์ supabase_pos_link_setup.sql) ถ้ายังไม่เพิ่ม ระบบยังทำงาน (เก็บในเครื่อง)
-// 11. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+//     - ต้องเพิ่ม column pos_* ใน crm_customers (ดูไฟล์ supabase_crm_pos_setup.sql) ถ้ายังไม่เพิ่ม ระบบยังทำงาน (เก็บในเครื่อง)
+// 11. v3.1: ลงทะเบียนลูกค้าใหม่ผ่านแชท (REGISTER=on ค่าเริ่ม) — ลูกค้าแอดเพื่อน/ทักครั้งแรก บอทขอ ชื่อ-นามสกุล -> เบอร์โทร -> จังหวัด
+//     ก่อนตอบคำถาม (คำถามแรกที่ค้างไว้จะตอบให้ทันทีหลังลงทะเบียน) พิมพ์มาครบในข้อความเดียวก็จบเลย
+//     เสร็จแล้ว: เบอร์ตรงกับ POS + ชื่อสอดคล้อง -> ผูกอัตโนมัติ · ไม่พบใน POS -> สร้างแถวใหม่ในตาราง customers ให้เลย
+//     (พร้อม name/phone/province/first_name/last_name/line_user_id — POS ไม่ต้องเพิ่มลูกค้าซ้ำ) · เบอร์ตรงแต่ชื่อไม่ตรง -> ให้แอดมินยืนยัน
+//     แอดมินกด "✓ ถือว่าลงทะเบียนแล้ว" / "➕ สร้างใน POS" ในแผงโปรไฟล์ได้ · REGISTER=soft ถามตอนแอดเพื่อนแต่ไม่บังคับ · off ปิด
+// 12. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -58,6 +63,8 @@
 //                             (ไม่บังคับ) ระบุชื่อ column เองถ้าระบบเดาไม่ถูก (NAME ใช้ + ต่อหลาย column เช่น first_name+last_name,
 //                             PHONE/EXTRA คั่นด้วย , ได้) — POS_COL_LINE = column ที่ให้เขียน LINE userId กลับ (ค่าเริ่ม line_user_id ถ้ามี)
 //  POS_REFRESH_MIN            (ไม่บังคับ) นาทีต่อการรีเฟรชรายชื่อ POS ค่าเริ่ม 15
+//  POS_INSERT_DEFAULTS        (ไม่บังคับ) JSON ค่าเพิ่มเติมตอนสร้างลูกค้าใหม่ใน POS เช่น {"type":"retail","customer_tier":"General"}
+//  REGISTER                   (ไม่บังคับ) on (ค่าเริ่ม) = บังคับลงทะเบียน ชื่อ/เบอร์/จังหวัด ก่อนบอทตอบ · soft = ถามแต่ไม่บังคับ · off = ปิด
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -92,6 +99,10 @@ const POS_TABLE = POS_TABLE_RAW.includes('.') ? POS_TABLE_RAW.split('.').slice(1
 const POS_ON = SB_ON && !!POS_TABLE;
 const POS_COLS_ENV = { id: process.env.POS_COL_ID, name: process.env.POS_COL_NAME, phone: process.env.POS_COL_PHONE, province: process.env.POS_COL_PROVINCE, district: process.env.POS_COL_DISTRICT, line: process.env.POS_COL_LINE, extra: process.env.POS_COL_EXTRA };
 const POS_REFRESH_MIN = Math.max(1, parseInt(process.env.POS_REFRESH_MIN || '15', 10) || 15);
+let POS_INSERT_DEFAULTS = {};
+try { POS_INSERT_DEFAULTS = JSON.parse(process.env.POS_INSERT_DEFAULTS || '{}') || {}; } catch (_) { console.log('[pos] POS_INSERT_DEFAULTS ไม่ใช่ JSON ที่ถูกต้อง — ข้าม'); }
+// ลงทะเบียนลูกค้าใหม่ (v3.1): on = บังคับกรอก ชื่อ/เบอร์/จังหวัด ก่อนบอทตอบ · soft = ถามตอนแอดเพื่อน แต่ไม่บังคับ · off = ปิด
+const REG_MODE = ['on', 'soft', 'off'].includes((process.env.REGISTER || 'on').trim().toLowerCase()) ? (process.env.REGISTER || 'on').trim().toLowerCase() : 'on';
 
 // ---------- ทะเบียนแชท + สถานะ + ประวัติ ----------
 const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history,bf,cb,cbDone,cbCount}
@@ -138,7 +149,8 @@ function initPersist() {
             history: s.history.slice(-HIST_MAX), bf: !!s.bf,
             cb: (s.cb && typeof s.cb === 'object') ? s.cb : null,
             cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
-            cbCount: s.cbCount || 0
+            cbCount: s.cbCount || 0,
+            reg: (s.reg && typeof s.reg === 'object' && s.reg.step) ? s.reg : null // ลงทะเบียนค้างอยู่ -> ถามต่อจากขั้นเดิม
           });
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
@@ -211,7 +223,7 @@ setInterval(() => {
 function touchSession(id, type, text) {
   let s = sessions.get(id);
   if (!s) {
-    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false, cb: null, cbDone: null, cbCount: 0 };
+    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false, cb: null, cbDone: null, cbCount: 0, reg: null };
     sessions.set(id, s);
     if (sessions.size > 500) {
       let oldestId = null, oldestAt = Infinity;
@@ -375,22 +387,30 @@ async function askDify(sessionId, text) {
 }
 
 // ---------- LINE ----------
+// text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
+function lineMsgs(text) {
+  return (Array.isArray(text) ? text : [text]).filter((t) => t != null && String(t).trim()).slice(0, 5).map((t) => ({ type: 'text', text: String(t).slice(0, 4900) }));
+}
 async function lineReply(replyToken, text) {
   if (!replyToken) return false;
+  const messages = lineMsgs(text);
+  if (!messages.length) return false;
   try {
     const r = await request('POST', 'https://api.line.me/v2/bot/message/reply',
       { Authorization: `Bearer ${CH_TOKEN}` },
-      { replyToken, messages: [{ type: 'text', text }] });
+      { replyToken, messages });
     if (r.status !== 200) console.log('reply error:', r.status, JSON.stringify(r.data).slice(0, 300));
     return r.status === 200;
   } catch (e) { console.log('reply fetch error:', e.message); return false; }
 }
 
 async function linePush(to, text) {
+  const messages = lineMsgs(text);
+  if (!messages.length) return false;
   try {
     const r = await request('POST', 'https://api.line.me/v2/bot/message/push',
       { Authorization: `Bearer ${CH_TOKEN}` },
-      { to, messages: [{ type: 'text', text }] });
+      { to, messages });
     if (r.status !== 200) console.log('push error:', r.status, JSON.stringify(r.data).slice(0, 300));
     return r.status === 200;
   } catch (e) { console.log('push fetch error:', e.message); return false; }
@@ -424,6 +444,15 @@ const ZONE_TEAM = {
   A10: 'ME พิรยา สินสุวรรณ์ (แป้ง) 063-2059063 · MR สุประวีณ์ บุญมี (ปอ) 063-2059068'
 };
 const PROVINCE_RX = new RegExp('(' + Object.keys(ZONE_OF).sort((a, b) => b.length - a.length).join('|') + ')');
+// จังหวัดทั้งหมด (รวมที่ไม่อยู่ในเขตขาย) + ชื่อย่อ -> ชื่อเต็ม สำหรับตรวจตอนลงทะเบียน
+const PROVINCE_ALIAS = { 'กรุงเทพ': 'กรุงเทพมหานคร', 'กทม': 'กรุงเทพมหานคร', 'กทม.': 'กรุงเทพมหานคร', 'โคราช': 'นครราชสีมา', 'อยุธยา': 'พระนครศรีอยุธยา', 'อุบล': 'อุบลราชธานี', 'สุราษ': 'สุราษฎร์ธานี', 'สุราษฎร์': 'สุราษฎร์ธานี', 'นครศรี': 'นครศรีธรรมราช', 'ประจวบ': 'ประจวบคีรีขันธ์', 'หนองบัว': 'หนองบัวลำภู', 'ปราจีน': 'ปราจีนบุรี', 'สมุทรสาคร': 'สมุทรสาคร' };
+const PROVINCES_ALL = [...new Set(Object.keys(ZONE_OF).concat(['กรุงเทพมหานคร', 'อุตรดิตถ์', 'สุโขทัย', 'อุทัยธานี']).filter((p) => p !== 'โคราช' && p !== 'อยุธยา'))];
+const PROVINCE_ALL_RX = new RegExp('(' + PROVINCES_ALL.concat(Object.keys(PROVINCE_ALIAS)).sort((a, b) => b.length - a.length).map((p) => p.replace(/\./g, '\\.')).join('|') + ')');
+function provinceOf(text) {
+  const m = PROVINCE_ALL_RX.exec(String(text || ''));
+  if (!m) return '';
+  return PROVINCE_ALIAS[m[1]] || m[1];
+}
 const CROP_WORDS = ['ทุเรียน', 'นาข้าว', 'ข้าวโพด', 'ข้าว', 'ลำไย', 'มะม่วง', 'ส้ม', 'อ้อย', 'มันสำปะหลัง', 'มัน', 'ปาล์ม', 'ยางพารา', 'พริก', 'หอม', 'กระเทียม', 'คะน้า', 'ผัก', 'มะเขือ', 'ถั่วฝักยาว', 'มังคุด', 'เงาะ', 'ลองกอง', 'กาแฟ', 'มะพร้าว', 'แตง'];
 
 function zoneInfo(province) {
@@ -562,6 +591,13 @@ function crmUpdate(id, fields) {
     c[k] = v;
   }
   c.updated_at = new Date().toISOString();
+  // แอดมินกรอก ชื่อ+เบอร์+จังหวัด ครบ = ถือว่าลงทะเบียนแล้ว (บอทจะไม่ถามลูกค้าซ้ำ)
+  if (!regDone(c) && c.real_name && c.phone && c.province) {
+    c.auto = c.auto || {};
+    c.auto.reg = { done_at: c.updated_at, source: 'admin', name: c.real_name, phone: normPhone(c.phone) || c.phone, province: c.province };
+    const s = sessions.get(id);
+    if (s && s.reg) { s.reg = null; }
+  }
   markDirty();
   broadcast();
   if (POS_ON && !c.pos_id && before !== (c.phone || '') + '|' + (c.real_name || '')) posMatch(id); // แอดมินกรอกเบอร์/ชื่อ -> จับคู่ POS
@@ -742,6 +778,7 @@ async function posRefresh() {
       console.log(`[pos] loaded ${list.length} farmers from ${POS_TABLE_RAW} (${byPhone.size} phones indexed, writeback=${k.line ? k.line : 'off'})`);
       posRematchAll();
       broadcast();
+      posSyncRegistered().catch((e) => console.log('[pos] sync registered error:', e.message));
       return true;
     } catch (e) { pos.error = 'โหลดรายชื่อ POS ผิดพลาด: ' + e.message; console.log('[pos]', pos.error); return false; }
     finally { pos.loading = null; }
@@ -753,7 +790,7 @@ function posBrief(rec, hints) {
   return { id: rec.id, name: rec.name, phone: rec.phones[0] || '', province: rec.province, district: rec.district, extra: rec.extra, ok: nameConsistent(hints || [], rec.names) };
 }
 function posHints(c, s) {
-  const arr = [c.real_name, (s && s.name && s.name !== '…') ? s.name : (c.display_name || ''), c.auto && c.auto.phone_ctx, s && s.cb && s.cb.contact, s && s.cbDone && s.cbDone.contact];
+  const arr = [c.real_name, s && s.reg && s.reg.data && s.reg.data.name, c.auto && c.auto.reg && c.auto.reg.name, (s && s.name && s.name !== '…') ? s.name : (c.display_name || ''), c.auto && c.auto.phone_ctx, s && s.cb && s.cb.contact, s && s.cbDone && s.cbDone.contact];
   return arr.filter((x) => x && String(x).trim()).map(String);
 }
 function posPhonesOfChat(c, s) {
@@ -802,6 +839,7 @@ function posRematchAll() {
 async function posWriteBack(rec, lineUserId) {
   const k = pos.cols;
   if (!k || !k.line || !rec) return 'nocol';
+  if (lineUserId && rec.line === lineUserId) return 'ok'; // ค่าใน POS ตรงอยู่แล้ว (เช่น เพิ่งสร้างแถวพร้อม line_user_id)
   try {
     const path = `/${POS_TABLE}?${encodeURIComponent(k.id)}=eq.${encodeURIComponent(rec.id)}` + (lineUserId === null ? `&${encodeURIComponent(k.line)}=eq.${encodeURIComponent(rec.line || '')}` : '');
     const r = await sb('PATCH', path, { [k.line]: lineUserId }, Object.assign({ Prefer: 'return=minimal' }, POS_HEADERS));
@@ -895,6 +933,187 @@ function posInfoFor(c) {
   };
 }
 
+// สร้างรายชื่อใหม่ในตาราง POS จากโปรไฟล์ CRM (ลูกค้าลงทะเบียนผ่านแชท / แอดมินกด) แล้วผูกทันที
+const SHOP_NAME_RX = /^(ร้าน|บริษัท|บจก|บจ\.|บมจ|หจก|ห้าง|สหกรณ์|กลุ่ม|วิสาหกิจ|สวน|ไร่|ฟาร์ม|โรงงาน|ศูนย์)/;
+async function posCreate(id, by) {
+  const c = crm.get(id);
+  if (!POS_ON) return { ok: false, err: 'POS link ปิดอยู่' };
+  if (!pos.cols || !pos.cols.name.length) { if (!pos.loading) posRefresh().catch(() => {}); return { ok: false, err: 'ยังโหลดโครงสร้างตาราง POS ไม่เสร็จ ลองใหม่อีกครั้ง' }; }
+  if (!c) return { ok: false, err: 'ไม่พบโปรไฟล์' };
+  if (c.pos_id) return { ok: false, err: 'ผูกกับ POS อยู่แล้ว' };
+  const name = String(c.real_name || '').trim().slice(0, 120);
+  if (!name) return { ok: false, err: 'ต้องมีชื่อจริงก่อน (กรอกในโปรไฟล์)' };
+  const phone = normPhone(c.phone) || normPhone(c.auto && c.auto.phone) || '';
+  const k = pos.cols;
+  const row = {};
+  const shopLike = SHOP_NAME_RX.test(name);
+  const bare = name.replace(NAME_PREFIX_RX, '').trim();
+  const parts = bare.split(/\s+/).filter(Boolean);
+  if (k.name.length >= 2) { row[k.name[0]] = parts[0] || name; row[k.name[1]] = parts.slice(1).join(' ') || null; }
+  else row[k.name[0]] = name;
+  if (k.phone[0] && phone) row[k.phone[0]] = phone;
+  if (k.province && c.province) row[k.province] = String(c.province).slice(0, 60);
+  if (k.district && c.district) row[k.district] = String(c.district).slice(0, 60);
+  if (k.line) row[k.line] = id;
+  const pair = k.alt.find((a) => a.length === 2);
+  if (pair && k.name.length === 1 && !shopLike && parts.length) { row[pair[0]] = parts[0]; if (parts.length > 1) row[pair[1]] = parts.slice(1).join(' '); }
+  if (k.all.includes('entity_type') && !('entity_type' in POS_INSERT_DEFAULTS)) row.entity_type = shopLike ? 'organization' : 'person';
+  for (const [kk, v] of Object.entries(POS_INSERT_DEFAULTS)) if (k.all.includes(kk)) row[kk] = v;
+  try {
+    const r = await sb('POST', `/${POS_TABLE}?select=*`, [row], Object.assign({ Prefer: 'return=representation' }, POS_HEADERS));
+    if (r.status < 300 && Array.isArray(r.data) && r.data[0]) {
+      const rec = posRecOf(r.data[0]);
+      if (!rec.id) return { ok: false, err: 'สร้างแล้วแต่ไม่ได้ id กลับมา' };
+      pos.rows.push(rec); pos.byId.set(rec.id, rec);
+      for (const p of rec.phones) { const arr = pos.byPhone.get(p) || []; arr.push(rec); pos.byPhone.set(p, arr); }
+      if (k.line) rec.line = id;
+      c.auto = c.auto || {}; delete c.auto.pos_create_err;
+      posLink(id, rec, by || 'reg');
+      console.log(`[pos] ${id.slice(0, 8)} created in POS -> ${rec.id} (${rec.name}) by=${by || 'reg'}`);
+      return { ok: true, rec: posBrief(rec, []) };
+    }
+    const err = `${r.status} ${JSON.stringify(r.data).slice(0, 200)}`;
+    c.auto = c.auto || {}; c.auto.pos_create_err = err.slice(0, 200); markDirty();
+    console.log('[pos] create failed:', err);
+    return { ok: false, err: 'สร้างรายชื่อใน POS ไม่สำเร็จ: ' + err };
+  } catch (e) { c.auto = c.auto || {}; c.auto.pos_create_err = e.message; markDirty(); return { ok: false, err: 'สร้างรายชื่อใน POS ผิดพลาด: ' + e.message }; }
+}
+// หลังโหลดรายชื่อ POS: ลูกค้าที่ลงทะเบียนแล้วแต่ยังไม่มีใน POS (ไม่มีเบอร์ตรง/ไม่มีรายชื่อรอยืนยัน) -> สร้างให้ (ลองไม่เกิน 3 ครั้ง)
+async function posSyncRegistered() {
+  if (!POS_ON || !pos.cols) return;
+  let n = 0;
+  for (const [id, c] of crm) {
+    const reg = c.auto && c.auto.reg;
+    if (!reg || !reg.done_at || c.pos_id || !c.real_name) continue;
+    if (Array.isArray(c.pos_candidates) && c.pos_candidates.length) continue; // รอแอดมินยืนยัน
+    if ((reg.pos_tries || 0) >= 3) continue;
+    reg.pos_tries = (reg.pos_tries || 0) + 1;
+    const r = await posCreate(id, 'reg');
+    if (r.ok) n++;
+  }
+  if (n) console.log(`[pos] created ${n} registered customer(s) in POS`);
+}
+
+// ---------- ลงทะเบียนลูกค้าใหม่ผ่านแชท (v3.1): ชื่อ-นามสกุล -> เบอร์โทร -> จังหวัด ----------
+// s.reg = { step:'name'|'phone'|'province', data:{name,phone,province}, tries:{}, pending:'คำถามแรก', at }
+const REG_QUESTION_RX = /[?？]|ไหม|มั้ย|อะไร|ยังไง|อย่างไร|เท่าไหร่|เท่าไร|กี่|ที่ไหน|ทำไม|แนะนำ|ราคา|ช่วย|ใช้กับ|ฉีด|พ่น|กำจัด|หนอน|เพลี้ย|โรค|ยา|ปุ๋ย|วัชพืช|หญ้า|สินค้า|โปร/;
+const REG_GREET_RX = /^(สวัสดี|หวัดดี|ดีค่ะ|ดีครับ|hello|hi|hey|ครับ|ค่ะ|คะ|จ้า|โย่|ฮัลโหล|สนใจ|ขอ)/i;
+const REG_LEAD_RX = /^(สวัสดีครับ|สวัสดีค่ะ|สวัสดี|ผมชื่อ|ฉันชื่อ|ดิฉันชื่อ|หนูชื่อ|เราชื่อ|ชื่อว่า|ชื่อคือ|ชื่อ|ผม|ดิฉัน|หนู|เรา|คือ|คุณ)\s*/;
+const REG_TAIL_RX = /\s*(นะครับ|นะคะ|ครับผม|ครับ|ค่ะ|คะ|ค่า|นะ|จ้า|จ้ะ|เลย|น้า|งับ|คับ)+$/;
+const REG_WORD_RX = /(^|\s)(ชื่อ|นามสกุล|เบอร์โทร|เบอร์|โทร|โทรศัพท์|จังหวัด|จ\.|อยู่ที่|อยู่|ที่|ปลูก|ทำนา|ทำสวน|เกษตรกร|บ้าน|อำเภอ|ตำบล)(?=\s|$)/g;
+function regClean(str) {
+  let s = String(str || '').replace(/[^\p{L}\p{M}\p{N}\s.]/gu, ' ').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 3; i++) s = s.replace(REG_LEAD_RX, '').replace(REG_TAIL_RX, '').trim();
+  s = s.replace(REG_WORD_RX, ' ').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 2; i++) s = s.replace(REG_LEAD_RX, '').replace(REG_TAIL_RX, '').trim();
+  return s;
+}
+function regDone(c) { return !!(c && (c.pos_id || (c.auto && c.auto.reg && c.auto.reg.done_at))); }
+function regNeeded(c) { return REG_MODE === 'on' && !regDone(c); }
+function regStart(s, pendingText) {
+  s.reg = { step: 'name', data: {}, tries: {}, pending: '', at: Date.now() };
+  const t = String(pendingText || '').trim();
+  if (t && t.length >= 6 && !REG_GREET_RX.test(t) && REG_QUESTION_RX.test(t)) s.reg.pending = t.slice(0, 500);
+  markDirty();
+}
+function regParse(text) {
+  const raw = String(text || '').trim();
+  const phones = phonesOf(raw);
+  const province = provinceOf(raw);
+  let rest = raw.replace(new RegExp(PHONE_RX.source, 'g'), ' ').replace(/(\+?66)?[\d\-\s]{9,}/g, ' ');
+  if (province) rest = rest.replace(PROVINCE_ALL_RX, ' ');
+  return { phone: phones[0] || '', province, name: regClean(rest) };
+}
+function regNameOk(n) { return n && n.length >= 2 && n.length <= 60 && /\p{L}/u.test(n) && !REG_QUESTION_RX.test(n); }
+function regPrompt(step, s) {
+  const d = s.reg.data;
+  if (step === 'name') return '1️⃣ ขอทราบชื่อ-นามสกุลของคุณลูกค้าค่ะ (พิมพ์ตอบได้เลย เช่น สมชาย ใจดี)';
+  if (step === 'phone') return (d.name ? `ขอบคุณค่ะ คุณ${d.name} 😊\n` : '') + '2️⃣ ขอเบอร์โทรศัพท์ที่ติดต่อได้ค่ะ (ตัวเลข 10 หลัก เช่น 0812345678)';
+  return '3️⃣ อยู่จังหวัดอะไรคะ (พิมพ์ชื่อจังหวัด เช่น จันทบุรี, ขอนแก่น)';
+}
+function regWelcome(s) {
+  return 'สวัสดีค่ะ 🙏 น้องลัดดา ผู้ช่วยจาก ICP Ladda ยินดีต้อนรับค่ะ 🌾\nก่อนเริ่มใช้งาน ขอข้อมูลสั้นๆ 3 อย่าง เพื่อให้ทีมงานในพื้นที่ดูแลคุณลูกค้าได้ตรงจุดนะคะ (ไม่ถึงนาทีค่ะ)\n\n' + regPrompt('name', s)
+    + (s.reg.pending ? '\n\n(คำถามเรื่อง “' + s.reg.pending.slice(0, 40) + (s.reg.pending.length > 40 ? '…' : '') + '” น้องลัดดาจะตอบให้ทันทีหลังลงทะเบียนเสร็จค่ะ)' : '');
+}
+// คืนค่า { replies:[...], done:bool }
+function regHandle(id, s, c, text) {
+  const r = s.reg;
+  const d = r.data;
+  const p = regParse(text);
+  const step = r.step;
+  const invalid = [];
+  // รับข้อมูลทุกช่องที่จับได้จากข้อความ (พิมพ์มาทีเดียวครบก็จบเลย)
+  if (p.phone && !d.phone) d.phone = p.phone;
+  if (p.province && !d.province) d.province = p.province;
+  if (step === 'name') {
+    if (regNameOk(p.name) && !d.name) d.name = p.name.slice(0, 60);
+    else if (!d.name) { r.tries.name = (r.tries.name || 0) + 1; if (r.tries.name >= 3 && p.name && p.name.length >= 2) d.name = p.name.slice(0, 60); else invalid.push('name'); }
+  } else if (step === 'phone') {
+    if (!p.phone && !d.phone) {
+      r.tries.phone = (r.tries.phone || 0) + 1;
+      if (/^ข้าม$/.test(String(text).trim()) && r.tries.phone >= 2) d.phone = '-';
+      else invalid.push('phone');
+    }
+  } else if (step === 'province') {
+    if (!p.province && !d.province) {
+      r.tries.province = (r.tries.province || 0) + 1;
+      const t = p.name;
+      if (r.tries.province >= 2 && t && t.length <= 40 && /\p{L}/u.test(t)) d.province = t; // ยอมรับข้อความที่พิมพ์ (แอดมินแก้ทีหลังได้)
+      else invalid.push('province');
+    }
+    if (!d.name && regNameOk(p.name)) d.name = p.name.slice(0, 60);
+  }
+  if (invalid.length) {
+    const msg = step === 'name'
+      ? (REG_QUESTION_RX.test(String(text)) ? 'น้องลัดดาขอทราบชื่อ-นามสกุลก่อนนะคะ (พิมพ์เฉพาะชื่อค่ะ เช่น สมชาย ใจดี) แล้วจะรีบตอบคำถามให้ทันทีค่ะ 😊' : 'ขอชื่อ-นามสกุลของคุณลูกค้าค่ะ (พิมพ์เฉพาะชื่อ เช่น สมชาย ใจดี)')
+      : step === 'phone'
+        ? ('เบอร์โทรยังไม่ถูกต้องค่ะ พิมพ์เป็นตัวเลข 9-10 หลัก เช่น 0812345678' + (r.tries.phone >= 2 ? '\n(ถ้าไม่สะดวกให้เบอร์ พิมพ์ว่า ข้าม ได้ค่ะ)' : ''))
+        : 'ยังไม่พบชื่อจังหวัดค่ะ ลองพิมพ์ใหม่อีกครั้ง เช่น ขอนแก่น, จันทบุรี, นครสวรรค์';
+    if (step === 'name' && !r.pending && REG_QUESTION_RX.test(String(text)) && String(text).length >= 6) r.pending = String(text).slice(0, 500);
+    markDirty();
+    return { replies: [msg], done: false, invalid: true };
+  }
+  // ขั้นต่อไปที่ยังขาด
+  const next = !d.name ? 'name' : (!d.phone ? 'phone' : (!d.province ? 'province' : ''));
+  if (next) { r.step = next; markDirty(); return { replies: [regPrompt(next, s)], done: false }; }
+  return { replies: [], done: true };
+}
+async function regFinish(id, s, c) {
+  const d = s.reg.data;
+  const phone = d.phone && d.phone !== '-' ? d.phone : '';
+  c.auto = c.auto || {};
+  if (!c.real_name || (c.auto.pos_filled && c.auto.pos_filled.real_name === c.real_name)) c.real_name = d.name;
+  if (phone) { c.phone = phone; c.auto.phone = c.auto.phone || phone; }
+  if (d.province && !c.province) c.province = d.province;
+  c.auto.reg = { done_at: new Date().toISOString(), source: 'chat', name: d.name, phone, province: d.province || '' };
+  c.updated_at = new Date().toISOString();
+  markDirty();
+  broadcast();
+  if (SB_ON) sbUpsert(c);
+  crmAddNote(id, `📝 ลูกค้าลงทะเบียนผ่านแชท: ${d.name}${phone ? ' · ' + phone : ''}${d.province ? ' · ' + d.province : ''}`, 'system').catch(() => {});
+  let posNote = '';
+  if (POS_ON) {
+    if (!pos.rows.length && !pos.loading) posRefresh().catch(() => {});
+    const m = phone && !c.pos_id ? posMatch(id) : null;
+    if (c.pos_id) posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
+    else if (m && m.linked) posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
+    else if (m && m.candidates && m.candidates.length) posNote = ''; // เบอร์ตรงกับรายชื่ออื่น -> ให้แอดมินยืนยัน (ไม่สร้างซ้ำ)
+    else if (pos.cols) { const r = await posCreate(id, 'reg'); if (r.ok) posNote = 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว ✅'; }
+  }
+  const z = zoneInfo(c.province || d.province || '');
+  const zoneLine = z ? `\nทีมงานดูแลพื้นที่ของคุณ (เขต ${z.zone}): ${z.team}` : '';
+  const doneMsg = `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณคุณ${d.name}${d.province ? ' จ.' + d.province : ''} 🙏${posNote ? '\n' + posNote : ''}${zoneLine}\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾`;
+  const pending = s.reg.pending;
+  s.reg = null;
+  markDirty();
+  console.log(`[reg] ${id.slice(0, 8)} registered: ${d.name} / ${phone || '-'} / ${d.province || '-'}`);
+  return { doneMsg, pending };
+}
+function regInfo(s, c) {
+  const reg = c && c.auto && c.auto.reg;
+  return { mode: REG_MODE, done: regDone(c), done_at: reg ? reg.done_at : null, source: reg ? reg.source : (c && c.pos_id ? 'pos' : null), data: reg || null, inProgress: !!(s && s.reg), step: s && s.reg ? s.reg.step : null, needed: regNeeded(c) };
+}
+
 // ---------- ธง "รอติดต่อกลับ" (callback) ----------
 // (ก) บอทรับปาก: "ติดต่อกลับ / โทรกลับ / ส่งเรื่องให้…แล้ว / ประสาน…แล้ว / เจ้าหน้าที่จะรีบติดต่อ ฯลฯ"
 const CB_BOT_RX = /ติดต่อกลับ|โทรกลับ|(ส่งเรื่อง|ส่งต่อ|ประสาน|แจ้ง|บันทึกข้อมูล)[^\n]{0,40}?(เรียบร้อย|ให้แล้ว|แล้วนะ|แล้วค่ะ|แล้วจ้ะ)|(เจ้าหน้าที่|ทีมงาน|แอดมิน|ฝ่ายขาย|พี่ ?ๆ|ผู้แทน)[^\n]{0,24}?จะ(รีบ)?(ติดต่อ|โทร|เข้ามา|ตอบ|ประสาน)/;
@@ -956,10 +1175,12 @@ function notifyAdmins(id, s, isNew) {
   }
 }
 
-async function sendAnswer(s, ev, fallbackTo, text) {
-  pushHist(s, 'b', text);
-  detectBotPromise(fallbackTo || 'unknown', s, text);
-  const ok = await lineReply(ev.replyToken, text);
+// opts.system = ข้อความระบบของ bridge เอง (เช่น แบบฟอร์มลงทะเบียน) -> ไม่ต้องตรวจ "บอทรับปากติดต่อกลับ" (ตรวจเฉพาะคำตอบจาก Dify)
+async function sendAnswer(s, ev, fallbackTo, text, opts) {
+  const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && String(t).trim());
+  const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
+  arr.forEach((t, i) => { pushHist(s, 'b', t); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, t); });
+  const ok = await lineReply(ev.replyToken, arr);
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
     const pushed = await linePush(fallbackTo, text);
     console.log(`[send] reply=failed push=${pushed}`);
@@ -983,7 +1204,6 @@ function wantsBot(t) {
 
 // ---------- Event processing ----------
 async function handleEvent(ev) {
-  if (ev.type !== 'message' || !ev.message) return;
   if (ev.deliveryContext && ev.deliveryContext.isRedelivery) return;
 
   const src = ev.source || {};
@@ -991,6 +1211,25 @@ async function handleEvent(ev) {
   const sessionId = src.groupId || src.roomId || userId;
   const stype = src.groupId ? 'group' : (src.roomId ? 'room' : 'user');
   const pushTarget = src.groupId || src.roomId || userId;
+
+  // ลูกค้าแอดเพื่อน (follow) -> ทักทาย + เริ่มลงทะเบียน (ถ้ายังไม่เคย)
+  if (ev.type === 'follow') {
+    if (stype !== 'user' || userId === 'unknown') return;
+    const s = touchSession(sessionId, stype, '(เพิ่มเพื่อน)');
+    fetchProfile(s, userId);
+    const c = crmGet(sessionId);
+    crmTouch(sessionId, s, '');
+    if (regNeeded(c) || (REG_MODE === 'soft' && !regDone(c))) {
+      if (!s.reg) regStart(s, '');
+      c.auto = c.auto || {}; c.auto.reg_asked = true;
+      console.log(`[follow] ${sessionId.slice(0, 8)} -> registration prompt`);
+      await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true });
+    } else {
+      await sendAnswer(s, ev, pushTarget, 'ยินดีต้อนรับกลับมาค่ะ 🙏 น้องลัดดาพร้อมตอบเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾', { system: true });
+    }
+    return;
+  }
+  if (ev.type !== 'message' || !ev.message) return;
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
@@ -1002,7 +1241,9 @@ async function handleEvent(ev) {
   const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
   fetchProfile(s, userId);
-  if (ev.message.type === 'text') detectPhone(sessionId, s, text); // ลูกค้าทิ้งเบอร์ -> ธงรอติดต่อกลับ + เก็บเบอร์
+  // ลูกค้าทิ้งเบอร์ -> ธงรอติดต่อกลับ + เก็บเบอร์ (ยกเว้นตอนกำลังตอบแบบฟอร์มลงทะเบียน — เบอร์นั้นไม่ใช่การขอให้โทรกลับ)
+  const inReg = stype === 'user' && REG_MODE === 'on' && (!!s.reg || regNeeded(crmGet(sessionId)));
+  if (ev.message.type === 'text' && !inReg) detectPhone(sessionId, s, text);
   if (stype === 'user') crmTouch(sessionId, s, ev.message.type === 'text' ? text : ''); // CRM: อัปเดตโปรไฟล์อัตโนมัติ
   // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
   if (isNewChat) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
@@ -1036,11 +1277,55 @@ async function handleEvent(ev) {
     return;
   }
 
+  // ลงทะเบียนก่อนใช้งาน (REGISTER=on): ยังไม่ลงทะเบียน -> ถาม ชื่อ/เบอร์/จังหวัด ก่อน แล้วค่อยตอบคำถามที่ค้างไว้
+  if (stype === 'user') {
+    const c = crmGet(sessionId);
+    if (REG_MODE === 'off' && s.reg) { s.reg = null; markDirty(); }
+    else if (s.reg || regNeeded(c)) {
+      const isText = ev.message.type === 'text';
+      if (!s.reg) {
+        regStart(s, isText ? text : '');
+        console.log(`[reg] ${sessionId.slice(0, 8)} start (pending=${s.reg.pending ? 'yes' : 'no'})`);
+        await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true });
+        return;
+      }
+      if (!isText) { if (REG_MODE === 'on') { await sendAnswer(s, ev, pushTarget, regPrompt(s.reg.step, s), { system: true }); return; } }
+      else {
+        const h = regHandle(sessionId, s, c, text);
+        if (!h.done) {
+          if (REG_MODE === 'on' || !h.invalid) { await sendAnswer(s, ev, pushTarget, h.replies, { system: true }); return; }
+          s.reg = null; markDirty(); // soft: ลูกค้าไม่ตอบคำถามลงทะเบียน -> เลิกถาม ตอบคำถามปกติ (ระบบยังเก็บเบอร์/จังหวัดจากแชทให้เอง)
+        } else {
+          const fin = await regFinish(sessionId, s, c);
+          const msgs = [fin.doneMsg];
+          if (fin.pending) {
+            const ans = await askDify(sessionId, fin.pending);
+            if (ans) msgs.push(ans.slice(0, 4900));
+          }
+          await sendAnswer(s, ev, pushTarget, msgs, { system: 1 }); // ข้อความแรก = ระบบ, ข้อความถัดไป = คำตอบ Dify
+          return;
+        }
+      }
+    }
+  }
+
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
 
   let answer = await askDify(sessionId, text);
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
-  await sendAnswer(s, ev, pushTarget, answer.slice(0, 4900));
+  const msgs = [answer.slice(0, 4900)];
+  // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
+  if (stype === 'user' && REG_MODE === 'soft') {
+    const c = crmGet(sessionId);
+    c.auto = c.auto || {};
+    if (!regDone(c) && !s.reg && !c.auto.reg_asked) {
+      c.auto.reg_asked = true;
+      regStart(s, '');
+      msgs.push('📝 ถ้าสะดวก น้องลัดดาขอข้อมูลสั้นๆ เพื่อให้ทีมงานในพื้นที่ดูแลได้ตรงจุดนะคะ\n' + regPrompt('name', s));
+      markDirty();
+    }
+  }
+  await sendAnswer(s, ev, pushTarget, msgs);
 }
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
@@ -1370,6 +1655,7 @@ function load(fromLogin) {
       : (p.error
         ? '🔗 POS: <b style="color:#d33a41">ผิดพลาด</b> <span title="' + esc(p.error) + '">' + esc(String(p.error).slice(0, 60)) + '</span> · '
         : '🔗 POS: <b style="color:#0a9a4a">' + (p.rows || 0).toLocaleString('th-TH') + ' รายชื่อ</b>' + (p.loadedAt ? ' (อัปเดต ' + hhmm(p.loadedAt) + ')' : ' (กำลังโหลด…)') + (p.writeback ? ' · เขียน LINE ID กลับ POS: เปิด' : '') + ' · ');
+    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b> · ';
     cache = d.sessions;
     var pend = d.pending || 0;
     var cbEl = document.getElementById('cbcount');
@@ -1402,6 +1688,7 @@ function crmBadge(s) {
   var c = s.crm;
   if (!c) return '';
   var h = '';
+  if (s.reg && s.reg.indexOf('asking:') === 0) h += '<span class="itag posc" title="บอทกำลังถามข้อมูลลงทะเบียน">📝 กำลังลงทะเบียน</span>';
   if (c.pos) h += '<span class="itag pos" title="ผูกกับ POS: ' + esc(c.pos) + '">🔗POS</span>';
   else if (c.posc) h += '<span class="itag posc" title="มีรายชื่อ POS ที่น่าจะใช่ รอแอดมินยืนยัน">🔗?</span>';
   if (c.status && c.status !== 'new') h += '<span class="itag st-' + c.status + '">' + esc(STATUS_TH[c.status] || c.status) + '</span>';
@@ -1484,8 +1771,14 @@ function renderCrm(d) {
   var keys = ['new', 'interested', 'quoted', 'customer', 'inactive'];
   for (var i = 0; i < keys.length; i++) statusOpts += '<option value="' + keys[i] + '"' + (p.status === keys[i] ? ' selected' : '') + '>' + STATUS_TH[keys[i]] + '</option>';
   var zone = d.zone ? '<b>เขต ' + esc(d.zone.zone) + '</b> — ' + esc(d.zone.team) : '<span style="color:#98a2ad">ใส่จังหวัดแล้วระบบจะบอกผู้ดูแลเขตให้</span>';
+  var rg = d.reg || {};
+  var regHtml = '';
+  if (rg.mode === 'off') regHtml = '<div class="auto" style="color:#98a2ad;margin-bottom:6px">📝 ระบบลงทะเบียน: ปิด (REGISTER=off)</div>';
+  else if (rg.done) regHtml = '<div class="posbox" style="margin-bottom:6px">📝 ลงทะเบียนแล้ว' + (rg.done_at ? ' · ' + dayLabel(Date.parse(rg.done_at)) + ' ' + hhmm(Date.parse(rg.done_at)) : '') + ' · ' + (rg.source === 'chat' ? 'ลูกค้ากรอกในแชท' : (rg.source === 'admin' ? 'แอดมินยืนยัน' : 'ผูกกับ POS')) + (rg.data && rg.data.name ? '<br><small style="color:#55606b">' + esc(rg.data.name) + (rg.data.phone ? ' · ' + esc(rg.data.phone) : '') + (rg.data.province ? ' · ' + esc(rg.data.province) : '') + '</small>' : '') + '<span class="unl" id="cf_regreset" title="ลบสถานะลงทะเบียน บอทจะถามลูกค้าใหม่">↺ ให้ถามใหม่</span></div>';
+  else regHtml = '<div class="auto" style="margin-bottom:6px;border-color:#f5c6c6;background:#fff8f8">📝 <b>ยังไม่ลงทะเบียน</b>' + (rg.inProgress ? ' · บอทกำลังถาม: <b>' + ({ name: 'ชื่อ-นามสกุล', phone: 'เบอร์โทร', province: 'จังหวัด' }[rg.step] || rg.step) + '</b>' : (rg.mode === 'on' ? ' · บอทจะถามเมื่อลูกค้าทักครั้งถัดไป' : ' (โหมด soft ไม่บังคับ)')) + '<br><small style="color:#55606b">กรอก ชื่อ+เบอร์+จังหวัด แล้วบันทึก = ลงทะเบียนให้ลูกค้าเอง หรือ </small><span class="unl" id="cf_regdone" style="color:#2f5fa3">✓ ถือว่าลงทะเบียนแล้ว</span></div>';
   var h = ''
     + '<div style="display:flex;justify-content:space-between;align-items:center"><h4>👤 โปรไฟล์ลูกค้า</h4><span class="exp" id="crmclose">✕ ปิด</span></div>'
+    + regHtml
     + '<div class="row2"><div>' + crmField('ชื่อจริง / ชื่อที่ใช้เรียก', 'cf_real_name', p.real_name, s.name || '') + '</div><div>' + crmField('เบอร์โทร', 'cf_phone', p.phone, a.phone || '08x-xxx-xxxx') + '</div></div>'
     + '<div class="row2"><div>' + crmField('จังหวัด', 'cf_province', p.province, a.province || '') + '</div><div>' + crmField('อำเภอ', 'cf_district', p.district, '') + '</div></div>'
     + '<div class="row2"><div>' + crmField('พืชที่ปลูก', 'cf_crops', p.crops, a.crops || 'เช่น ทุเรียน, ข้าว') + '</div><div>' + crmField('พื้นที่ (ไร่)', 'cf_farm_rai', p.farm_rai, '') + '</div></div>'
@@ -1538,13 +1831,34 @@ function renderPos(p) {
       h += '<div style="font-size:11.5px;color:#55606b;margin-bottom:4px">เบอร์ตรงกับรายชื่อใน POS — กด <b>ผูก</b> คนที่ใช่ (ระบบไม่ผูกให้เองเพราะ' + (p.candidates.length > 1 ? 'มีหลายคนใช้เบอร์นี้' : 'ชื่อยังไม่สอดคล้อง') + ')</div>';
       for (var i = 0; i < p.candidates.length; i++) h += candHtml(p.candidates[i], true);
     } else if (p.phones && p.phones.length) {
-      h += '<div class="auto" style="color:#8a95a1">ไม่พบเบอร์ ' + esc(p.phones.join(', ')) + ' ใน POS (' + (p.status ? (p.status.rows || 0).toLocaleString('th-TH') : 0) + ' รายชื่อ) — ค้นหาชื่อด้านล่างเพื่อผูกเองได้</div>';
+      h += '<div class="auto" style="color:#8a95a1">ไม่พบเบอร์ ' + esc(p.phones.join(', ')) + ' ใน POS (' + (p.status ? (p.status.rows || 0).toLocaleString('th-TH') : 0) + ' รายชื่อ) — ค้นหาชื่อด้านล่างเพื่อผูกเอง หรือกดสร้างรายชื่อใหม่</div>';
     } else {
       h += '<div class="auto" style="color:#8a95a1">ยังไม่มีเบอร์โทรของลูกค้ารายนี้ — เมื่อลูกค้าพิมพ์เบอร์ในแชท หรือแอดมินกรอกเบอร์แล้วบันทึก ระบบจะค้นใน POS ให้ทันที</div>';
     }
+    var cp = crmData && crmData.profile ? crmData.profile : {};
+    var canCreate = !!(cp.real_name && String(cp.real_name).trim());
+    h += '<div style="margin-top:8px;display:flex;align-items:center;gap:8px"><button class="lnk' + (canCreate ? '' : ' dis') + '" id="cf_poscreate"' + (canCreate ? '' : ' disabled') + '>➕ สร้างรายชื่อนี้ใน POS</button><small style="color:#8a95a1">' + (canCreate ? 'ใช้ ชื่อจริง/เบอร์/จังหวัด/อำเภอ จากโปรไฟล์ (บันทึกก่อนถ้าเพิ่งแก้)' : 'กรอก "ชื่อจริง" แล้วบันทึกก่อน') + '</small></div>';
+    if (cp.auto && cp.auto.pos_create_err) h += '<div style="color:#d33a41;font-size:11px;margin-top:4px">⚠️ ครั้งก่อนสร้างไม่สำเร็จ: ' + esc(cp.auto.pos_create_err) + '</div>';
   }
   h += '<div class="noteadd" style="margin-top:8px"><input id="cf_posq" placeholder="ค้นหาใน POS: ชื่อ หรือ เบอร์โทร"><button id="cf_possearch">ค้นหา</button></div><div id="cf_posres" style="margin-top:6px"></div>';
   el.innerHTML = h;
+}
+
+function posCreateUi() {
+  if (!sel || !confirm('สร้างรายชื่อลูกค้านี้เป็นแถวใหม่ในตาราง POS (customers) และผูกกับแชทนี้?')) return;
+  api('/admin/api/pos/create', { method: 'POST', body: JSON.stringify({ id: sel }) }).then(function() {
+    loadCrm(sel);
+    load();
+  }).catch(function(e) { alert('สร้างไม่สำเร็จ: ' + e.message); });
+}
+
+function regActionUi(action) {
+  if (!sel) return;
+  if (action === 'reset' && !confirm('ลบสถานะลงทะเบียน แล้วให้บอทถามข้อมูลลูกค้าใหม่ในครั้งถัดไป?')) return;
+  api('/admin/api/reg', { method: 'POST', body: JSON.stringify({ id: sel, action: action }) }).then(function() {
+    loadCrm(sel);
+    load();
+  }).catch(function(e) { alert(e.message); });
 }
 
 function posSearchUi() {
@@ -1776,6 +2090,9 @@ document.getElementById('crm').addEventListener('click', function(e) {
   if (t.id === 'cf_noteadd') { addNote(); return; }
   if (t.id === 'cf_possearch') { posSearchUi(); return; }
   if (t.id === 'cf_posunlink') { posUnlinkUi(); return; }
+  if (t.id === 'cf_poscreate') { if (!t.disabled) posCreateUi(); return; }
+  if (t.id === 'cf_regdone') { regActionUi('done'); return; }
+  if (t.id === 'cf_regreset') { regActionUi('reset'); return; }
   var lk = t.closest ? t.closest('.lnk') : null;
   if (lk) {
     var pid = lk.getAttribute('data-pos');
@@ -1863,13 +2180,13 @@ function handleAdmin(req, res, path, body) {
     const now = Date.now();
     const rank = (x) => (x.cb ? 2 : 0) + ((x.handoff && x.mutedUntil > now) ? 1 : 0);
     const list = [...sessions.entries()]
-      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id) }))
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none') }))
       // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
       .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
     const pending = [...sessions.values()].filter((s) => s.cb).length;
     const posSt = POS_ON ? { on: true, rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, writeback: !!(pos.cols && pos.cols.line) } : { on: false };
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, pending, now, sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, pending, now, sessions: list });
   }
 
   // ---- CRM ----
@@ -1877,8 +2194,44 @@ function handleAdmin(req, res, path, body) {
     const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     const c = crmGet(id);
-    crmListNotes(id).then((notes) => sendJson(res, 200, { ok: true, profile: c, notes, zone: zoneInfo(c.province || (c.auto && c.auto.province) || ''), sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c) }))
-      .catch(() => sendJson(res, 200, { ok: true, profile: c, notes: [], zone: zoneInfo(c.province || ''), sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c) }));
+    const s = sessions.get(id);
+    crmListNotes(id).then((notes) => sendJson(res, 200, { ok: true, profile: c, notes, zone: zoneInfo(c.province || (c.auto && c.auto.province) || ''), sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c), reg: regInfo(s, c) }))
+      .catch(() => sendJson(res, 200, { ok: true, profile: c, notes: [], zone: zoneInfo(c.province || ''), sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c), reg: regInfo(s, c) }));
+    return;
+  }
+  // ---- ลงทะเบียน: action = 'done' (ถือว่าลงทะเบียนแล้ว) | 'reset' (ให้บอทถามใหม่) ----
+  if (path === '/admin/api/reg' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = data.id;
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    const c = crmGet(id);
+    const s = sessions.get(id);
+    c.auto = c.auto || {};
+    if (data.action === 'done') {
+      c.auto.reg = { done_at: new Date().toISOString(), source: 'admin', name: c.real_name || '', phone: normPhone(c.phone) || '', province: c.province || '' };
+      if (s.reg) s.reg = null;
+    } else if (data.action === 'reset') {
+      delete c.auto.reg;
+      if (s.reg) s.reg = null;
+    } else return sendJson(res, 400, { ok: false, error: 'bad action' });
+    c.updated_at = new Date().toISOString();
+    markDirty();
+    broadcast();
+    if (SB_ON) sbUpsert(c);
+    console.log(`[admin] ${id.slice(0, 8)} reg ${data.action}`);
+    return sendJson(res, 200, { ok: true, reg: regInfo(s, c) });
+  }
+  if (path === '/admin/api/pos/create' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = data.id;
+    if (!id || (!sessions.has(id) && !crm.has(id))) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    posCreate(id, 'admin').then((r) => {
+      const c = crmGet(id);
+      console.log(`[admin] ${id.slice(0, 8)} pos create -> ${r.ok ? r.rec.id : 'fail: ' + r.err}`);
+      sendJson(res, r.ok ? 200 : 400, Object.assign({ ok: r.ok, error: r.ok ? undefined : r.err }, r.ok ? { pos: posInfoFor(c), profile: c, zone: zoneInfo(c.province || '') } : {}));
+    });
     return;
   }
 
@@ -2026,7 +2379,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.0, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.1, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -2069,4 +2422,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.0 (pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.1 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
