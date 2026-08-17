@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ลงทะเบียนสมาชิกเกษตรกร ICP Ladda</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: 'Noto Sans Thai', system-ui, -apple-system, sans-serif; background: #eceae4; color: #111827; -webkit-font-smoothing: antialiased; }
+  input, select, button { font-family: 'Noto Sans Thai', system-ui, sans-serif; }
+  input:focus, select:focus { outline: 2px solid #22c55e; outline-offset: -1px; }
+  a { color: #16803c; }
+  .app { max-width: 430px; margin: 0 auto; min-height: 100dvh; background: #f6f5f0; display: flex; flex-direction: column; }
+  .page { flex: 1; padding: 14px 18px 24px; display: flex; flex-direction: column; gap: 9px; }
+  .head { text-align: center; display: flex; flex-direction: column; gap: 1px; margin-bottom: 2px; }
+  .head h1 { font-size: 17px; font-weight: 800; color: #111827; }
+  .head p { font-size: 11.5px; color: #6b7280; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .lbl { font-size: 12.5px; font-weight: 700; color: #374151; }
+  .lbl .req { color: #dc2626; }
+  .lbl .hint { font-weight: 400; color: #9ca3af; }
+  .lbl .hint2 { font-weight: 400; color: #6b7280; }
+  .grid2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+  .inp { border: 1px solid #d1d5db; border-radius: 10px; padding: 9px 12px; font-size: 15px; background: #fff; min-width: 0; width: 100%; color: #111827; }
+  .inp.sm { font-size: 13.5px; }
+  select.inp { padding: 9px 6px; font-size: 13.5px; appearance: auto; }
+  .gbtn { padding: 9px 12px; border-radius: 10px; font-size: 15px; font-weight: 500; cursor: pointer; background: #fff; border: 1px solid #d1d5db; color: #374151; }
+  .gbtn.on { padding: 8px 12px; font-weight: 700; background: #e8f7ec; border: 2px solid #16a34a; color: #14532d; }
+  .digits { display: flex; gap: 4px; justify-content: space-between; }
+  .digits input { width: 100%; min-width: 0; text-align: center; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 0; font-size: 15px; font-weight: 700; background: #fff; color: #111827; }
+  .crops { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .crop { display: flex; flex-direction: column; align-items: center; gap: 4px; border-radius: 12px; cursor: pointer; padding: 10px 3px; background: #fff; border: 1px solid #d1d5db; color: #374151; }
+  .crop.on { padding: 9px 2px; background: #e8f7ec; border: 2px solid #16a34a; color: #14532d; }
+  .crop .em { font-size: 22px; line-height: 1; }
+  .crop .nm { font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .arow { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr); gap: 6px; align-items: stretch; }
+  .aname { font-size: 13px; font-weight: 700; color: #14532d; background: #e8f7ec; border-radius: 8px; padding: 8px 10px; display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .abox { display: flex; align-items: center; gap: 4px; border: 1px solid #d1d5db; border-radius: 8px; padding: 0 8px; background: #fff; min-width: 0; }
+  .abox input { border: none; outline: none; width: 100%; min-width: 0; padding: 8px 0; font-size: 13.5px; font-weight: 700; text-align: right; background: transparent; color: #111827; }
+  .abox span { font-size: 11.5px; color: #6b7280; white-space: nowrap; }
+  .consent { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  .consent input { width: 16px; height: 16px; accent-color: #16a34a; margin-top: 1px; flex: none; }
+  .consent span { font-size: 10.5px; color: #6b7280; line-height: 1.45; }
+  .submit { border: none; border-radius: 12px; padding: 13px; font-size: 15.5px; font-weight: 800; cursor: pointer; background: #16a34a; color: #fff; width: 100%; }
+  .submit.off { background: #d1d5db; }
+  .submit:disabled { opacity: .7; }
+  .err { text-align: center; font-size: 11.5px; color: #dc2626; font-weight: 600; min-height: 16px; }
+  .who { text-align: center; font-size: 11px; color: #9ca3af; }
+  .stack { display: flex; flex-direction: column; gap: 5px; }
+  /* success */
+  .ok { flex: 1; padding: 14px 18px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; text-align: center; }
+  .okhead { display: flex; flex-direction: column; gap: 8px; align-items: center; margin-top: 30px; }
+  .okbadge { width: 56px; height: 56px; border-radius: 16px; background: #16a34a; color: #fff; font-size: 30px; display: flex; align-items: center; justify-content: center; }
+  .oktitle { font-size: 18px; font-weight: 800; color: #111827; }
+  .okbox { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 14px; text-align: left; font-size: 12px; color: #374151; line-height: 1.55; }
+  .okbox .tt { margin-top: 8px; font-weight: 700; color: #14532d; }
+  .okbox .tr { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #dcfce7; }
+  .okbox .tr a { font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .okbox .tail { margin-top: 8px; color: #4b5563; }
+  .btn { border: none; border-radius: 12px; padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; }
+  .btn.g { background: #16a34a; color: #fff; }
+  .btn.s { background: #f3f4f6; color: #374151; font-weight: 600; }
+  .center { text-align: center; padding: 60px 18px; color: #6b7280; font-size: 14px; line-height: 1.6; }
+  .banner { background: #e8f7ec; color: #14532d; border-radius: 10px; padding: 8px 12px; font-size: 12px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="loading" class="center">กำลังโหลด… ⏳</div>
+  <div id="fatal" class="center" style="display:none"><div style="font-size:40px">⚠️</div><div style="font-weight:700;color:#111827;margin:6px 0">เปิดฟอร์มไม่ได้</div><div id="fatal_p"></div></div>
+
+  <form id="reg" class="page" style="display:none" novalidate>
+    <div class="head"><h1>🌾 ลงทะเบียนสมาชิกเกษตรกร ICP Ladda</h1><p>ให้ทีมงานในพื้นที่ดูแลตรงจุด รับข่าวสาร/โปรโมชั่นตรงพื้นที่</p></div>
+    <div id="banner"></div>
+    <div class="field">
+      <div class="lbl">เพศ <span class="req">*</span></div>
+      <div class="grid2"><button type="button" class="gbtn" id="g_male" data-g="male">👨 ชาย</button><button type="button" class="gbtn" id="g_female" data-g="female">👩 หญิง</button></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><div class="lbl">ชื่อ <span class="req">*</span></div><input class="inp" id="first" autocomplete="given-name"></div>
+      <div class="field"><div class="lbl">นามสกุล <span class="req">*</span></div><input class="inp" id="last" autocomplete="family-name"></div>
+    </div>
+    <div class="field">
+      <div class="lbl">เบอร์โทรศัพท์ <span class="req">*</span> <span class="hint">(10 หลัก)</span></div>
+      <div class="digits" id="digits"></div>
+    </div>
+    <div class="grid3">
+      <div class="field"><div class="lbl">จังหวัด <span class="req">*</span></div><select class="inp" id="province"></select></div>
+      <div class="field"><div class="lbl">อำเภอ <span class="req">*</span></div><select class="inp" id="amphoe"></select><input class="inp sm" id="amphoe_txt" placeholder="อำเภอ" style="display:none"></div>
+      <div class="field"><div class="lbl">ตำบล</div><select class="inp" id="tambon"></select><input class="inp sm" id="tambon_txt" placeholder="ตำบล" style="display:none"></div>
+    </div>
+    <div class="field" style="gap:6px">
+      <div class="lbl">พืชที่ปลูก <span class="hint2">(เลือกได้หลายข้อ)</span></div>
+      <div class="crops" id="crops"></div>
+      <input class="inp sm" id="other" placeholder="อื่นๆ (พิมพ์เพิ่มเอง ไม่บังคับ)">
+    </div>
+    <div class="field" id="areas_wrap" style="display:none;gap:5px">
+      <div class="lbl">พื้นที่ปลูก <span class="req">*</span> <span class="hint2">(แยกตามพืช)</span></div>
+      <div id="areas" class="stack"></div>
+    </div>
+    <label class="consent"><input type="checkbox" id="consent" checked><span>ข้าพเจ้ายินยอมให้บริษัท ไอ ซี พี ลัดดา จำกัด เก็บและใช้ข้อมูลข้างต้นเพื่อการติดต่อ ให้บริการ และแจ้งข่าวสาร/โปรโมชั่น ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล</span></label>
+    <div class="stack">
+      <button type="submit" class="submit" id="submit">✅ ยืนยันการลงทะเบียน</button>
+      <div class="err" id="err"></div>
+      <div class="who" id="who"></div>
+    </div>
+  </form>
+
+  <div id="done" class="ok" style="display:none">
+    <div class="okhead"><div class="okbadge">✓</div><div class="oktitle" id="done_title">ลงทะเบียนเรียบร้อยค่ะ</div></div>
+    <div class="okbox" id="done_box"></div>
+    <div class="stack" style="gap:8px"><button class="btn g" id="close">กลับไปที่แชท</button><button class="btn s" id="edit">แก้ไขข้อมูล</button></div>
+  </div>
+</div>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+var LIFF_ID = '__LIFF_ID__';
+var PROVINCES = __PROVINCES__;
+var CROPS = [{ name: 'ทุเรียน', emoji: '🍈' }, { name: 'ข้าว', emoji: '🌾' }, { name: 'ข้าวโพด', emoji: '🌽' }, { name: 'อ้อย', emoji: '🎋' }, { name: 'มันสำปะหลัง', emoji: '🥔' }];
+var LOC = null;          // { province: { amphoe: [tambon,...] } } โหลดจาก /liff/locations.json
+var locFailed = false;
+var tokens = { idToken: '', accessToken: '' };
+var S = { gender: '', digits: ['', '', '', '', '', '', '', '', '', ''], crops: [], areas: {}, province: '', amphoe: '', tambon: '' };
+var lastResult = null;
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function api(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, tokens, body || {})) })
+    .then(function(r) { return r.json().then(function(j) { if (!r.ok && !j.errors) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); });
+}
+function fatal(msg) { $('loading').style.display = 'none'; $('reg').style.display = 'none'; $('done').style.display = 'none'; $('fatal').style.display = 'block'; $('fatal_p').textContent = msg; }
+function opt(list, sel, placeholder) {
+  var h = placeholder ? '<option value="">' + esc(placeholder) + '</option>' : '';
+  for (var i = 0; i < list.length; i++) h += '<option value="' + esc(list[i]) + '"' + (list[i] === sel ? ' selected' : '') + '>' + esc(list[i]) + '</option>';
+  return h;
+}
+// ---- เพศ ----
+function renderGender() { $('g_male').className = 'gbtn' + (S.gender === 'male' ? ' on' : ''); $('g_female').className = 'gbtn' + (S.gender === 'female' ? ' on' : ''); }
+// ---- เบอร์ 10 ช่อง ----
+var digitEls = [];
+function renderDigits() {
+  var box = $('digits'); box.innerHTML = ''; digitEls = [];
+  for (var i = 0; i < 10; i++) {
+    (function(i) {
+      var el = document.createElement('input');
+      el.type = 'tel'; el.inputMode = 'numeric'; el.maxLength = 10; el.autocomplete = 'off'; el.value = S.digits[i];
+      el.addEventListener('input', function() {
+        var raw = el.value.replace(/\D/g, '');
+        if (raw.length > 1) { for (var j = 0; j < raw.length && i + j < 10; j++) S.digits[i + j] = raw[j]; syncDigits(); var t = digitEls[Math.min(i + raw.length, 9)]; if (t) t.focus(); }
+        else { S.digits[i] = raw; el.value = raw; if (raw && i < 9) digitEls[i + 1].focus(); }
+      });
+      el.addEventListener('keydown', function(e) { if (e.key === 'Backspace' && !S.digits[i] && i > 0) { digitEls[i - 1].focus(); } });
+      el.addEventListener('paste', function(e) { var t = (e.clipboardData || window.clipboardData).getData('text') || ''; var raw = t.replace(/\D/g, ''); if (raw.length > 1) { e.preventDefault(); for (var j = 0; j < raw.length && i + j < 10; j++) S.digits[i + j] = raw[j]; syncDigits(); var f = digitEls[Math.min(i + raw.length, 9)]; if (f) f.focus(); } });
+      box.appendChild(el); digitEls.push(el);
+    })(i);
+  }
+}
+function syncDigits() { for (var i = 0; i < 10; i++) digitEls[i].value = S.digits[i] || ''; }
+function setPhone(p) { var d = String(p || '').replace(/\D/g, '').slice(0, 10); for (var i = 0; i < 10; i++) S.digits[i] = d[i] || ''; syncDigits(); }
+// ---- จังหวัด/อำเภอ/ตำบล ----
+function renderLoc() {
+  $('province').innerHTML = opt(LOC ? Object.keys(LOC) : PROVINCES, S.province, '— เลือกจังหวัด —');
+  var hasLoc = !!(LOC && !locFailed);
+  var amphoes = hasLoc && LOC[S.province] ? Object.keys(LOC[S.province]) : [];
+  var tambons = hasLoc && LOC[S.province] && LOC[S.province][S.amphoe] ? LOC[S.province][S.amphoe] : [];
+  var useSel = hasLoc && !!S.province;
+  $('amphoe').style.display = (hasLoc ? '' : 'none'); $('amphoe_txt').style.display = (hasLoc ? 'none' : '');
+  $('tambon').style.display = (hasLoc ? '' : 'none'); $('tambon_txt').style.display = (hasLoc ? 'none' : '');
+  if (hasLoc) {
+    $('amphoe').innerHTML = opt(amphoes, S.amphoe, useSel ? '— เลือกอำเภอ —' : 'เลือกจังหวัดก่อน');
+    $('tambon').innerHTML = opt(tambons, S.tambon, S.amphoe ? '— เลือกตำบล —' : '—');
+    $('amphoe').disabled = !useSel; $('tambon').disabled = !S.amphoe;
+  } else { $('amphoe_txt').value = S.amphoe; $('tambon_txt').value = S.tambon; }
+}
+// ---- พืช + พื้นที่ ----
+function cropNames() { var o = $('other').value.trim(); return S.crops.concat(o ? [o] : []); }
+function renderCrops() {
+  var h = '';
+  for (var i = 0; i < CROPS.length; i++) { var on = S.crops.indexOf(CROPS[i].name) !== -1; h += '<button type="button" class="crop' + (on ? ' on' : '') + '" data-c="' + esc(CROPS[i].name) + '"><span class="em">' + CROPS[i].emoji + '</span><span class="nm">' + esc(CROPS[i].name) + '</span></button>'; }
+  $('crops').innerHTML = h;
+  renderAreas();
+}
+function renderAreas() {
+  var names = cropNames();
+  $('areas_wrap').style.display = names.length ? '' : 'none';
+  var h = '';
+  for (var i = 0; i < names.length; i++) {
+    var a = S.areas[names[i]] || { rai: '', ngan: '' };
+    h += '<div class="arow"><div class="aname">' + esc(names[i]) + '</div>'
+      + '<div class="abox"><input inputmode="decimal" placeholder="0" data-n="' + esc(names[i]) + '" data-k="rai" value="' + esc(a.rai) + '"><span>ไร่</span></div>'
+      + '<div class="abox"><input inputmode="decimal" placeholder="0" data-n="' + esc(names[i]) + '" data-k="ngan" value="' + esc(a.ngan) + '"><span>งาน</span></div></div>';
+  }
+  $('areas').innerHTML = h;
+}
+function areaLine() {
+  return cropNames().map(function(n) { var a = S.areas[n] || {}; return n + ' ' + (a.rai || '0') + ' ไร่' + (a.ngan ? ' ' + a.ngan + ' งาน' : ''); }).join(' · ');
+}
+// ---- prefill ----
+function fill(p) {
+  if (!p) return;
+  var r = p.reg && p.reg.data ? p.reg.data : {};
+  if (r.first_name || r.last_name) { $('first').value = r.first_name || ''; $('last').value = r.last_name || ''; }
+  else if (p.real_name) { var parts = String(p.real_name).replace(/^(นาย|นางสาว|นาง|น\.ส\.|คุณ)\s*/, '').split(/\s+/); $('first').value = parts[0] || ''; $('last').value = parts.slice(1).join(' '); }
+  if (r.gender === 'male' || r.gender === 'female') S.gender = r.gender;
+  if (p.phone) setPhone(p.phone);
+  S.province = p.province || ''; S.amphoe = p.district || ''; S.tambon = p.subdistrict || '';
+  var areas = Array.isArray(r.areas) ? r.areas : [];
+  if (areas.length) {
+    var otherNames = [];
+    areas.forEach(function(a) { if (!a || !a.name) return; S.areas[a.name] = { rai: a.rai || '', ngan: a.ngan || '' }; if (CROPS.some(function(c) { return c.name === a.name; })) S.crops.push(a.name); else otherNames.push(a.name); });
+    $('other').value = otherNames.join(', ');
+  } else if (p.crops) {
+    var arr = String(p.crops).split(',').map(function(x) { return x.trim(); }).filter(Boolean); var oth = [];
+    arr.forEach(function(x) { if (CROPS.some(function(c) { return c.name === x; })) S.crops.push(x); else oth.push(x); });
+    $('other').value = oth.join(', ');
+  }
+}
+// ---- submit ----
+function validate() {
+  var miss = [];
+  var first = $('first').value.trim(), last = $('last').value.trim();
+  var phone = S.digits.join('');
+  var names = cropNames();
+  var amph = LOC && !locFailed ? S.amphoe : $('amphoe_txt').value.trim();
+  if (!S.gender) miss.push('เพศ');
+  if (!first) miss.push('ชื่อ');
+  if (!last) miss.push('นามสกุล');
+  if (phone.length !== 10) miss.push('เบอร์โทร 10 หลัก');
+  if (!S.province) miss.push('จังหวัด');
+  if (!amph) miss.push('อำเภอ');
+  if (!names.length) miss.push('เลือกพืชที่ปลูก');
+  else if (!names.every(function(n) { return ((S.areas[n] || {}).rai || '').trim() !== ''; })) miss.push('พื้นที่ปลูก (ไร่) ของแต่ละพืช');
+  if (!$('consent').checked) miss.push('ติ๊กยินยอม');
+  return miss;
+}
+function showDone(r) {
+  lastResult = r;
+  $('reg').style.display = 'none'; $('done').style.display = 'flex';
+  $('done_title').textContent = r.updated ? 'อัปเดตข้อมูลเรียบร้อยค่ะ' : 'ลงทะเบียนเรียบร้อยค่ะ';
+  var team = (r.zone && r.zone.rows) || [];
+  var h = '✅ ขอบคุณคุณ<b>' + esc(r.fullName || '') + '</b><br>' + esc(r.addressLine || '') + (r.areaLine ? ' · พื้นที่ปลูก ' + esc(r.areaLine) : '') + ' 🙏 ' + esc((r.posNote || 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว').replace(/\s*✅\s*$/, ''));
+  if (r.zone && r.zone.zone) {
+    h += '<div class="tt">ทีมงานดูแลพื้นที่ของคุณ (เขต ' + esc(r.zone.zone) + ')</div>';
+    for (var i = 0; i < team.length; i++) h += '<div class="tr"><span>' + esc(team[i].name) + '</span><a href="tel:' + esc(String(team[i].phone).replace(/-/g, '')) + '">' + esc(team[i].phone) + '</a></div>';
+  }
+  h += '<div class="tail">สอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾</div>';
+  $('done_box').innerHTML = h;
+  window.scrollTo(0, 0);
+}
+async function notifyChat() {
+  var sent = false;
+  try {
+    if (liff.isInClient && liff.isInClient() && liff.getContext && liff.getContext() && liff.getContext().type === 'utou') { await liff.sendMessages([{ type: 'text', text: 'ลงทะเบียนเรียบร้อยแล้ว ✅' }]); sent = true; }
+  } catch (e) { sent = false; }
+  if (!sent) { try { await api('/liff/confirm', {}); } catch (e) {} }
+}
+async function loadLocations() {
+  try {
+    var r = await fetch('/liff/locations.json', { cache: 'force-cache' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    LOC = await r.json();
+    if (S.province && !LOC[S.province]) { /* จังหวัดที่พิมพ์ไว้ไม่ตรงชื่อมาตรฐาน */ }
+    if (S.province && LOC[S.province] && S.amphoe && !LOC[S.province][S.amphoe]) { var k = Object.keys(LOC[S.province]).find(function(a) { return a.indexOf(S.amphoe) !== -1 || S.amphoe.indexOf(a) !== -1; }); if (k) S.amphoe = k; }
+  } catch (e) { locFailed = true; }
+  renderLoc();
+}
+async function main() {
+  renderDigits(); renderCrops(); renderGender(); renderLoc();
+  if (!LIFF_ID) return fatal('ระบบยังไม่ได้ตั้งค่า LIFF_ID (แจ้งแอดมิน)');
+  try { await liff.init({ liffId: LIFF_ID }); }
+  catch (e) { return fatal('เปิด LIFF ไม่สำเร็จ: ' + (e && e.message ? e.message : e) + ' — ตรวจสอบ LIFF ID / Endpoint URL ใน LINE Developers'); }
+  if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+  tokens.idToken = liff.getIDToken() || ''; tokens.accessToken = liff.getAccessToken() || '';
+  var prof = null; try { prof = await liff.getProfile(); } catch (e) {}
+  var me = null;
+  try { me = await api('/liff/me', {}); } catch (e) { return fatal('ยืนยันตัวตนกับ LINE ไม่สำเร็จ: ' + e.message + ' (ปิดแล้วเปิดใหม่ หรือแจ้งแอดมิน)'); }
+  if (!me || !me.ok) return fatal('ยืนยันตัวตนกับ LINE ไม่สำเร็จ' + (me && me.error ? ': ' + me.error : ''));
+  fill(me.profile);
+  renderGender(); renderCrops(); renderLoc();
+  loadLocations();
+  $('loading').style.display = 'none'; $('reg').style.display = 'flex';
+  var dn = (prof && prof.displayName) || me.name || '';
+  $('who').textContent = dn ? 'บัญชี LINE: ' + dn : '';
+  if (me.profile && me.profile.registered) $('banner').innerHTML = '<div class="banner">✅ คุณลงทะเบียนไว้แล้ว — แก้ไขข้อมูลด้านล่างแล้วกดยืนยันได้เลยค่ะ' + (me.profile.pos && me.profile.pos.linked ? '<br>🔗 เชื่อมกับข้อมูลสมาชิกในระบบแล้ว' : '') + '</div>';
+}
+document.getElementById('g_male').addEventListener('click', function() { S.gender = 'male'; renderGender(); });
+document.getElementById('g_female').addEventListener('click', function() { S.gender = 'female'; renderGender(); });
+$('province').addEventListener('change', function() { S.province = this.value; S.amphoe = ''; S.tambon = ''; renderLoc(); });
+$('amphoe').addEventListener('change', function() { S.amphoe = this.value; S.tambon = ''; renderLoc(); });
+$('tambon').addEventListener('change', function() { S.tambon = this.value; });
+$('amphoe_txt').addEventListener('input', function() { S.amphoe = this.value.trim(); });
+$('tambon_txt').addEventListener('input', function() { S.tambon = this.value.trim(); });
+$('crops').addEventListener('click', function(e) { var b = e.target.closest('.crop'); if (!b) return; var n = b.getAttribute('data-c'); var i = S.crops.indexOf(n); if (i === -1) S.crops.push(n); else S.crops.splice(i, 1); renderCrops(); });
+$('other').addEventListener('input', function() { renderAreas(); });
+$('areas').addEventListener('input', function(e) { var t = e.target; if (!t.getAttribute('data-n')) return; var v = t.value.replace(/[^\d.]/g, ''); t.value = v; var n = t.getAttribute('data-n'); S.areas[n] = S.areas[n] || { rai: '', ngan: '' }; S.areas[n][t.getAttribute('data-k')] = v; });
+$('consent').addEventListener('change', function() { $('submit').className = 'submit' + (this.checked ? '' : ' off'); });
+$('reg').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var miss = validate();
+  if (miss.length) { $('err').textContent = 'กรุณากรอก: ' + miss.join(' · '); return; }
+  $('err').textContent = '';
+  var names = cropNames();
+  var body = {
+    first_name: $('first').value.trim(), last_name: $('last').value.trim(), gender: S.gender, phone: S.digits.join(''),
+    province: S.province, district: LOC && !locFailed ? S.amphoe : $('amphoe_txt').value.trim(), subdistrict: LOC && !locFailed ? S.tambon : $('tambon_txt').value.trim(),
+    crops: names.map(function(n) { var a = S.areas[n] || {}; return { name: n, rai: a.rai || '', ngan: a.ngan || '' }; }),
+    consent: $('consent').checked, form: 'member-v2'
+  };
+  var btn = $('submit'); btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
+  try {
+    var r = await api('/liff/register', body);
+    if (!r.ok) { var errs = r.errors || {}; var ks = Object.keys(errs); $('err').textContent = ks.length ? ks.map(function(k) { return errs[k]; }).join(' · ') : (r.error || 'บันทึกไม่สำเร็จ'); }
+    else { showDone(r); notifyChat(); }
+  } catch (err) { $('err').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }
+  btn.disabled = false; btn.textContent = '✅ ยืนยันการลงทะเบียน';
+});
+$('close').addEventListener('click', function() { if (liff.isInClient && liff.isInClient()) liff.closeWindow(); else location.reload(); });
+$('edit').addEventListener('click', function() { $('done').style.display = 'none'; $('reg').style.display = 'flex'; window.scrollTo(0, 0); });
+main();
+</script>
+</body>
+</html>

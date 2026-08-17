@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.3
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.4
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -47,6 +47,12 @@
 //     ฟอร์มยืนยันตัวตนด้วย token ของ LIFF กับ LINE (ID token ผ่าน LINE_LOGIN_CHANNEL_ID หรือ access token) จึงรู้ userId แน่นอน
 //     บันทึกลง CRM + ผูก/สร้างใน POS เหมือนเดิม -> ส่งข้อความยืนยันเข้าแชท (ผ่าน liff.sendMessages ไม่กินโควต้า / สำรองด้วย Push)
 //     คำถามแรกที่ค้างไว้จะตอบให้ทันทีหลังลงทะเบียน · "แก้ไขข้อมูล" เปิดฟอร์มเดิมแก้ได้ · "ลงทะเบียนผ่านแชท" = ใช้แบบถามในแชทแทน (สำรอง)
+//     v3.4: หน้าฟอร์มตามดีไซน์ "ICP Ladda Member App" (Claude Design) — ไฟล์ liff.html (วางคู่ server.js) : เพศ / ชื่อ-นามสกุล /
+//     เบอร์ 10 ช่อง / จังหวัด-อำเภอ-ตำบล แบบเลือกต่อเนื่องจาก thai_locations.json (77 จังหวัด 930 อำเภอ 7,452 ตำบล — kongvut/thai-province-data, MIT)
+//     / พืชที่ปลูก + พื้นที่ (ไร่/งาน) แยกรายพืช / PDPA -> หน้าสำเร็จโชว์ที่อยู่ พื้นที่ปลูก ทีม ME/MR ประจำเขต (กดโทรได้)
+//     ข้อมูลลง CRM (real_name, phone, province, district, crops, farm_rai, auto.subdistrict, auto.reg.{gender,first_name,last_name,areas})
+//     และตาราง POS (name, first_name, last_name, gender, phone, province, district, subdistrict, entity_type, line_user_id)
+//     *** ต้อง deploy 3 ไฟล์คู่กัน: server.js, liff.html, thai_locations.json ***
 // 12. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
@@ -84,6 +90,7 @@ const https = require('https');
 const crypto = require('crypto');
 const fs = require('fs');
 const pathmod = require('path');
+const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -744,11 +751,13 @@ async function posDetectCols() {
   let phoneCols = envList(POS_COLS_ENV.phone).filter(has);
   if (!phoneCols.length) phoneCols = cols.filter((c) => /phone|tel|mobile|เบอร์|โทร/i.test(c) && !/(country|type|verified|ext|code)/i.test(c)).slice(0, 3);
   const provc = envList(POS_COLS_ENV.province)[0] || pick([/^(province|province_?name|prov|จังหวัด)$/i, /province|จังหวัด/i]);
-  const distc = envList(POS_COLS_ENV.district)[0] || pick([/^(district|amphoe|amphur|district_?name|อำเภอ)$/i, /district|amphoe|amphur|อำเภอ/i]);
+  const distc = envList(POS_COLS_ENV.district)[0] || pick([/^(district|amphoe|amphur|district_?name|อำเภอ)$/i, /^(?!sub)(?!.*sub_?district).*(district|amphoe|amphur|อำเภอ)/i]);
+  const subdc = pick([/^(sub_?district|subdistrict_?name|sub_?district_?name|tambon|tambol|ตำบล)$/i]);
+  const genc = pick([/^(gender|sex)$/i]);
   const linec = envList(POS_COLS_ENV.line)[0] || pick([/^(line_?user_?id|line_?uid|line_?id|lineid)$/i]);
   let extra = envList(POS_COLS_ENV.extra).filter(has);
   if (!extra.length) extra = cols.filter((c) => /^(customer_?tier|tier|customer_?type|type|group|segment|grade|level|entity_?type)$/i.test(c)).slice(0, 3);
-  pos.cols = { id: idc, name: nameCols, alt, phone: phoneCols, province: has(provc) ? provc : '', district: has(distc) ? distc : '', line: has(linec) ? linec : '', extra, all: cols };
+  pos.cols = { id: idc, name: nameCols, alt, phone: phoneCols, province: has(provc) ? provc : '', district: has(distc) ? distc : '', subd: has(subdc) ? subdc : '', gender: has(genc) ? genc : '', line: has(linec) ? linec : '', extra, all: cols };
   if (!pos.cols.phone.length) pos.error = `หา column เบอร์โทรในตาราง ${POS_TABLE_RAW} ไม่เจอ (ตั้ง POS_COL_PHONE) — column ที่มี: ${cols.join(', ').slice(0, 200)}`;
   else if (!pos.cols.name.length) pos.error = `หา column ชื่อในตาราง ${POS_TABLE_RAW} ไม่เจอ (ตั้ง POS_COL_NAME) — column ที่มี: ${cols.join(', ').slice(0, 200)}`;
   else pos.error = '';
@@ -776,7 +785,7 @@ async function posRefresh() {
       if (!pos.cols || !pos.cols.phone.length || !pos.cols.name.length) await posDetectCols();
       if (!pos.cols || !pos.cols.phone.length || !pos.cols.name.length) return false;
       const k = pos.cols;
-      const want = [...new Set([k.id, ...k.name, ...k.alt.flat(), ...k.phone, k.province, k.district, k.line, ...k.extra].filter(Boolean))];
+      const want = [...new Set([k.id, ...k.name, ...k.alt.flat(), ...k.phone, k.province, k.district, k.subd, k.line, ...k.extra].filter(Boolean))];
       const sel = want.every((c) => /^[A-Za-z0-9_]+$/.test(c)) ? want.join(',') : '*';
       const rows = [];
       let from = 0;
@@ -975,9 +984,15 @@ async function posCreate(id, by) {
   if (k.phone[0] && phone) row[k.phone[0]] = phone;
   if (k.province && c.province) row[k.province] = String(c.province).slice(0, 60);
   if (k.district && c.district) row[k.district] = String(c.district).slice(0, 60);
+  if (k.subd && c.auto && c.auto.subdistrict) row[k.subd] = String(c.auto.subdistrict).slice(0, 60);
   if (k.line) row[k.line] = id;
+  const reg = (c.auto && c.auto.reg) || {};
   const pair = k.alt.find((a) => a.length === 2);
-  if (pair && k.name.length === 1 && !shopLike && parts.length) { row[pair[0]] = parts[0]; if (parts.length > 1) row[pair[1]] = parts.slice(1).join(' '); }
+  if (pair && k.name.length === 1 && !shopLike) {
+    if (reg.first_name) { row[pair[0]] = reg.first_name; if (reg.last_name) row[pair[1]] = reg.last_name; }
+    else if (parts.length) { row[pair[0]] = parts[0]; if (parts.length > 1) row[pair[1]] = parts.slice(1).join(' '); }
+  }
+  if (k.gender && !shopLike && (reg.gender === 'male' || reg.gender === 'female')) row[k.gender] = reg.gender;
   if (k.all.includes('entity_type') && !('entity_type' in POS_INSERT_DEFAULTS)) row.entity_type = shopLike ? 'organization' : 'person';
   for (const [kk, v] of Object.entries(POS_INSERT_DEFAULTS)) if (k.all.includes(kk)) row[kk] = v;
   try {
@@ -1169,7 +1184,10 @@ async function regApply(id, c, d, opts) {
   if (d.province && (isUpdate || !c.province)) c.province = d.province;
   if (d.district && (isUpdate || !c.district)) c.district = String(d.district).slice(0, 60);
   if (d.crops && (isUpdate || !c.crops)) c.crops = String(d.crops).slice(0, 200);
-  c.auto.reg = { done_at: new Date().toISOString(), source: isUpdate ? source + '-update' : source, name: d.name, phone, province: d.province || '', type: d.type || '' };
+  if (d.subdistrict) c.auto.subdistrict = String(d.subdistrict).slice(0, 60);
+  if (d.farm_rai != null && isFinite(d.farm_rai)) c.farm_rai = d.farm_rai;
+  c.auto.reg = { done_at: new Date().toISOString(), source: isUpdate ? source + '-update' : source, name: d.name, phone, province: d.province || '', type: d.type || '',
+    first_name: d.first_name || '', last_name: d.last_name || '', gender: d.gender || '', subdistrict: d.subdistrict || '', areas: Array.isArray(d.areas) ? d.areas.slice(0, 20) : undefined, area_line: d.area_line || '' };
   c.updated_at = new Date().toISOString();
   markDirty();
   broadcast();
@@ -1197,11 +1215,14 @@ async function regApply(id, c, d, opts) {
   }
   const z = zoneInfo(c.province || d.province || '');
   const zoneLine = z ? `\nทีมงานดูแลพื้นที่ของคุณ (เขต ${z.zone}): ${z.team}` : '';
-  const doneMsg = (isUpdate ? `✅ อัปเดตข้อมูลเรียบร้อยค่ะ (${regSummaryText(c)}) 🙏` : `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณคุณ${d.name}${d.province ? ' จ.' + d.province : ''} 🙏`) + `${posNote ? '\n' + posNote : ''}${zoneLine}\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾`;
+  const addressLine = [d.subdistrict ? 'ต.' + d.subdistrict : '', d.district ? 'อ.' + d.district : '', d.province ? 'จ.' + d.province : ''].filter(Boolean).join(' ');
+  const areaPart = d.area_line ? ' · พื้นที่ปลูก ' + d.area_line : '';
+  const addrPart = (d.district || d.subdistrict) ? (addressLine ? '\n' + addressLine : '') : (d.province ? ' จ.' + d.province : '');
+  const doneMsg = (isUpdate ? `✅ อัปเดตข้อมูลเรียบร้อยค่ะ (${regSummaryText(c)}) 🙏` : `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณคุณ${d.name}${addrPart}${areaPart} 🙏`) + `${posNote ? '\n' + posNote : ''}${zoneLine}\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾`;
   const s = sessions.get(id);
   if (s && s.reg) { s.reg = null; markDirty(); }
   console.log(`[reg] ${id.slice(0, 8)} ${isUpdate ? 'updated' : 'registered'} via ${source}: ${d.name} / ${phone || '-'} / ${d.province || '-'}`);
-  return { doneMsg, posNote, zone: z };
+  return { doneMsg, posNote, zone: z, addressLine };
 }
 async function regFinish(id, s, c) {
   const pending = s.reg.pending;
@@ -1248,21 +1269,36 @@ async function liffVerify(idToken, accessToken) {
   return null;
 }
 function liffProfileFor(id, c, s) {
+  const z = zoneInfo(c.province || '');
   return {
     real_name: c.real_name || '', phone: c.phone || (c.auto && c.auto.phone) || '', province: c.province || (c.auto && c.auto.province) || '', district: c.district || '',
+    subdistrict: (c.auto && c.auto.subdistrict) || '', farm_rai: c.farm_rai == null ? null : c.farm_rai,
     crops: c.crops || (c.auto && c.auto.crops) || '', type: (c.auto && c.auto.reg && c.auto.reg.type) || '',
-    registered: regDone(c), reg: regInfo(s, c), pos: c.pos_id ? { linked: true, name: c.pos_name || '' } : { linked: false }, zone: zoneInfo(c.province || '')
+    registered: regDone(c), reg: regInfo(s, c), pos: c.pos_id ? { linked: true, name: c.pos_name || '' } : { linked: false }, zone: z ? Object.assign({}, z, { rows: zoneTeamRows(z) }) : null
   };
 }
 // รับข้อมูลจากฟอร์ม -> ตรวจ -> บันทึก (regApply) -> คืนข้อความยืนยัน
 async function liffRegister(who, body) {
   const id = who.userId;
-  const name = String(body.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const first = String(body.first_name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const last = String(body.last_name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const name = (first || last) ? (first + ' ' + last).trim() : String(body.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const gender = body.gender === 'male' || body.gender === 'female' ? body.gender : '';
   const phone = normPhone(body.phone);
   const province = provinceOf(String(body.province || '')) || String(body.province || '').trim().slice(0, 60);
-  const district = String(body.district || '').trim().slice(0, 60);
-  const crops = Array.isArray(body.crops) ? body.crops.map((x) => String(x).trim()).filter(Boolean).slice(0, 12).join(', ') : String(body.crops || '').trim().slice(0, 200);
-  const type = body.type === 'shop' ? 'shop' : (body.type === 'farmer' ? 'farmer' : '');
+  const district = String(body.district || '').trim().replace(/^(อ\.|อำเภอ|เขต)\s*/, '').slice(0, 60);
+  const subdistrict = String(body.subdistrict || '').trim().replace(/^(ต\.|ตำบล|แขวง)\s*/, '').slice(0, 60);
+  // พืช: [{name, rai, ngan}] หรือ ['ชื่อ', ...] หรือ 'ชื่อ, ชื่อ'
+  let areas = [];
+  const rawCrops = Array.isArray(body.crops) ? body.crops : String(body.crops || '').split(',');
+  for (const it of rawCrops.slice(0, 20)) {
+    if (it && typeof it === 'object') { const n = String(it.name || '').trim().slice(0, 40); if (n) areas.push({ name: n, rai: String(it.rai == null ? '' : it.rai).replace(/[^\d.]/g, '').slice(0, 8), ngan: String(it.ngan == null ? '' : it.ngan).replace(/[^\d.]/g, '').slice(0, 8) }); }
+    else { const n = String(it || '').trim().slice(0, 40); if (n) areas.push({ name: n, rai: '', ngan: '' }); }
+  }
+  const crops = areas.map((a) => a.name).join(', ');
+  const areaLine = areas.some((a) => a.rai || a.ngan) ? areas.map((a) => a.name + ' ' + (a.rai || '0') + ' ไร่' + (a.ngan ? ' ' + a.ngan + ' งาน' : '')).join(' · ') : '';
+  const totalRai = areas.reduce((sum, a) => sum + (parseFloat(a.rai) || 0) + (parseFloat(a.ngan) || 0) / 4, 0);
+  const type = body.type === 'shop' ? 'shop' : (body.type === 'farmer' ? 'farmer' : (SHOP_NAME_RX.test(name) ? 'shop' : ''));
   const errors = {};
   if (name.length < 2) errors.name = 'กรุณากรอกชื่อ-นามสกุล';
   if (!phone) errors.phone = 'เบอร์โทรไม่ถูกต้อง (ตัวเลข 9-10 หลัก)';
@@ -1275,11 +1311,12 @@ async function liffRegister(who, body) {
   else fetchProfile(s, id);
   if (!c.display_name && who.name) { c.display_name = who.name.slice(0, 60); c.picture_url = who.picture || ''; }
   const wasDone = regDone(c);
-  const r = await regApply(id, c, { name, phone, province, district, crops, type }, { update: wasDone, source: 'liff' });
+  const r = await regApply(id, c, { name, phone, province, district, crops, type, first_name: first, last_name: last, gender, subdistrict, areas, area_line: areaLine, farm_rai: areas.length ? Math.round(totalRai * 100) / 100 : null }, { update: wasDone, source: 'liff' });
   c.auto.reg.msg = r.doneMsg.slice(0, 1500);
   c.auto.reg.confirmed = false;
   markDirty();
-  return { ok: true, doneMsg: r.doneMsg, posNote: r.posNote, zone: r.zone, updated: wasDone, profile: liffProfileFor(id, c, s) };
+  const zone = r.zone ? Object.assign({}, r.zone, { rows: zoneTeamRows(r.zone) }) : null;
+  return { ok: true, doneMsg: r.doneMsg, posNote: r.posNote, zone, updated: wasDone, fullName: name, addressLine: r.addressLine, areaLine, profile: liffProfileFor(id, c, s) };
 }
 // หลังลงทะเบียนผ่าน LIFF: ส่งข้อความยืนยันเข้าแชท (ครั้งเดียว) — ใช้เมื่อหน้า LIFF ส่งข้อความในนามลูกค้าไม่ได้ (Push 1 ข้อความ)
 async function liffConfirmPush(id) {
@@ -1293,184 +1330,40 @@ async function liffConfirmPush(id) {
   if (ok) { c.auto.reg.confirmed = true; if (s) { for (const m of msgs) pushHist(s, 'b', m); s.lastText = String(msgs[0]).slice(0, 120); s.lastAt = Date.now(); } markDirty(); broadcast(); }
   return { ok };
 }
-const LIFF_HTML = `<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>ลงทะเบียนสมาชิก — ICP Ladda</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, -apple-system, 'Noto Sans Thai', sans-serif; background: #f2f5f3; color: #1f2329; min-height: 100dvh; }
-  .wrap { max-width: 480px; margin: 0 auto; padding: 16px 14px 32px; }
-  .card { background: #fff; border-radius: 16px; padding: 18px 16px; box-shadow: 0 4px 18px rgba(0,0,0,.06); }
-  .head { text-align: center; margin-bottom: 14px; }
-  .head .logo { font-size: 40px; }
-  .head h1 { font-size: 18px; margin-top: 4px; }
-  .head p { font-size: 12.5px; color: #6b7680; margin-top: 4px; line-height: 1.5; }
-  label { display: block; font-size: 12.5px; color: #55606b; margin: 12px 0 4px; font-weight: 600; }
-  label small { color: #d33a41; }
-  input, select, textarea { width: 100%; padding: 11px 12px; border: 1px solid #d8dde3; border-radius: 10px; font-size: 16px; font-family: inherit; background: #fff; color: #1f2329; outline: none; }
-  input:focus, select:focus { border-color: #06c755; box-shadow: 0 0 0 3px rgba(6,199,85,.15); }
-  .row2 { display: flex; gap: 8px; }
-  .row2 > div { flex: 1; min-width: 0; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-  .chip { border: 1px solid #d8dde3; border-radius: 99px; padding: 6px 12px; font-size: 13.5px; cursor: pointer; background: #fff; user-select: none; }
-  .chip.on { background: #06c755; color: #fff; border-color: #06c755; }
-  .seg { display: flex; border: 1px solid #d8dde3; border-radius: 10px; overflow: hidden; }
-  .seg div { flex: 1; text-align: center; padding: 10px; font-size: 14px; cursor: pointer; }
-  .seg div.on { background: #06c755; color: #fff; font-weight: 700; }
-  .consent { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 12.5px; color: #55606b; line-height: 1.5; }
-  .consent input { width: 18px; height: 18px; margin-top: 2px; }
-  .btn { width: 100%; margin-top: 16px; padding: 14px; border: 0; border-radius: 12px; background: #06c755; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit; }
-  .btn:disabled { opacity: .55; }
-  .btn.sec { background: #eef0f2; color: #55606b; margin-top: 8px; }
-  .err { color: #d33a41; font-size: 12px; margin-top: 3px; min-height: 14px; }
-  .note { font-size: 12px; color: #8a95a1; margin-top: 8px; line-height: 1.5; text-align: center; }
-  .done { text-align: center; padding: 10px 0; }
-  .done .big { font-size: 56px; }
-  .done h2 { font-size: 18px; margin: 6px 0; }
-  .done p { font-size: 14px; color: #55606b; line-height: 1.6; white-space: pre-wrap; text-align: left; background: #f6fbf7; border-radius: 10px; padding: 12px; margin-top: 10px; }
-  .banner { background: #e6f9ee; color: #0a6b34; border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-bottom: 8px; line-height: 1.5; }
-  .banner.warn { background: #fff8e6; color: #8a5a00; }
-  #loading { text-align: center; padding: 40px 0; color: #6b7680; font-size: 14px; }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="card">
-    <div class="head"><div class="logo">🌾</div><h1>ลงทะเบียนสมาชิก ICP Ladda</h1><p>เพื่อให้ทีมงานในพื้นที่ดูแลคุณลูกค้าได้ตรงจุด<br>และรับข่าวสาร/โปรโมชั่นตรงพื้นที่</p></div>
-    <div id="loading">กำลังโหลด… ⏳</div>
-    <form id="f" style="display:none" novalidate>
-      <div id="banner"></div>
-      <label>ประเภทสมาชิก</label>
-      <div class="seg" id="type"><div data-v="farmer" class="on">👨‍🌾 เกษตรกร</div><div data-v="shop">🏪 ร้านค้า / ตัวแทน</div></div>
-      <label>ชื่อ-นามสกุล <small>*</small></label>
-      <input id="name" placeholder="เช่น สมชาย ใจดี" autocomplete="name"><div class="err" id="e_name"></div>
-      <label>เบอร์โทรศัพท์ <small>*</small></label>
-      <input id="phone" type="tel" inputmode="numeric" placeholder="เช่น 0812345678" autocomplete="tel"><div class="err" id="e_phone"></div>
-      <div class="row2">
-        <div><label>จังหวัด <small>*</small></label><select id="province"><option value="">— เลือกจังหวัด —</option></select><div class="err" id="e_province"></div></div>
-        <div><label>อำเภอ</label><input id="district" placeholder="ไม่บังคับ"></div>
-      </div>
-      <label>พืชที่ปลูก / สินค้าที่สนใจ (เลือกได้หลายข้อ)</label>
-      <div class="chips" id="crops"></div>
-      <input id="crops_other" placeholder="พืชอื่นๆ (พิมพ์เอง ไม่บังคับ)" style="margin-top:6px">
-      <div class="consent"><input type="checkbox" id="consent"><div>ข้าพเจ้ายินยอมให้บริษัท ไอ ซี พี ลัดดา จำกัด เก็บและใช้ข้อมูลข้างต้นเพื่อการติดต่อ ให้บริการ และแจ้งข่าวสาร/โปรโมชั่น ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล</div></div>
-      <div class="err" id="e_consent"></div>
-      <button class="btn" id="submit" type="submit">✅ ยืนยันการลงทะเบียน</button>
-      <div class="note" id="who"></div>
-    </form>
-    <div id="done" class="done" style="display:none"><div class="big">✅</div><h2 id="done_h">ลงทะเบียนเรียบร้อยค่ะ</h2><p id="done_p"></p><button class="btn" id="close">กลับไปที่แชท</button><button class="btn sec" id="edit">แก้ไขข้อมูล</button></div>
-    <div id="fatal" class="done" style="display:none"><div class="big">⚠️</div><h2>เปิดฟอร์มไม่ได้</h2><p id="fatal_p"></p></div>
-  </div>
-</div>
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script>
-var LIFF_ID = '__LIFF_ID__';
-var PROVINCES = __PROVINCES__;
-var CROPS = ['ทุเรียน', 'ข้าว', 'ข้าวโพด', 'อ้อย', 'มันสำปะหลัง', 'ปาล์มน้ำมัน', 'ยางพารา', 'ลำไย', 'มะม่วง', 'ส้ม/มะนาว', 'มังคุด/เงาะ/ลองกอง', 'พริก/ผัก', 'ถั่ว/พืชไร่', 'ไม้ดอก'];
-var tokens = { idToken: '', accessToken: '' };
-var selCrops = [];
-var typeVal = 'farmer';
-var doneMsg = '';
-function $(id) { return document.getElementById(id); }
-function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-function api(path, body) {
-  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, tokens, body || {})) })
-    .then(function(r) { return r.json().then(function(j) { if (!r.ok && !j.errors) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); });
-}
-function fatal(msg) { $('loading').style.display = 'none'; $('f').style.display = 'none'; $('fatal').style.display = 'block'; $('fatal_p').textContent = msg; }
-function renderCrops() {
-  var h = '';
-  for (var i = 0; i < CROPS.length; i++) h += '<span class="chip' + (selCrops.indexOf(CROPS[i]) !== -1 ? ' on' : '') + '" data-c="' + esc(CROPS[i]) + '">' + esc(CROPS[i]) + '</span>';
-  $('crops').innerHTML = h;
-}
-function fill(p) {
-  if (!p) return;
-  if (p.real_name) $('name').value = p.real_name;
-  if (p.phone) $('phone').value = p.phone;
-  if (p.province) $('province').value = p.province;
-  if (p.district) $('district').value = p.district;
-  if (p.type === 'shop' || p.type === 'farmer') setType(p.type);
-  if (p.crops) {
-    var arr = String(p.crops).split(',').map(function(x) { return x.trim(); }).filter(Boolean);
-    var other = [];
-    arr.forEach(function(x) { if (CROPS.indexOf(x) !== -1) selCrops.push(x); else other.push(x); });
-    $('crops_other').value = other.join(', ');
-    renderCrops();
-  }
-}
-function setType(v) { typeVal = v; var ds = $('type').children; for (var i = 0; i < ds.length; i++) ds[i].className = ds[i].getAttribute('data-v') === v ? 'on' : ''; }
-function showDone(r) {
-  $('f').style.display = 'none';
-  $('done').style.display = 'block';
-  $('done_h').textContent = r.updated ? 'อัปเดตข้อมูลเรียบร้อยค่ะ' : 'ลงทะเบียนเรียบร้อยค่ะ';
-  $('done_p').textContent = r.doneMsg || '';
-}
-async function notifyChat() {
-  // ส่ง "ลงทะเบียนเรียบร้อยแล้ว ✅" ในนามลูกค้าเข้าแชท -> บอทตอบยืนยัน (ไม่ใช้โควต้า Push) / ถ้าส่งไม่ได้ ให้เซิร์ฟเวอร์ Push แทน
-  var sent = false;
-  try {
-    if (liff.isInClient && liff.isInClient() && liff.getContext && liff.getContext() && liff.getContext().type === 'utou') {
-      await liff.sendMessages([{ type: 'text', text: 'ลงทะเบียนเรียบร้อยแล้ว ✅' }]);
-      sent = true;
-    }
-  } catch (e) { sent = false; }
-  if (!sent) { try { await api('/liff/confirm', {}); } catch (e) {} }
-}
-async function main() {
-  if (!LIFF_ID) return fatal('ระบบยังไม่ได้ตั้งค่า LIFF_ID (แจ้งแอดมิน)');
-  var opts = PROVINCES.map(function(p) { return '<option value="' + esc(p) + '">' + esc(p) + '</option>'; }).join('');
-  $('province').innerHTML = '<option value="">— เลือกจังหวัด —</option>' + opts;
-  renderCrops();
-  try {
-    await liff.init({ liffId: LIFF_ID });
-  } catch (e) { return fatal('เปิด LIFF ไม่สำเร็จ: ' + (e && e.message ? e.message : e) + '\\nตรวจสอบ LIFF ID / Endpoint URL ใน LINE Developers'); }
-  if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
-  tokens.idToken = liff.getIDToken() || '';
-  tokens.accessToken = liff.getAccessToken() || '';
-  var prof = null;
-  try { prof = await liff.getProfile(); } catch (e) {}
-  var me = null;
-  try { me = await api('/liff/me', {}); } catch (e) { return fatal('ยืนยันตัวตนกับ LINE ไม่สำเร็จ: ' + e.message + '\\n(ปิดแล้วเปิดใหม่ หรือแจ้งแอดมิน)'); }
-  if (!me || !me.ok) return fatal('ยืนยันตัวตนกับ LINE ไม่สำเร็จ' + (me && me.error ? ': ' + me.error : ''));
-  $('loading').style.display = 'none';
-  $('f').style.display = 'block';
-  if (prof && prof.displayName) { $('who').textContent = 'บัญชี LINE: ' + prof.displayName; if (!$('name').value && !(me.profile && me.profile.real_name)) $('name').placeholder = 'เช่น ' + prof.displayName; }
-  fill(me.profile);
-  if (me.profile && me.profile.registered) $('banner').innerHTML = '<div class="banner">✅ คุณลงทะเบียนไว้แล้ว — แก้ไขข้อมูลด้านล่างแล้วกดยืนยันได้เลยค่ะ' + (me.profile.pos && me.profile.pos.linked ? '<br>🔗 เชื่อมกับข้อมูลสมาชิกในระบบแล้ว' : '') + '</div>';
-}
-$('type').addEventListener('click', function(e) { var d = e.target.closest('div[data-v]'); if (d) setType(d.getAttribute('data-v')); });
-$('crops').addEventListener('click', function(e) { var c = e.target.closest('.chip'); if (!c) return; var v = c.getAttribute('data-c'); var i = selCrops.indexOf(v); if (i === -1) selCrops.push(v); else selCrops.splice(i, 1); renderCrops(); });
-$('f').addEventListener('submit', async function(e) {
-  e.preventDefault();
-  ['name', 'phone', 'province', 'consent'].forEach(function(k) { $('e_' + k).textContent = ''; });
-  var crops = selCrops.slice();
-  var other = $('crops_other').value.trim(); if (other) crops.push(other);
-  var body = { name: $('name').value.trim(), phone: $('phone').value.trim(), province: $('province').value, district: $('district').value.trim(), crops: crops, type: typeVal, consent: $('consent').checked };
-  var btn = $('submit'); btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
-  try {
-    var r = await api('/liff/register', body);
-    if (!r.ok) {
-      var errs = r.errors || {};
-      Object.keys(errs).forEach(function(k) { if ($('e_' + k)) $('e_' + k).textContent = errs[k]; });
-      if (!Object.keys(errs).length) alert(r.error || 'บันทึกไม่สำเร็จ');
-    } else {
-      showDone(r);
-      notifyChat();
-    }
-  } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
-  btn.disabled = false; btn.textContent = '✅ ยืนยันการลงทะเบียน';
-});
-$('close').addEventListener('click', function() { if (liff.isInClient && liff.isInClient()) liff.closeWindow(); else location.reload(); });
-$('edit').addEventListener('click', function() { $('done').style.display = 'none'; $('f').style.display = 'block'; });
-main();
-</script>
-</body>
-</html>`;
+// หน้า LIFF (liff.html วางคู่กับ server.js) + ข้อมูลจังหวัด/อำเภอ/ตำบล (thai_locations.json — จาก kongvut/thai-province-data, MIT)
+let liffHtmlCache = null;
 function liffPage() {
-  return LIFF_HTML.replace('__LIFF_ID__', LIFF_ID.replace(/[^\w-]/g, '')).replace('__PROVINCES__', JSON.stringify(PROVINCES_ALL));
+  if (liffHtmlCache === null) {
+    try { liffHtmlCache = fs.readFileSync(pathmod.join(__dirname, 'liff.html'), 'utf8'); }
+    catch (e) { liffHtmlCache = ''; console.log('[liff] liff.html not found next to server.js:', e.message); }
+  }
+  const html = liffHtmlCache || '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:sans-serif;padding:24px;line-height:1.6">⚠️ ไม่พบไฟล์ liff.html บนเซิร์ฟเวอร์ (ต้องอัปโหลด liff.html คู่กับ server.js แล้ว Redeploy)</body></html>';
+  return html.replace('__LIFF_ID__', LIFF_ID.replace(/[^\w-]/g, '')).replace('__PROVINCES__', JSON.stringify(PROVINCES_ALL));
+}
+let locBuf = null, locGz = null, locTried = false;
+function loadLocations() {
+  if (locTried) return;
+  locTried = true;
+  try {
+    locBuf = fs.readFileSync(pathmod.join(__dirname, 'thai_locations.json'));
+    JSON.parse(locBuf.toString('utf8'));
+    locGz = zlib.gzipSync(locBuf);
+    console.log(`[liff] locations loaded (${locBuf.length} bytes, gzip ${locGz.length})`);
+  } catch (e) { locBuf = null; locGz = null; console.log('[liff] thai_locations.json ไม่พร้อม (' + e.message + ') — ฟอร์มจะใช้ช่องพิมพ์อำเภอ/ตำบลแทน'); }
+}
+// ทีมงานประจำเขต -> แถว {name, phone} สำหรับหน้า LIFF (จากสตริง ZONE_TEAM)
+function zoneTeamRows(z) {
+  if (!z || !z.team) return [];
+  const rows = [];
+  for (const seg of String(z.team).split(' · ')) {
+    for (const item of seg.split(' / ')) {
+      const m = /^(.*?)\s*(\d[\d-]{7,12})\s*$/.exec(item.trim());
+      if (!m) continue;
+      const d = m[2].replace(/\D/g, '');
+      rows.push({ name: m[1].trim(), phone: d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : m[2] });
+    }
+  }
+  return rows;
 }
 function readJson(body) { try { return JSON.parse(body.toString('utf8')) || {}; } catch (_) { return {}; } }
 async function handleLiff(req, res, path, body) {
@@ -1479,6 +1372,13 @@ async function handleLiff(req, res, path, body) {
     return res.end(liffPage());
   }
   if (req.method === 'GET' && path === '/liff/config') return sendJson(res, 200, { ok: true, liffId: LIFF_ID, url: LIFF_URL, on: REG_UI === 'liff' });
+  if (req.method === 'GET' && path === '/liff/locations.json') {
+    loadLocations();
+    if (!locBuf) return sendJson(res, 404, { ok: false, error: 'locations not available' });
+    const gz = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+    res.writeHead(200, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=86400' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
+    return res.end(gz ? locGz : locBuf);
+  }
   if (req.method !== 'POST') return sendJson(res, 404, { ok: false, error: 'not found' });
   const data = readJson(body);
   const who = await liffVerify(data.idToken, data.accessToken);
@@ -2872,7 +2772,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.3, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.4, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -2915,4 +2815,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.3 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.4 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
