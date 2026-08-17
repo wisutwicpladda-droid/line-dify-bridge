@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.2
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.3
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -42,6 +42,11 @@
 //     แอดมินกด "✓ ถือว่าลงทะเบียนแล้ว" / "➕ สร้างใน POS" ในแผงโปรไฟล์ได้ · REGISTER=soft ถามตอนแอดเพื่อนแต่ไม่บังคับ · off ปิด
 //     v3.2: ลูกค้าพิมพ์ "ลงทะเบียน" เพื่อเริ่มเอง (ทุกโหมด) / "แก้ไขข้อมูล" เพื่ออัปเดตชื่อ-เบอร์-จังหวัด (อัปเดตแถว POS ที่ผูกอยู่ให้ด้วย)
 //     แอดมินกด "📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน" ส่ง Push ชวนลงทะเบียนทีเดียวทุกแชท (หรือรายแชท) — ลูกค้าตอบกลับแล้วบอทเดินขั้นตอนต่อเอง
+// 12. v3.3: ฟอร์มลงทะเบียนแบบ LIFF (หน้าเว็บในแอป LINE) ที่ /liff — ตั้ง LIFF_ID แล้วระบบสลับเป็นโหมดฟอร์มอัตโนมัติ (REG_UI=liff)
+//     ลูกค้าแอดเพื่อน/ทักครั้งแรก -> บอทส่งข้อความ+ปุ่ม "📝 ลงทะเบียนสมาชิก" เปิดฟอร์ม (ชื่อ เบอร์ จังหวัด อำเภอ พืชที่ปลูก ประเภท + PDPA)
+//     ฟอร์มยืนยันตัวตนด้วย token ของ LIFF กับ LINE (ID token ผ่าน LINE_LOGIN_CHANNEL_ID หรือ access token) จึงรู้ userId แน่นอน
+//     บันทึกลง CRM + ผูก/สร้างใน POS เหมือนเดิม -> ส่งข้อความยืนยันเข้าแชท (ผ่าน liff.sendMessages ไม่กินโควต้า / สำรองด้วย Push)
+//     คำถามแรกที่ค้างไว้จะตอบให้ทันทีหลังลงทะเบียน · "แก้ไขข้อมูล" เปิดฟอร์มเดิมแก้ได้ · "ลงทะเบียนผ่านแชท" = ใช้แบบถามในแชทแทน (สำรอง)
 // 12. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
@@ -67,6 +72,10 @@
 //  POS_REFRESH_MIN            (ไม่บังคับ) นาทีต่อการรีเฟรชรายชื่อ POS ค่าเริ่ม 15
 //  POS_INSERT_DEFAULTS        (ไม่บังคับ) JSON ค่าเพิ่มเติมตอนสร้างลูกค้าใหม่ใน POS เช่น {"type":"retail","customer_tier":"General"}
 //  REGISTER                   (ไม่บังคับ) on (ค่าเริ่ม) = บังคับลงทะเบียน ชื่อ/เบอร์/จังหวัด ก่อนบอทตอบ · soft = ถามแต่ไม่บังคับ · off = ปิด
+//  LIFF_ID                    (ไม่บังคับ) LIFF ID จาก LINE Developers (LINE Login channel ใน provider เดียวกับบอท -> LIFF -> Endpoint URL = https://<โดเมนนี้>/liff)
+//                             ตั้งแล้ว = ลงทะเบียนผ่านฟอร์มในแอป LINE แทนการถามในแชท
+//  LINE_LOGIN_CHANNEL_ID      (แนะนำ) Channel ID ของ LINE Login channel นั้น — ใช้ตรวจ ID token / กัน token จาก channel อื่น
+//  REG_UI                     (ไม่บังคับ) liff | chat — บังคับรูปแบบ (ค่าเริ่ม: liff ถ้ามี LIFF_ID ไม่งั้น chat)
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -106,6 +115,11 @@ let POS_INSERT_DEFAULTS = {};
 try { POS_INSERT_DEFAULTS = JSON.parse(process.env.POS_INSERT_DEFAULTS || '{}') || {}; } catch (_) { console.log('[pos] POS_INSERT_DEFAULTS ไม่ใช่ JSON ที่ถูกต้อง — ข้าม'); }
 // ลงทะเบียนลูกค้าใหม่ (v3.1): on = บังคับกรอก ชื่อ/เบอร์/จังหวัด ก่อนบอทตอบ · soft = ถามตอนแอดเพื่อน แต่ไม่บังคับ · off = ปิด
 const REG_MODE = ['on', 'soft', 'off'].includes((process.env.REGISTER || 'on').trim().toLowerCase()) ? (process.env.REGISTER || 'on').trim().toLowerCase() : 'on';
+// LIFF (v3.3): ฟอร์มลงทะเบียนในแอป LINE — ตั้ง LIFF_ID (จาก LINE Developers -> LINE Login channel ใน provider เดียวกับบอท -> LIFF)
+const LIFF_ID = (process.env.LIFF_ID || '').trim();
+const LINE_LOGIN_CHANNEL_ID = (process.env.LINE_LOGIN_CHANNEL_ID || '').trim(); // ใช้ตรวจ ID token (แนะนำ)
+const REG_UI = ['liff', 'chat'].includes((process.env.REG_UI || '').trim().toLowerCase()) ? (process.env.REG_UI || '').trim().toLowerCase() : (LIFF_ID ? 'liff' : 'chat');
+const LIFF_URL = LIFF_ID ? 'https://liff.line.me/' + LIFF_ID : '';
 
 // ---------- ทะเบียนแชท + สถานะ + ประวัติ ----------
 const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history,bf,cb,cbDone,cbCount}
@@ -153,7 +167,8 @@ function initPersist() {
             cb: (s.cb && typeof s.cb === 'object') ? s.cb : null,
             cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
             cbCount: s.cbCount || 0,
-            reg: (s.reg && typeof s.reg === 'object' && s.reg.step) ? s.reg : null // ลงทะเบียนค้างอยู่ -> ถามต่อจากขั้นเดิม
+            reg: (s.reg && typeof s.reg === 'object' && s.reg.step) ? s.reg : null, // ลงทะเบียนค้างอยู่ -> ถามต่อจากขั้นเดิม
+            regPending: s.regPending || '', regInvitedAt: s.regInvitedAt || 0
           });
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
@@ -226,7 +241,7 @@ setInterval(() => {
 function touchSession(id, type, text) {
   let s = sessions.get(id);
   if (!s) {
-    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false, cb: null, cbDone: null, cbCount: 0, reg: null };
+    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false, cb: null, cbDone: null, cbCount: 0, reg: null, regPending: '', regInvitedAt: 0 };
     sessions.set(id, s);
     if (sessions.size > 500) {
       let oldestId = null, oldestAt = Infinity;
@@ -267,7 +282,7 @@ function request(method, url, headers, bodyObj) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const isHttp = u.protocol === 'http:';
-    const body = bodyObj ? JSON.stringify(bodyObj) : null;
+    const body = bodyObj == null ? null : (typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj)); // string = ส่งดิบ (เช่น form-urlencoded)
     const opts = {
       hostname: u.hostname,
       port: u.port || (isHttp ? 80 : 443),
@@ -392,7 +407,10 @@ async function askDify(sessionId, text) {
 // ---------- LINE ----------
 // text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
 function lineMsgs(text) {
-  return (Array.isArray(text) ? text : [text]).filter((t) => t != null && String(t).trim()).slice(0, 5).map((t) => ({ type: 'text', text: String(t).slice(0, 4900) }));
+  return (Array.isArray(text) ? text : [text])
+    .filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()))
+    .slice(0, 5)
+    .map((t) => (typeof t === 'object' ? t : { type: 'text', text: String(t).slice(0, 4900) }));
 }
 async function lineReply(replyToken, text) {
   if (!replyToken) return false;
@@ -949,7 +967,7 @@ async function posCreate(id, by) {
   const phone = normPhone(c.phone) || normPhone(c.auto && c.auto.phone) || '';
   const k = pos.cols;
   const row = {};
-  const shopLike = SHOP_NAME_RX.test(name);
+  const shopLike = SHOP_NAME_RX.test(name) || !!(c.auto && c.auto.reg && c.auto.reg.type === 'shop');
   const bare = name.replace(NAME_PREFIX_RX, '').trim();
   const parts = bare.split(/\s+/).filter(Boolean);
   if (k.name.length >= 2) { row[k.name[0]] = parts[0] || name; row[k.name[1]] = parts.slice(1).join(' ') || null; }
@@ -1037,12 +1055,13 @@ async function regInvite(id) {
   const c = crmGet(id);
   if (!s || s.type !== 'user') return { ok: false, err: 'ไม่ใช่แชทลูกค้า' };
   if (regDone(c)) return { ok: false, err: 'ลงทะเบียนแล้ว' };
-  regStart(s, '', { invited: true });
-  s.reg.invitedAt = Date.now();
   c.auto = c.auto || {}; c.auto.reg_asked = true;
-  const msg = regInviteMsg(s);
+  s.regInvitedAt = Date.now();
+  let msg;
+  if (REG_UI === 'liff' && LIFF_URL) { msg = liffButtonMsg('invite'); }
+  else { regStart(s, '', { invited: true }); s.reg.invitedAt = Date.now(); msg = regInviteMsg(s); }
   const ok = await linePush(id, msg);
-  if (ok) { pushHist(s, 'b', msg); s.lastText = msg.slice(0, 120); }
+  if (ok) { const ht = Array.isArray(msg) ? msg[0] : msg; pushHist(s, 'b', ht); s.lastText = String(ht).slice(0, 120); }
   markDirty(); broadcast();
   console.log(`[reg] invite ${id.slice(0, 8)} -> ${ok ? 'sent' : 'FAILED'}`);
   return { ok, err: ok ? undefined : 'ส่ง Push ไม่สำเร็จ (ลูกค้าบล็อก OA / โควต้า / token)' };
@@ -1137,21 +1156,26 @@ async function posUpdateRow(rec, fields) {
     return true;
   } catch (e) { console.log('[pos] update error:', e.message); return false; }
 }
-async function regFinish(id, s, c) {
-  const d = s.reg.data;
-  const isUpdate = !!s.reg.update;
+// บันทึกผลการลงทะเบียน (ใช้ร่วมกันทั้งแชท wizard และฟอร์ม LIFF): d = {name, phone, province, district?, crops?, type?}
+// opts = { update:bool, source:'chat'|'liff' }  คืน { doneMsg, posNote, zone }
+async function regApply(id, c, d, opts) {
+  const isUpdate = !!(opts && opts.update);
+  const source = (opts && opts.source) || 'chat';
   const phone = d.phone && d.phone !== '-' ? d.phone : '';
   c.auto = c.auto || {};
   const oldPhone = c.phone || '', oldProv = c.province || '';
   if (isUpdate || !c.real_name || (c.auto.pos_filled && c.auto.pos_filled.real_name === c.real_name)) c.real_name = d.name;
   if (phone) { c.phone = phone; c.auto.phone = isUpdate ? phone : (c.auto.phone || phone); }
   if (d.province && (isUpdate || !c.province)) c.province = d.province;
-  c.auto.reg = { done_at: new Date().toISOString(), source: isUpdate ? 'chat-update' : 'chat', name: d.name, phone, province: d.province || '' };
+  if (d.district && (isUpdate || !c.district)) c.district = String(d.district).slice(0, 60);
+  if (d.crops && (isUpdate || !c.crops)) c.crops = String(d.crops).slice(0, 200);
+  c.auto.reg = { done_at: new Date().toISOString(), source: isUpdate ? source + '-update' : source, name: d.name, phone, province: d.province || '', type: d.type || '' };
   c.updated_at = new Date().toISOString();
   markDirty();
   broadcast();
   if (SB_ON) sbUpsert(c);
-  crmAddNote(id, `📝 ลูกค้า${isUpdate ? 'อัปเดตข้อมูล' : 'ลงทะเบียน'}ผ่านแชท: ${d.name}${phone ? ' · ' + phone : ''}${d.province ? ' · ' + d.province : ''}`, 'system').catch(() => {});
+  const via = source === 'liff' ? 'ฟอร์ม LIFF' : 'แชท';
+  crmAddNote(id, `📝 ลูกค้า${isUpdate ? 'อัปเดตข้อมูล' : 'ลงทะเบียน'}ผ่าน${via}: ${d.name}${phone ? ' · ' + phone : ''}${d.province ? ' · ' + d.province : ''}${d.district ? ' อ.' + d.district : ''}${d.crops ? ' · ' + d.crops : ''}`, 'system').catch(() => {});
   let posNote = '';
   if (POS_ON) {
     if (!pos.rows.length && !pos.loading) posRefresh().catch(() => {});
@@ -1174,15 +1198,305 @@ async function regFinish(id, s, c) {
   const z = zoneInfo(c.province || d.province || '');
   const zoneLine = z ? `\nทีมงานดูแลพื้นที่ของคุณ (เขต ${z.zone}): ${z.team}` : '';
   const doneMsg = (isUpdate ? `✅ อัปเดตข้อมูลเรียบร้อยค่ะ (${regSummaryText(c)}) 🙏` : `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณคุณ${d.name}${d.province ? ' จ.' + d.province : ''} 🙏`) + `${posNote ? '\n' + posNote : ''}${zoneLine}\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾`;
+  const s = sessions.get(id);
+  if (s && s.reg) { s.reg = null; markDirty(); }
+  console.log(`[reg] ${id.slice(0, 8)} ${isUpdate ? 'updated' : 'registered'} via ${source}: ${d.name} / ${phone || '-'} / ${d.province || '-'}`);
+  return { doneMsg, posNote, zone: z };
+}
+async function regFinish(id, s, c) {
   const pending = s.reg.pending;
-  s.reg = null;
-  markDirty();
-  console.log(`[reg] ${id.slice(0, 8)} ${isUpdate ? 'updated' : 'registered'}: ${d.name} / ${phone || '-'} / ${d.province || '-'}`);
-  return { doneMsg, pending };
+  const r = await regApply(id, c, s.reg.data, { update: !!s.reg.update, source: 'chat' });
+  return { doneMsg: r.doneMsg, pending };
 }
 function regInfo(s, c) {
   const reg = c && c.auto && c.auto.reg;
-  return { mode: REG_MODE, done: regDone(c), done_at: reg ? reg.done_at : null, source: reg ? reg.source : (c && c.pos_id ? 'pos' : null), data: reg || null, inProgress: !!(s && s.reg), step: s && s.reg ? s.reg.step : null, needed: regNeeded(c) };
+  return { mode: REG_MODE, ui: REG_UI, done: regDone(c), done_at: reg ? reg.done_at : null, source: reg ? reg.source : (c && c.pos_id ? 'pos' : null), data: reg || null, inProgress: !!(s && s.reg), step: s && s.reg ? s.reg.step : null, needed: regNeeded(c) };
+}
+
+// ---------- LIFF (v3.3): ฟอร์มลงทะเบียนในแอป LINE ----------
+// ข้อความแบบปุ่มเปิดฟอร์ม LIFF (text + buttons template) — kind: welcome | gate | invite | edit | again | done
+function liffButtonMsg(kind, extra) {
+  const url = LIFF_URL;
+  const fallback = '\n(ถ้าเปิดฟอร์มไม่ได้ พิมพ์ "ลงทะเบียนผ่านแชท" ได้ค่ะ)';
+  let text, label = '📝 ลงทะเบียนสมาชิก', btnText = 'กดปุ่มเพื่อกรอกฟอร์มลงทะเบียน (ไม่ถึงนาที)';
+  if (kind === 'welcome') text = 'สวัสดีค่ะ 🙏 น้องลัดดา ผู้ช่วยจาก ICP Ladda ยินดีต้อนรับค่ะ 🌾\nก่อนเริ่มใช้งาน รบกวนลงทะเบียนสมาชิกสั้นๆ (ชื่อ เบอร์ จังหวัด) เพื่อให้ทีมงานในพื้นที่ดูแลคุณลูกค้าได้ตรงจุดนะคะ กดปุ่มด้านล่างได้เลยค่ะ' + fallback;
+  else if (kind === 'gate') text = 'ก่อนเริ่มใช้งาน น้องลัดดาขอรบกวนคุณลูกค้าลงทะเบียนสมาชิกสั้นๆ ก่อนนะคะ (ไม่ถึงนาทีค่ะ) กดปุ่มด้านล่างเพื่อกรอกฟอร์ม' + (extra && extra.pending ? '\n\n(คำถามเรื่อง “' + String(extra.pending).slice(0, 40) + (String(extra.pending).length > 40 ? '…' : '') + '” น้องลัดดาจะตอบให้ทันทีหลังลงทะเบียนเสร็จค่ะ)' : '') + fallback;
+  else if (kind === 'invite') text = 'สวัสดีค่ะ 🙏 น้องลัดดา ผู้ช่วยจาก ICP Ladda ขอรบกวนคุณลูกค้าลงทะเบียนสมาชิกสั้นๆ (ชื่อ เบอร์ จังหวัด) เพื่อให้ทีมงานในพื้นที่ดูแลได้ตรงจุด และรับข่าวสาร/โปรโมชั่นตรงพื้นที่นะคะ กดปุ่มด้านล่างได้เลยค่ะ' + fallback;
+  else if (kind === 'edit') { text = 'แก้ไขข้อมูลสมาชิกได้ที่ฟอร์มด้านล่างค่ะ ✍️' + (extra && extra.summary ? '\n(ข้อมูลเดิม: ' + extra.summary + ')' : ''); label = '✏️ แก้ไขข้อมูลสมาชิก'; btnText = 'กดปุ่มเพื่อเปิดฟอร์มแก้ไขข้อมูล'; }
+  else if (kind === 'again') text = 'ยังลงทะเบียนไม่เสร็จค่ะ 😊 กดปุ่มด้านล่างเพื่อกรอกฟอร์มได้เลย' + fallback;
+  else text = 'ลงทะเบียนสมาชิกได้ที่ปุ่มด้านล่างค่ะ' + fallback;
+  return [text, { type: 'template', altText: (kind === 'edit' ? 'แก้ไขข้อมูลสมาชิก: ' : 'ลงทะเบียนสมาชิก: ') + url, template: { type: 'buttons', text: btnText.slice(0, 160), actions: [{ type: 'uri', label: label.slice(0, 20), uri: url }] } }];
+}
+// ตรวจ token จาก LIFF กับ LINE: ID token (ต้องมี LINE_LOGIN_CHANNEL_ID) หรือ access token (+ ดึงโปรไฟล์) -> { userId, name, picture }
+async function liffVerify(idToken, accessToken) {
+  try {
+    if (idToken && LINE_LOGIN_CHANNEL_ID) {
+      const r = await request('POST', LINE_API + '/oauth2/v2.1/verify', { 'Content-Type': 'application/x-www-form-urlencoded' },
+        'id_token=' + encodeURIComponent(idToken) + '&client_id=' + encodeURIComponent(LINE_LOGIN_CHANNEL_ID));
+      if (r.status === 200 && r.data && r.data.sub) return { userId: String(r.data.sub), name: r.data.name || '', picture: r.data.picture || '', via: 'id_token' };
+      console.log('[liff] id_token verify failed:', r.status, JSON.stringify(r.data).slice(0, 160));
+    }
+    if (accessToken) {
+      const v = await request('GET', LINE_API + '/oauth2/v2.1/verify?access_token=' + encodeURIComponent(accessToken));
+      if (v.status !== 200 || !v.data) { console.log('[liff] access_token verify failed:', v.status); return null; }
+      if (LINE_LOGIN_CHANNEL_ID && String(v.data.client_id) !== LINE_LOGIN_CHANNEL_ID) { console.log('[liff] access_token client_id mismatch'); return null; }
+      const p = await request('GET', LINE_API + '/v2/profile', { Authorization: 'Bearer ' + accessToken });
+      if (p.status === 200 && p.data && p.data.userId) return { userId: String(p.data.userId), name: p.data.displayName || '', picture: p.data.pictureUrl || '', via: 'access_token' };
+      console.log('[liff] profile failed:', p.status);
+    }
+  } catch (e) { console.log('[liff] verify error:', e.message); }
+  return null;
+}
+function liffProfileFor(id, c, s) {
+  return {
+    real_name: c.real_name || '', phone: c.phone || (c.auto && c.auto.phone) || '', province: c.province || (c.auto && c.auto.province) || '', district: c.district || '',
+    crops: c.crops || (c.auto && c.auto.crops) || '', type: (c.auto && c.auto.reg && c.auto.reg.type) || '',
+    registered: regDone(c), reg: regInfo(s, c), pos: c.pos_id ? { linked: true, name: c.pos_name || '' } : { linked: false }, zone: zoneInfo(c.province || '')
+  };
+}
+// รับข้อมูลจากฟอร์ม -> ตรวจ -> บันทึก (regApply) -> คืนข้อความยืนยัน
+async function liffRegister(who, body) {
+  const id = who.userId;
+  const name = String(body.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const phone = normPhone(body.phone);
+  const province = provinceOf(String(body.province || '')) || String(body.province || '').trim().slice(0, 60);
+  const district = String(body.district || '').trim().slice(0, 60);
+  const crops = Array.isArray(body.crops) ? body.crops.map((x) => String(x).trim()).filter(Boolean).slice(0, 12).join(', ') : String(body.crops || '').trim().slice(0, 200);
+  const type = body.type === 'shop' ? 'shop' : (body.type === 'farmer' ? 'farmer' : '');
+  const errors = {};
+  if (name.length < 2) errors.name = 'กรุณากรอกชื่อ-นามสกุล';
+  if (!phone) errors.phone = 'เบอร์โทรไม่ถูกต้อง (ตัวเลข 9-10 หลัก)';
+  if (!province) errors.province = 'กรุณาเลือกจังหวัด';
+  if (!body.consent) errors.consent = 'กรุณายืนยันการยินยอมให้เก็บข้อมูล';
+  if (Object.keys(errors).length) return { ok: false, errors };
+  const s = touchSession(id, 'user', '(ลงทะเบียนผ่านฟอร์ม LIFF)');
+  const c = crmGet(id);
+  if (!s.name && who.name) { s.name = who.name.slice(0, 60); s.pic = (who.picture || '').slice(0, 500); }
+  else fetchProfile(s, id);
+  if (!c.display_name && who.name) { c.display_name = who.name.slice(0, 60); c.picture_url = who.picture || ''; }
+  const wasDone = regDone(c);
+  const r = await regApply(id, c, { name, phone, province, district, crops, type }, { update: wasDone, source: 'liff' });
+  c.auto.reg.msg = r.doneMsg.slice(0, 1500);
+  c.auto.reg.confirmed = false;
+  markDirty();
+  return { ok: true, doneMsg: r.doneMsg, posNote: r.posNote, zone: r.zone, updated: wasDone, profile: liffProfileFor(id, c, s) };
+}
+// หลังลงทะเบียนผ่าน LIFF: ส่งข้อความยืนยันเข้าแชท (ครั้งเดียว) — ใช้เมื่อหน้า LIFF ส่งข้อความในนามลูกค้าไม่ได้ (Push 1 ข้อความ)
+async function liffConfirmPush(id) {
+  const c = crm.get(id);
+  const s = sessions.get(id);
+  if (!c || !c.auto || !c.auto.reg || !c.auto.reg.msg) return { ok: false, err: 'ยังไม่ได้ลงทะเบียน' };
+  if (c.auto.reg.confirmed) return { ok: true, already: true };
+  const msgs = [c.auto.reg.msg];
+  if (s && s.regPending) { const ans = await askDify(id, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
+  const ok = await linePush(id, msgs);
+  if (ok) { c.auto.reg.confirmed = true; if (s) { for (const m of msgs) pushHist(s, 'b', m); s.lastText = String(msgs[0]).slice(0, 120); s.lastAt = Date.now(); } markDirty(); broadcast(); }
+  return { ok };
+}
+const LIFF_HTML = `<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ลงทะเบียนสมาชิก — ICP Ladda</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, 'Noto Sans Thai', sans-serif; background: #f2f5f3; color: #1f2329; min-height: 100dvh; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 16px 14px 32px; }
+  .card { background: #fff; border-radius: 16px; padding: 18px 16px; box-shadow: 0 4px 18px rgba(0,0,0,.06); }
+  .head { text-align: center; margin-bottom: 14px; }
+  .head .logo { font-size: 40px; }
+  .head h1 { font-size: 18px; margin-top: 4px; }
+  .head p { font-size: 12.5px; color: #6b7680; margin-top: 4px; line-height: 1.5; }
+  label { display: block; font-size: 12.5px; color: #55606b; margin: 12px 0 4px; font-weight: 600; }
+  label small { color: #d33a41; }
+  input, select, textarea { width: 100%; padding: 11px 12px; border: 1px solid #d8dde3; border-radius: 10px; font-size: 16px; font-family: inherit; background: #fff; color: #1f2329; outline: none; }
+  input:focus, select:focus { border-color: #06c755; box-shadow: 0 0 0 3px rgba(6,199,85,.15); }
+  .row2 { display: flex; gap: 8px; }
+  .row2 > div { flex: 1; min-width: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .chip { border: 1px solid #d8dde3; border-radius: 99px; padding: 6px 12px; font-size: 13.5px; cursor: pointer; background: #fff; user-select: none; }
+  .chip.on { background: #06c755; color: #fff; border-color: #06c755; }
+  .seg { display: flex; border: 1px solid #d8dde3; border-radius: 10px; overflow: hidden; }
+  .seg div { flex: 1; text-align: center; padding: 10px; font-size: 14px; cursor: pointer; }
+  .seg div.on { background: #06c755; color: #fff; font-weight: 700; }
+  .consent { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 12.5px; color: #55606b; line-height: 1.5; }
+  .consent input { width: 18px; height: 18px; margin-top: 2px; }
+  .btn { width: 100%; margin-top: 16px; padding: 14px; border: 0; border-radius: 12px; background: #06c755; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .btn:disabled { opacity: .55; }
+  .btn.sec { background: #eef0f2; color: #55606b; margin-top: 8px; }
+  .err { color: #d33a41; font-size: 12px; margin-top: 3px; min-height: 14px; }
+  .note { font-size: 12px; color: #8a95a1; margin-top: 8px; line-height: 1.5; text-align: center; }
+  .done { text-align: center; padding: 10px 0; }
+  .done .big { font-size: 56px; }
+  .done h2 { font-size: 18px; margin: 6px 0; }
+  .done p { font-size: 14px; color: #55606b; line-height: 1.6; white-space: pre-wrap; text-align: left; background: #f6fbf7; border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .banner { background: #e6f9ee; color: #0a6b34; border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-bottom: 8px; line-height: 1.5; }
+  .banner.warn { background: #fff8e6; color: #8a5a00; }
+  #loading { text-align: center; padding: 40px 0; color: #6b7680; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head"><div class="logo">🌾</div><h1>ลงทะเบียนสมาชิก ICP Ladda</h1><p>เพื่อให้ทีมงานในพื้นที่ดูแลคุณลูกค้าได้ตรงจุด<br>และรับข่าวสาร/โปรโมชั่นตรงพื้นที่</p></div>
+    <div id="loading">กำลังโหลด… ⏳</div>
+    <form id="f" style="display:none" novalidate>
+      <div id="banner"></div>
+      <label>ประเภทสมาชิก</label>
+      <div class="seg" id="type"><div data-v="farmer" class="on">👨‍🌾 เกษตรกร</div><div data-v="shop">🏪 ร้านค้า / ตัวแทน</div></div>
+      <label>ชื่อ-นามสกุล <small>*</small></label>
+      <input id="name" placeholder="เช่น สมชาย ใจดี" autocomplete="name"><div class="err" id="e_name"></div>
+      <label>เบอร์โทรศัพท์ <small>*</small></label>
+      <input id="phone" type="tel" inputmode="numeric" placeholder="เช่น 0812345678" autocomplete="tel"><div class="err" id="e_phone"></div>
+      <div class="row2">
+        <div><label>จังหวัด <small>*</small></label><select id="province"><option value="">— เลือกจังหวัด —</option></select><div class="err" id="e_province"></div></div>
+        <div><label>อำเภอ</label><input id="district" placeholder="ไม่บังคับ"></div>
+      </div>
+      <label>พืชที่ปลูก / สินค้าที่สนใจ (เลือกได้หลายข้อ)</label>
+      <div class="chips" id="crops"></div>
+      <input id="crops_other" placeholder="พืชอื่นๆ (พิมพ์เอง ไม่บังคับ)" style="margin-top:6px">
+      <div class="consent"><input type="checkbox" id="consent"><div>ข้าพเจ้ายินยอมให้บริษัท ไอ ซี พี ลัดดา จำกัด เก็บและใช้ข้อมูลข้างต้นเพื่อการติดต่อ ให้บริการ และแจ้งข่าวสาร/โปรโมชั่น ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล</div></div>
+      <div class="err" id="e_consent"></div>
+      <button class="btn" id="submit" type="submit">✅ ยืนยันการลงทะเบียน</button>
+      <div class="note" id="who"></div>
+    </form>
+    <div id="done" class="done" style="display:none"><div class="big">✅</div><h2 id="done_h">ลงทะเบียนเรียบร้อยค่ะ</h2><p id="done_p"></p><button class="btn" id="close">กลับไปที่แชท</button><button class="btn sec" id="edit">แก้ไขข้อมูล</button></div>
+    <div id="fatal" class="done" style="display:none"><div class="big">⚠️</div><h2>เปิดฟอร์มไม่ได้</h2><p id="fatal_p"></p></div>
+  </div>
+</div>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+var LIFF_ID = '__LIFF_ID__';
+var PROVINCES = __PROVINCES__;
+var CROPS = ['ทุเรียน', 'ข้าว', 'ข้าวโพด', 'อ้อย', 'มันสำปะหลัง', 'ปาล์มน้ำมัน', 'ยางพารา', 'ลำไย', 'มะม่วง', 'ส้ม/มะนาว', 'มังคุด/เงาะ/ลองกอง', 'พริก/ผัก', 'ถั่ว/พืชไร่', 'ไม้ดอก'];
+var tokens = { idToken: '', accessToken: '' };
+var selCrops = [];
+var typeVal = 'farmer';
+var doneMsg = '';
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function api(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, tokens, body || {})) })
+    .then(function(r) { return r.json().then(function(j) { if (!r.ok && !j.errors) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); });
+}
+function fatal(msg) { $('loading').style.display = 'none'; $('f').style.display = 'none'; $('fatal').style.display = 'block'; $('fatal_p').textContent = msg; }
+function renderCrops() {
+  var h = '';
+  for (var i = 0; i < CROPS.length; i++) h += '<span class="chip' + (selCrops.indexOf(CROPS[i]) !== -1 ? ' on' : '') + '" data-c="' + esc(CROPS[i]) + '">' + esc(CROPS[i]) + '</span>';
+  $('crops').innerHTML = h;
+}
+function fill(p) {
+  if (!p) return;
+  if (p.real_name) $('name').value = p.real_name;
+  if (p.phone) $('phone').value = p.phone;
+  if (p.province) $('province').value = p.province;
+  if (p.district) $('district').value = p.district;
+  if (p.type === 'shop' || p.type === 'farmer') setType(p.type);
+  if (p.crops) {
+    var arr = String(p.crops).split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+    var other = [];
+    arr.forEach(function(x) { if (CROPS.indexOf(x) !== -1) selCrops.push(x); else other.push(x); });
+    $('crops_other').value = other.join(', ');
+    renderCrops();
+  }
+}
+function setType(v) { typeVal = v; var ds = $('type').children; for (var i = 0; i < ds.length; i++) ds[i].className = ds[i].getAttribute('data-v') === v ? 'on' : ''; }
+function showDone(r) {
+  $('f').style.display = 'none';
+  $('done').style.display = 'block';
+  $('done_h').textContent = r.updated ? 'อัปเดตข้อมูลเรียบร้อยค่ะ' : 'ลงทะเบียนเรียบร้อยค่ะ';
+  $('done_p').textContent = r.doneMsg || '';
+}
+async function notifyChat() {
+  // ส่ง "ลงทะเบียนเรียบร้อยแล้ว ✅" ในนามลูกค้าเข้าแชท -> บอทตอบยืนยัน (ไม่ใช้โควต้า Push) / ถ้าส่งไม่ได้ ให้เซิร์ฟเวอร์ Push แทน
+  var sent = false;
+  try {
+    if (liff.isInClient && liff.isInClient() && liff.getContext && liff.getContext() && liff.getContext().type === 'utou') {
+      await liff.sendMessages([{ type: 'text', text: 'ลงทะเบียนเรียบร้อยแล้ว ✅' }]);
+      sent = true;
+    }
+  } catch (e) { sent = false; }
+  if (!sent) { try { await api('/liff/confirm', {}); } catch (e) {} }
+}
+async function main() {
+  if (!LIFF_ID) return fatal('ระบบยังไม่ได้ตั้งค่า LIFF_ID (แจ้งแอดมิน)');
+  var opts = PROVINCES.map(function(p) { return '<option value="' + esc(p) + '">' + esc(p) + '</option>'; }).join('');
+  $('province').innerHTML = '<option value="">— เลือกจังหวัด —</option>' + opts;
+  renderCrops();
+  try {
+    await liff.init({ liffId: LIFF_ID });
+  } catch (e) { return fatal('เปิด LIFF ไม่สำเร็จ: ' + (e && e.message ? e.message : e) + '\\nตรวจสอบ LIFF ID / Endpoint URL ใน LINE Developers'); }
+  if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+  tokens.idToken = liff.getIDToken() || '';
+  tokens.accessToken = liff.getAccessToken() || '';
+  var prof = null;
+  try { prof = await liff.getProfile(); } catch (e) {}
+  var me = null;
+  try { me = await api('/liff/me', {}); } catch (e) { return fatal('ยืนยันตัวตนกับ LINE ไม่สำเร็จ: ' + e.message + '\\n(ปิดแล้วเปิดใหม่ หรือแจ้งแอดมิน)'); }
+  if (!me || !me.ok) return fatal('ยืนยันตัวตนกับ LINE ไม่สำเร็จ' + (me && me.error ? ': ' + me.error : ''));
+  $('loading').style.display = 'none';
+  $('f').style.display = 'block';
+  if (prof && prof.displayName) { $('who').textContent = 'บัญชี LINE: ' + prof.displayName; if (!$('name').value && !(me.profile && me.profile.real_name)) $('name').placeholder = 'เช่น ' + prof.displayName; }
+  fill(me.profile);
+  if (me.profile && me.profile.registered) $('banner').innerHTML = '<div class="banner">✅ คุณลงทะเบียนไว้แล้ว — แก้ไขข้อมูลด้านล่างแล้วกดยืนยันได้เลยค่ะ' + (me.profile.pos && me.profile.pos.linked ? '<br>🔗 เชื่อมกับข้อมูลสมาชิกในระบบแล้ว' : '') + '</div>';
+}
+$('type').addEventListener('click', function(e) { var d = e.target.closest('div[data-v]'); if (d) setType(d.getAttribute('data-v')); });
+$('crops').addEventListener('click', function(e) { var c = e.target.closest('.chip'); if (!c) return; var v = c.getAttribute('data-c'); var i = selCrops.indexOf(v); if (i === -1) selCrops.push(v); else selCrops.splice(i, 1); renderCrops(); });
+$('f').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  ['name', 'phone', 'province', 'consent'].forEach(function(k) { $('e_' + k).textContent = ''; });
+  var crops = selCrops.slice();
+  var other = $('crops_other').value.trim(); if (other) crops.push(other);
+  var body = { name: $('name').value.trim(), phone: $('phone').value.trim(), province: $('province').value, district: $('district').value.trim(), crops: crops, type: typeVal, consent: $('consent').checked };
+  var btn = $('submit'); btn.disabled = true; btn.textContent = 'กำลังบันทึก…';
+  try {
+    var r = await api('/liff/register', body);
+    if (!r.ok) {
+      var errs = r.errors || {};
+      Object.keys(errs).forEach(function(k) { if ($('e_' + k)) $('e_' + k).textContent = errs[k]; });
+      if (!Object.keys(errs).length) alert(r.error || 'บันทึกไม่สำเร็จ');
+    } else {
+      showDone(r);
+      notifyChat();
+    }
+  } catch (err) { alert('บันทึกไม่สำเร็จ: ' + err.message); }
+  btn.disabled = false; btn.textContent = '✅ ยืนยันการลงทะเบียน';
+});
+$('close').addEventListener('click', function() { if (liff.isInClient && liff.isInClient()) liff.closeWindow(); else location.reload(); });
+$('edit').addEventListener('click', function() { $('done').style.display = 'none'; $('f').style.display = 'block'; });
+main();
+</script>
+</body>
+</html>`;
+function liffPage() {
+  return LIFF_HTML.replace('__LIFF_ID__', LIFF_ID.replace(/[^\w-]/g, '')).replace('__PROVINCES__', JSON.stringify(PROVINCES_ALL));
+}
+function readJson(body) { try { return JSON.parse(body.toString('utf8')) || {}; } catch (_) { return {}; } }
+async function handleLiff(req, res, path, body) {
+  if (req.method === 'GET' && (path === '/liff' || path === '/liff/')) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(liffPage());
+  }
+  if (req.method === 'GET' && path === '/liff/config') return sendJson(res, 200, { ok: true, liffId: LIFF_ID, url: LIFF_URL, on: REG_UI === 'liff' });
+  if (req.method !== 'POST') return sendJson(res, 404, { ok: false, error: 'not found' });
+  const data = readJson(body);
+  const who = await liffVerify(data.idToken, data.accessToken);
+  if (!who) return sendJson(res, 401, { ok: false, error: 'ยืนยันตัวตนกับ LINE ไม่สำเร็จ (token ไม่ถูกต้อง/หมดอายุ หรือ LINE Login channel ไม่ตรง)' });
+  if (path === '/liff/me') {
+    const c = crmGet(who.userId);
+    const s = sessions.get(who.userId);
+    return sendJson(res, 200, { ok: true, name: who.name, profile: liffProfileFor(who.userId, c, s) });
+  }
+  if (path === '/liff/register') {
+    const r = await liffRegister(who, data);
+    return sendJson(res, r.ok ? 200 : 400, r);
+  }
+  if (path === '/liff/confirm') {
+    const r = await liffConfirmPush(who.userId);
+    return sendJson(res, r.ok ? 200 : 400, r);
+  }
+  return sendJson(res, 404, { ok: false, error: 'not found' });
 }
 
 // ---------- ธง "รอติดต่อกลับ" (callback) ----------
@@ -1248,9 +1562,9 @@ function notifyAdmins(id, s, isNew) {
 
 // opts.system = ข้อความระบบของ bridge เอง (เช่น แบบฟอร์มลงทะเบียน) -> ไม่ต้องตรวจ "บอทรับปากติดต่อกลับ" (ตรวจเฉพาะคำตอบจาก Dify)
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
-  const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && String(t).trim());
+  const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
   const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { pushHist(s, 'b', t); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, t); });
+  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || '(ข้อความแบบปุ่ม)') : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
   const ok = await lineReply(ev.replyToken, arr);
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
     const pushed = await linePush(fallbackTo, text);
@@ -1291,10 +1605,15 @@ async function handleEvent(ev) {
     const c = crmGet(sessionId);
     crmTouch(sessionId, s, '');
     if (regNeeded(c) || (REG_MODE === 'soft' && !regDone(c))) {
-      if (!s.reg) regStart(s, '');
       c.auto = c.auto || {}; c.auto.reg_asked = true;
-      console.log(`[follow] ${sessionId.slice(0, 8)} -> registration prompt`);
-      await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true });
+      if (REG_UI === 'liff' && LIFF_URL) {
+        console.log(`[follow] ${sessionId.slice(0, 8)} -> LIFF register button`);
+        await sendAnswer(s, ev, pushTarget, liffButtonMsg('welcome'), { system: true });
+      } else {
+        if (!s.reg) regStart(s, '');
+        console.log(`[follow] ${sessionId.slice(0, 8)} -> registration prompt`);
+        await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true });
+      }
     } else {
       await sendAnswer(s, ev, pushTarget, 'ยินดีต้อนรับกลับมาค่ะ 🙏 น้องลัดดาพร้อมตอบเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾', { system: true });
     }
@@ -1352,12 +1671,35 @@ async function handleEvent(ev) {
   // + คำสั่ง "ลงทะเบียน" (ทุกโหมด) และ "แก้ไขข้อมูล" (อัปเดตข้อมูลที่ลงทะเบียนไว้)
   if (stype === 'user') {
     const c = crmGet(sessionId);
-    const cmd = ev.message.type === 'text' ? regCmd(text) : '';
+    const liffOn = REG_UI === 'liff' && !!LIFF_URL;
+    let cmd = ev.message.type === 'text' ? regCmd(text) : '';
+    // ลูกค้ากด "ลงทะเบียนเรียบร้อยแล้ว ✅" จากหน้า LIFF (liff.sendMessages) -> ตอบยืนยัน + ตอบคำถามที่ค้างไว้ (ใช้ Reply ไม่กินโควต้า)
+    if (ev.message.type === 'text' && /^ลงทะเบียนเรียบร้อยแล้ว/.test(text.trim()) && regDone(c)) {
+      c.auto = c.auto || {};
+      const msgs = [(c.auto.reg && c.auto.reg.msg) || `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณค่ะ 🙏 (${regSummaryText(c)})\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾`];
+      if (s.regPending) { const ans = await askDify(sessionId, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
+      if (c.auto.reg) c.auto.reg.confirmed = true;
+      markDirty();
+      await sendAnswer(s, ev, pushTarget, msgs, { system: 1 });
+      return;
+    }
+    // "ลงทะเบียนผ่านแชท" = ขอกรอกในแชทแทนฟอร์ม (สำรองเมื่อเปิด LIFF ไม่ได้)
+    if (ev.message.type === 'text' && /^(ขอ)?(ลงทะเบียน|สมัคร)(ผ่าน|ใน|ทาง)แชท/.test(text.trim())) {
+      if (regDone(c)) cmd = 'edit';
+      else { regStart(s, ''); c.auto = c.auto || {}; c.auto.reg_asked = true; console.log(`[reg] ${sessionId.slice(0, 8)} chat fallback`); await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true }); return; }
+    }
     if (cmd === 'register' && regDone(c)) {
+      if (liffOn) { await sendAnswer(s, ev, pushTarget, [`คุณลูกค้าลงทะเบียนไว้แล้วค่ะ 🙏 (${regSummaryText(c)})`].concat(liffButtonMsg('edit')), { system: true }); return; }
       await sendAnswer(s, ev, pushTarget, `คุณลูกค้าลงทะเบียนไว้แล้วค่ะ 🙏 (${regSummaryText(c)})\nถ้าต้องการแก้ไข พิมพ์ว่า "แก้ไขข้อมูล" ได้เลยค่ะ`, { system: true });
       return;
     }
     if (cmd === 'register' && s.reg) { await sendAnswer(s, ev, pushTarget, 'กำลังลงทะเบียนอยู่ค่ะ 😊\n' + regPrompt(s.reg.step, s), { system: true }); return; }
+    if ((cmd === 'edit' || cmd === 'register') && liffOn && !s.reg) {
+      c.auto = c.auto || {}; c.auto.reg_asked = true;
+      console.log(`[reg] ${sessionId.slice(0, 8)} ${cmd} -> LIFF button`);
+      await sendAnswer(s, ev, pushTarget, liffButtonMsg(cmd === 'edit' ? 'edit' : 'gate', { summary: regSummaryText(c) }), { system: true });
+      return;
+    }
     if (cmd === 'edit' || cmd === 'register') {
       const upd = cmd === 'edit' && regDone(c);
       regStart(s, '', { update: upd });
@@ -1369,6 +1711,18 @@ async function handleEvent(ev) {
     if (s.reg || regNeeded(c)) {
       const isText = ev.message.type === 'text';
       const forced = REG_MODE === 'on' && !(s.reg && s.reg.update); // โหมดบังคับ (ยกเว้นตอนแก้ไขข้อมูล = ไม่บังคับ)
+      if (!s.reg && liffOn) {
+        // โหมด LIFF: ส่งปุ่มเปิดฟอร์ม (จำคำถามแรกไว้ ตอบให้หลังลงทะเบียน) — ส่งซ้ำไม่เกินทุก 2 นาทีเพื่อไม่รบกวน
+        const t = isText ? String(text).trim() : '';
+        if (t && t.length >= 6 && !REG_GREET_RX.test(t) && REG_QUESTION_RX.test(t)) s.regPending = t.slice(0, 500);
+        c.auto = c.auto || {}; c.auto.reg_asked = true;
+        const recent = s.regGateAt && Date.now() - s.regGateAt < 120000;
+        s.regGateAt = Date.now();
+        markDirty();
+        console.log(`[reg] ${sessionId.slice(0, 8)} gate -> LIFF button (pending=${s.regPending ? 'yes' : 'no'})`);
+        await sendAnswer(s, ev, pushTarget, recent ? liffButtonMsg('again') : liffButtonMsg('gate', { pending: s.regPending }), { system: true });
+        return;
+      }
       if (!s.reg) {
         regStart(s, isText ? text : '');
         console.log(`[reg] ${sessionId.slice(0, 8)} start (pending=${s.reg.pending ? 'yes' : 'no'})`);
@@ -1406,8 +1760,8 @@ async function handleEvent(ev) {
     c.auto = c.auto || {};
     if (!regDone(c) && !s.reg && !c.auto.reg_asked) {
       c.auto.reg_asked = true;
-      regStart(s, '');
-      msgs.push('📝 ถ้าสะดวก น้องลัดดาขอข้อมูลสั้นๆ เพื่อให้ทีมงานในพื้นที่ดูแลได้ตรงจุดนะคะ\n' + regPrompt('name', s));
+      if (REG_UI === 'liff' && LIFF_URL) { msgs.push(...liffButtonMsg('invite')); }
+      else { regStart(s, ''); msgs.push('📝 ถ้าสะดวก น้องลัดดาขอข้อมูลสั้นๆ เพื่อให้ทีมงานในพื้นที่ดูแลได้ตรงจุดนะคะ\n' + regPrompt('name', s)); }
       markDirty();
     }
   }
@@ -1743,7 +2097,7 @@ function load(fromLogin) {
         ? '🔗 POS: <b style="color:#d33a41">ผิดพลาด</b> <span title="' + esc(p.error) + '">' + esc(String(p.error).slice(0, 60)) + '</span> · '
         : '🔗 POS: <b style="color:#0a9a4a">' + (p.rows || 0).toLocaleString('th-TH') + ' รายชื่อ</b>' + (p.loadedAt ? ' (อัปเดต ' + hhmm(p.loadedAt) + ')' : ' (กำลังโหลด…)') + (p.writeback ? ' · เขียน LINE ID กลับ POS: เปิด' : '') + ' · ');
     unreg = d.unregistered || 0;
-    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b>'
+    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b>' + (d.regUi === 'liff' ? ' <span title="' + esc(d.liffUrl || '') + '">(ฟอร์ม LIFF)</span>' : ' (ถามในแชท)')
       + (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว') + ' · ';
     cache = d.sessions;
     var pend = d.pending || 0;
@@ -1863,7 +2217,7 @@ function renderCrm(d) {
   var rg = d.reg || {};
   var regHtml = '';
   if (rg.mode === 'off') regHtml = '<div class="auto" style="color:#98a2ad;margin-bottom:6px">📝 ระบบลงทะเบียน: ปิด (REGISTER=off)</div>';
-  else if (rg.done) regHtml = '<div class="posbox" style="margin-bottom:6px">📝 ลงทะเบียนแล้ว' + (rg.done_at ? ' · ' + dayLabel(Date.parse(rg.done_at)) + ' ' + hhmm(Date.parse(rg.done_at)) : '') + ' · ' + (rg.source === 'chat' ? 'ลูกค้ากรอกในแชท' : (rg.source === 'admin' ? 'แอดมินยืนยัน' : 'ผูกกับ POS')) + (rg.data && rg.data.name ? '<br><small style="color:#55606b">' + esc(rg.data.name) + (rg.data.phone ? ' · ' + esc(rg.data.phone) : '') + (rg.data.province ? ' · ' + esc(rg.data.province) : '') + '</small>' : '') + '<span class="unl" id="cf_regreset" title="ลบสถานะลงทะเบียน บอทจะถามลูกค้าใหม่">↺ ให้ถามใหม่</span></div>';
+  else if (rg.done) regHtml = '<div class="posbox" style="margin-bottom:6px">📝 ลงทะเบียนแล้ว' + (rg.done_at ? ' · ' + dayLabel(Date.parse(rg.done_at)) + ' ' + hhmm(Date.parse(rg.done_at)) : '') + ' · ' + ({ chat: 'ลูกค้ากรอกในแชท', liff: 'ลูกค้ากรอกฟอร์ม LIFF', 'chat-update': 'ลูกค้าอัปเดตในแชท', 'liff-update': 'ลูกค้าอัปเดตผ่านฟอร์ม LIFF', admin: 'แอดมินยืนยัน' }[rg.source] || 'ผูกกับ POS') + (rg.data && rg.data.name ? '<br><small style="color:#55606b">' + esc(rg.data.name) + (rg.data.phone ? ' · ' + esc(rg.data.phone) : '') + (rg.data.province ? ' · ' + esc(rg.data.province) : '') + '</small>' : '') + '<span class="unl" id="cf_regreset" title="ลบสถานะลงทะเบียน บอทจะถามลูกค้าใหม่">↺ ให้ถามใหม่</span></div>';
   else regHtml = '<div class="auto" style="margin-bottom:6px;border-color:#f5c6c6;background:#fff8f8">📝 <b>ยังไม่ลงทะเบียน</b>' + (rg.inProgress ? ' · บอทกำลังถาม: <b>' + ({ name: 'ชื่อ-นามสกุล', phone: 'เบอร์โทร', province: 'จังหวัด' }[rg.step] || rg.step) + '</b>' : (rg.mode === 'on' ? ' · บอทจะถามเมื่อลูกค้าทักครั้งถัดไป' : ' (โหมด soft ไม่บังคับ)')) + '<br><small style="color:#55606b">กรอก ชื่อ+เบอร์+จังหวัด แล้วบันทึก = ลงทะเบียนให้ลูกค้าเอง หรือ </small><span class="unl" id="cf_regdone" style="color:#2f5fa3">✓ ถือว่าลงทะเบียนแล้ว</span> · <span class="unl" id="cf_reginvite" style="color:#2f5fa3" title="ส่งข้อความเชิญลงทะเบียนถึงลูกค้ารายนี้ (Push 1 ข้อความ)">📣 ส่งคำเชิญลงทะเบียน</span></div>';
   var h = ''
     + '<div style="display:flex;justify-content:space-between;align-items:center"><h4>👤 โปรไฟล์ลูกค้า</h4><span class="exp" id="crmclose">✕ ปิด</span></div>'
@@ -2296,7 +2650,7 @@ function handleAdmin(req, res, path, body) {
       .slice(0, 100);
     const pending = [...sessions.values()].filter((s) => s.cb).length;
     const posSt = POS_ON ? { on: true, rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, writeback: !!(pos.cols && pos.cols.line) } : { on: false };
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, unregistered: regUnregisteredIds().length, pending, now, sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, regUi: REG_UI, liffUrl: LIFF_URL, unregistered: regUnregisteredIds().length, pending, now, sessions: list });
   }
 
   // ---- CRM ----
@@ -2338,7 +2692,7 @@ function handleAdmin(req, res, path, body) {
     try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
     if (data.all === true) {
       const dayAgo = Date.now() - 24 * 3600000;
-      const ids = regUnregisteredIds().filter((id) => { const s = sessions.get(id); return !(s.reg && s.reg.invitedAt && s.reg.invitedAt > dayAgo); }).slice(0, 300);
+      const ids = regUnregisteredIds().filter((id) => { const s = sessions.get(id); return !((s.reg && s.reg.invitedAt && s.reg.invitedAt > dayAgo) || (s.regInvitedAt && s.regInvitedAt > dayAgo)); }).slice(0, 300);
       (async () => {
         let sent = 0, failed = 0;
         for (const id of ids) { const r = await regInvite(id); if (r.ok) sent++; else failed++; await new Promise((rs) => setTimeout(rs, 120)); }
@@ -2499,6 +2853,15 @@ const server = http.createServer((req, res) => {
     return res.end(ADMIN_HTML);
   }
 
+  // ฟอร์มลงทะเบียน LIFF (สาธารณะ แต่ทุก POST ต้องแนบ token จาก LIFF ที่ตรวจกับ LINE ได้)
+  if (path === '/liff' || path.startsWith('/liff/')) {
+    if (req.method === 'GET') return handleLiff(req, res, path, Buffer.alloc(0)).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+    let chunks = [], size = 0;
+    req.on('data', (c) => { size += c.length; if (size <= 65536) chunks.push(c); });
+    req.on('end', () => handleLiff(req, res, path, Buffer.concat(chunks)).catch((e) => sendJson(res, 500, { ok: false, error: e.message })));
+    return;
+  }
+
   if (path.startsWith('/admin/api/')) {
     if (req.method === 'GET') return handleAdmin(req, res, path, Buffer.alloc(0));
     let chunks = [];
@@ -2509,7 +2872,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.2, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.3, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -2552,4 +2915,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.2 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.3 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
