@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.8
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.9
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -22,7 +22,13 @@
 //     (ค) ลูกค้าพิมพ์ขอคุยกับแอดมิน
 //     แชทที่รอติดต่อกลับเด้งขึ้นบนสุด (พื้นแดง) แอดมินกด "✓ ติดต่อแล้ว" เมื่อจัดการเสร็จ
 //     + แจ้งเตือนเข้า LINE แอดมินได้ (ตั้ง ADMIN_NOTIFY_IDS) และแสดงจำนวนใน title หน้าเว็บ
-//  9. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+//  9. v2.9: CRM-lite ในหน้าแอดมิน — ปุ่ม 👤 โปรไฟล์ ในแต่ละแชท: ชื่อจริง เบอร์ จังหวัด/อำเภอ พืชที่ปลูก
+//     จำนวนไร่ ร้านที่ซื้อประจำ สถานะ (ใหม่/สนใจ/เสนอราคา/ซื้อแล้ว/เงียบ) แท็ก โน้ต + บันทึกการติดตาม
+//     ระบบเติมให้เองจากแชท: เบอร์ จังหวัด พืชที่พูดถึง + โชว์ผู้ดูแลเขต ME/MR ตามจังหวัด
+//     ช่องค้นหาในลิสต์ (ชื่อ/เบอร์/แท็ก/จังหวัด) + ส่งออก CSV เปิดใน Excel
+//     เก็บใน Supabase ถ้าตั้ง SUPABASE_URL + SUPABASE_SERVICE_KEY (ตาราง crm_customers, crm_notes)
+//     ไม่ตั้งก็ทำงานได้ โดยเก็บใน state file บน Volume
+// 10. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -38,6 +44,8 @@
 //  ADMIN_NOTIFY_IDS           (ไม่บังคับ) LINE userId ของแอดมิน คั่นด้วย , — เมื่อมีลูกค้า
 //                             รอติดต่อกลับ ระบบจะ Push แจ้งเตือนเข้า LINE แอดมินทันที
 //                             (ใช้โควต้า Push 1 ข้อความ/คน/ครั้ง) ดู userId ตัวเองได้จากหน้า /admin
+//  SUPABASE_URL               (ไม่บังคับ) https://xxxx.supabase.co  — เปิดใช้ CRM บน Supabase
+//  SUPABASE_SERVICE_KEY       (ไม่บังคับ) service_role key ของโปรเจกต์ (เก็บฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใส่ในหน้าเว็บ)
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -61,10 +69,16 @@ const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
 const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
 const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
+// CRM: เชื่อม Supabase (ถ้าตั้งค่า) ไม่งั้นเก็บใน state file บน Volume
+const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SB_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
+const SB_ON = !!(SB_URL && SB_KEY);
 
 // ---------- ทะเบียนแชท + สถานะ + ประวัติ ----------
 const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history,bf,cb,cbDone,cbCount}
 // cb = { at, src:'bot'|'phone'|'kw'|'admin', topic, contact, note }  ธง "รอติดต่อกลับ" (null = ไม่มี)
+const crm = new Map();      // line_user_id -> โปรไฟล์ CRM (real_name, phone, province, district, crops, farm_rai, shop, status, tags[], note, auto{}, first_seen_at, last_chat_at, updated_at)
+const crmNotes = new Map(); // line_user_id -> [{id, text, by_admin, created_at}] (บันทึกการติดตาม) — ใช้เมื่อไม่มี Supabase หรือเป็นแคช
 
 // ---------- Persistence (เก็บถาวรลงดิสก์ ถ้ามี Volume) ----------
 const STATE_FILE = pathmod.join(STATE_DIR, 'nladda-state.json');
@@ -110,14 +124,25 @@ function initPersist() {
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
       }
+      if (raw && Array.isArray(raw.crm)) {
+        for (const [id, c] of raw.crm) if (id && c && typeof c === 'object') crm.set(id, c);
+        console.log(`[persist] loaded ${crm.size} CRM profiles from disk`);
+      }
+      if (raw && Array.isArray(raw.crmNotes)) {
+        for (const [id, arr] of raw.crmNotes) if (id && Array.isArray(arr)) crmNotes.set(id, arr.slice(-200));
+      }
     }
   } catch (e) { console.log('[persist] load error:', e.message); }
+}
+
+function stateJson() {
+  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()] });
 }
 
 function saveNow() {
   if (!canWrite || !dirty) return;
   dirty = false;
-  const data = JSON.stringify({ v: 1, savedAt: Date.now(), sessions: [...sessions.entries()] });
+  const data = stateJson();
   const tmp = STATE_FILE + '.tmp';
   fs.writeFile(tmp, data, (err) => {
     if (err) { console.log('[persist] write error:', err.message); return; }
@@ -135,7 +160,7 @@ function markDirty() {
 process.on('SIGTERM', () => {
   try {
     if (canWrite && dirty) {
-      fs.writeFileSync(STATE_FILE, JSON.stringify({ v: 1, savedAt: Date.now(), sessions: [...sessions.entries()] }));
+      fs.writeFileSync(STATE_FILE, stateJson());
     }
   } catch (_) {}
   process.exit(0);
@@ -198,6 +223,7 @@ function fetchProfile(s, userId) {
       s.pic = String(r.data.pictureUrl || '').slice(0, 500);
       markDirty();
       broadcast();
+      if (crm.has(userId)) crmTouch(userId, s, ''); // ชื่อ LINE มาทีหลัง -> อัปเดตใน CRM
     } else { s.name = ''; }
   }).catch(() => { s.name = ''; });
 }
@@ -206,10 +232,11 @@ function fetchProfile(s, userId) {
 function request(method, url, headers, bodyObj) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+    const isHttp = u.protocol === 'http:';
     const body = bodyObj ? JSON.stringify(bodyObj) : null;
     const opts = {
       hostname: u.hostname,
-      port: u.port || 443,
+      port: u.port || (isHttp ? 80 : 443),
       path: u.pathname + (u.search || ''),
       method,
       headers: Object.assign(
@@ -219,7 +246,7 @@ function request(method, url, headers, bodyObj) {
       ),
       timeout: 180000
     };
-    const req = https.request(opts, (res) => {
+    const req = (isHttp ? http : https).request(opts, (res) => {
       let d = '';
       res.on('data', (c) => (d += c));
       res.on('end', () => {
@@ -350,6 +377,169 @@ async function linePush(to, text) {
   } catch (e) { console.log('push fetch error:', e.message); return false; }
 }
 
+// ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
+const CRM_FIELDS = ['real_name', 'phone', 'province', 'district', 'crops', 'farm_rai', 'shop', 'status', 'tags', 'note'];
+const CRM_STATUS = ['new', 'interested', 'quoted', 'customer', 'inactive'];
+// จังหวัด -> เขตขาย (จากไฟล์ทีมขาย ME/MR) เพื่อโชว์ผู้ดูแลเขตในโปรไฟล์
+const ZONE_OF = {};
+[['A01', 'แม่ฮ่องสอน เชียงใหม่ เชียงราย ลำพูน ลำปาง พะเยา ตาก แพร่ น่าน'],
+ ['A02', 'นครสวรรค์ พิจิตร พิษณุโลก กำแพงเพชร'],
+ ['A03', 'สุพรรณบุรี อ่างทอง ชัยนาท กาญจนบุรี สิงห์บุรี'],
+ ['A04', 'นครปฐม ราชบุรี เพชรบุรี นนทบุรี ปทุมธานี สมุทรสาคร สมุทรสงคราม สมุทรปราการ'],
+ ['A05', 'ลพบุรี พระนครศรีอยุธยา อยุธยา สระบุรี เพชรบูรณ์'],
+ ['A06', 'ประจวบคีรีขันธ์ ชุมพร สุราษฎร์ธานี ระนอง'],
+ ['A07', 'นครศรีธรรมราช กระบี่ ภูเก็ต พังงา สตูล ตรัง พัทลุง สงขลา ปัตตานี ยะลา นราธิวาส'],
+ ['A08', 'นครราชสีมา โคราช ชัยภูมิ บุรีรัมย์ สุรินทร์ ศรีสะเกษ อุบลราชธานี ยโสธร อำนาจเจริญ ร้อยเอ็ด มหาสารคาม ขอนแก่น กาฬสินธุ์ มุกดาหาร นครพนม สกลนคร อุดรธานี หนองคาย บึงกาฬ หนองบัวลำภู เลย'],
+ ['A09', 'ระยอง จันทบุรี ตราด'],
+ ['A10', 'ฉะเชิงเทรา ชลบุรี ปราจีนบุรี สระแก้ว นครนายก']].forEach(([z, ps]) => ps.split(' ').forEach((p) => { ZONE_OF[p] = z; }));
+const ZONE_TEAM = {
+  A01: 'ME กมล ยศอิ (ขนุน) 092-4245391 · MR จิติมา เรืองเพชร (แอ๋ว) 063-2059085',
+  A02: 'ME ปทิตตา จันทร์กลิ่น (ผึ้ง) 063-2059071 · MR ศิริพร มณีสวัสดิ์ (แนทตี้) 063-2059072',
+  A03: 'ME ดุสิตา จำปาสัก (มุก) 063-2059073 · MR ปนัดภร ไชยสุพัฒน์ (ปาว) 065-9642342',
+  A04: 'ME อชิรญาณ์ เวฬุวนารักษ์ (ปอนด์) 063-2059076 · MR พุทธิตา พงษ์ไผ่ขำ (แป้ง) 082-1121691',
+  A05: 'ME สุกัญญา ชูประสูติ (เล็ก) 065-5255687 · MR อัฐภิญญา พิมรินทร์ (แพน) 080-0430967',
+  A06: 'ME วิลาสินี ขวัญเมือง (เมย์) 063-2059079 · MR ประภัศพรรณ (น้ำหวาน) 063-2059093 / ณัฐวัฒน์ (ไตเติ้ล) 063-2059077 / ภาวินี (เนส) 098-2863444',
+  A07: 'ME ชนาภัทร พลูหนัง (อ้อม) 061-2692590 · MR ศตวรรษ (เจมส์) 092-2478766 / ษศกร (โลมา) 065-1193314',
+  A08: 'ME ออมสิน เนาว์ประเสริฐ (ก้ง) 063-2059058 · MR วัชรพงศ์ พิลุณร์ (แทนไท) 063-2059078',
+  A09: 'ME สุชาดา ราชคม (โบว์) 098-8326952 · MR กัญญารัตน์ (นุ้ย) 080-0430977 / ศิรินาฏ (ปังหวาน) 063-2059082 / ภาณุพงศ์ (ท็อป) 063-2284037 / กาญจนาพร (ลูกเจี๊ยบ) 065-5255690',
+  A10: 'ME พิรยา สินสุวรรณ์ (แป้ง) 063-2059063 · MR สุประวีณ์ บุญมี (ปอ) 063-2059068'
+};
+const PROVINCE_RX = new RegExp('(' + Object.keys(ZONE_OF).sort((a, b) => b.length - a.length).join('|') + ')');
+const CROP_WORDS = ['ทุเรียน', 'นาข้าว', 'ข้าวโพด', 'ข้าว', 'ลำไย', 'มะม่วง', 'ส้ม', 'อ้อย', 'มันสำปะหลัง', 'มัน', 'ปาล์ม', 'ยางพารา', 'พริก', 'หอม', 'กระเทียม', 'คะน้า', 'ผัก', 'มะเขือ', 'ถั่วฝักยาว', 'มังคุด', 'เงาะ', 'ลองกอง', 'กาแฟ', 'มะพร้าว', 'แตง'];
+
+function zoneInfo(province) {
+  const m = PROVINCE_RX.exec(province || '');
+  const z = m ? ZONE_OF[m[1]] : '';
+  return z ? { zone: z, team: ZONE_TEAM[z] } : null;
+}
+
+async function sb(method, path, body, extraHeaders) {
+  const headers = Object.assign({ apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }, extraHeaders || {});
+  return request(method, SB_URL + '/rest/v1' + path, headers, body);
+}
+
+function crmGet(id) {
+  let c = crm.get(id);
+  if (!c) {
+    const s = sessions.get(id);
+    c = { line_user_id: id, display_name: s ? s.name : '', picture_url: s ? s.pic : '', real_name: '', phone: '', province: '', district: '', crops: '', farm_rai: null, shop: '', status: 'new', tags: [], note: '', auto: {}, first_seen_at: new Date().toISOString(), last_chat_at: null, updated_at: new Date().toISOString() };
+    crm.set(id, c);
+    markDirty();
+    if (SB_ON) sbUpsert(c);
+  }
+  return c;
+}
+
+let sbErrLogged = 0;
+function sbUpsert(c) {
+  if (!SB_ON) return Promise.resolve(false);
+  const row = Object.assign({}, c, { tags: Array.isArray(c.tags) ? c.tags : [], updated_at: new Date().toISOString() });
+  return sb('POST', '/crm_customers?on_conflict=line_user_id', [row], { Prefer: 'resolution=merge-duplicates,return=minimal' })
+    .then((r) => {
+      if (r.status >= 300) { if (sbErrLogged++ < 5) console.log('[crm] supabase upsert failed:', r.status, JSON.stringify(r.data).slice(0, 200)); return false; }
+      return true;
+    }).catch((e) => { if (sbErrLogged++ < 5) console.log('[crm] supabase error:', e.message); return false; });
+}
+
+async function crmLoadFromSupabase() {
+  if (!SB_ON) return;
+  try {
+    let from = 0, total = 0;
+    while (true) {
+      const r = await sb('GET', '/crm_customers?select=*&order=updated_at.desc', null, { Range: `${from}-${from + 999}`, 'Range-Unit': 'items' });
+      if (r.status >= 300 || !Array.isArray(r.data)) { console.log('[crm] supabase load failed:', r.status, JSON.stringify(r.data).slice(0, 200)); return; }
+      for (const row of r.data) {
+        if (!row.line_user_id) continue;
+        const local = crm.get(row.line_user_id);
+        // Supabase เป็นแหล่งจริง แต่ถ้าเครื่องมีข้อมูลใหม่กว่า (แก้ตอน Supabase ล่ม) ให้ดันขึ้นแทน
+        if (local && local.updated_at && row.updated_at && local.updated_at > row.updated_at) { sbUpsert(local); continue; }
+        crm.set(row.line_user_id, Object.assign({}, row, { tags: Array.isArray(row.tags) ? row.tags : [], auto: row.auto || {} }));
+      }
+      total += r.data.length;
+      if (r.data.length < 1000) break;
+      from += 1000;
+    }
+    console.log(`[crm] loaded ${total} profiles from Supabase`);
+    markDirty();
+  } catch (e) { console.log('[crm] supabase load error:', e.message); }
+}
+
+// อัปเดตข้อมูลอัตโนมัติจากแชท (ชื่อ LINE, เวลาแชทล่าสุด, เบอร์/จังหวัด/พืชที่ลูกค้าพิมพ์)
+function crmTouch(id, s, userText) {
+  if (!id || id === 'unknown' || (s && s.type !== 'user')) return;
+  const c = crmGet(id);
+  let changed = false;
+  if (s && s.name && s.name !== '…' && c.display_name !== s.name) { c.display_name = s.name; c.picture_url = s.pic || ''; changed = true; }
+  const nowIso = new Date().toISOString();
+  if (!c.last_chat_at || (Date.now() - Date.parse(c.last_chat_at)) > 5 * 60000) { c.last_chat_at = nowIso; changed = true; }
+  if (userText) {
+    c.auto = c.auto || {};
+    const pm = PHONE_RX.exec(userText);
+    if (pm && c.auto.phone !== pm[0]) { c.auto.phone = pm[0]; if (!c.phone) c.phone = pm[0].replace(/[- ]/g, ''); changed = true; }
+    const prm = PROVINCE_RX.exec(userText);
+    if (prm && c.auto.province !== prm[1]) { c.auto.province = prm[1]; if (!c.province) c.province = prm[1]; changed = true; }
+    const found = CROP_WORDS.filter((w) => userText.includes(w)).map((w) => (w === 'นาข้าว' ? 'ข้าว' : w === 'มัน' ? 'มันสำปะหลัง' : w));
+    if (found.length) {
+      const set = new Set((c.auto.crops || '').split(',').map((x) => x.trim()).filter(Boolean));
+      const before = set.size;
+      found.forEach((w) => set.add(w));
+      if (set.size !== before) { c.auto.crops = [...set].slice(0, 12).join(','); changed = true; }
+    }
+  }
+  if (changed) { c.updated_at = nowIso; markDirty(); if (SB_ON) sbUpsert(c); }
+}
+
+function crmUpdate(id, fields) {
+  const c = crmGet(id);
+  for (const k of CRM_FIELDS) {
+    if (!(k in fields)) continue;
+    let v = fields[k];
+    if (k === 'tags') v = Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, 20) : String(v || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 20);
+    else if (k === 'farm_rai') { v = v === '' || v == null ? null : Number(v); if (v != null && !isFinite(v)) v = null; }
+    else if (k === 'status') v = CRM_STATUS.includes(v) ? v : 'new';
+    else v = String(v == null ? '' : v).slice(0, k === 'note' ? 2000 : 200);
+    c[k] = v;
+  }
+  c.updated_at = new Date().toISOString();
+  markDirty();
+  broadcast();
+  return SB_ON ? sbUpsert(c) : Promise.resolve(true);
+}
+
+async function crmAddNote(id, text) {
+  crmGet(id);
+  const note = { id: Date.now(), line_user_id: id, text: String(text).slice(0, 2000), by_admin: 'admin', created_at: new Date().toISOString() };
+  if (SB_ON) {
+    const r = await sb('POST', '/crm_notes', [{ line_user_id: id, text: note.text, by_admin: 'admin' }], { Prefer: 'return=representation' }).catch((e) => ({ status: 599, data: e.message }));
+    if (r.status < 300 && Array.isArray(r.data) && r.data[0]) Object.assign(note, r.data[0]);
+    else if (sbErrLogged++ < 5) console.log('[crm] note insert failed:', r.status, JSON.stringify(r.data).slice(0, 200));
+  }
+  const arr = crmNotes.get(id) || [];
+  arr.push(note);
+  crmNotes.set(id, arr.slice(-200));
+  markDirty();
+  return note;
+}
+
+async function crmListNotes(id) {
+  if (SB_ON) {
+    const r = await sb('GET', `/crm_notes?line_user_id=eq.${encodeURIComponent(id)}&order=created_at.desc&limit=100`).catch(() => ({ status: 599 }));
+    if (r.status < 300 && Array.isArray(r.data)) { crmNotes.set(id, r.data.slice().reverse()); return r.data; }
+  }
+  return (crmNotes.get(id) || []).slice().reverse();
+}
+
+function crmSummary(id) {
+  const c = crm.get(id);
+  if (!c) return null;
+  return { real_name: c.real_name || '', phone: c.phone || '', province: c.province || '', status: c.status || 'new', tags: c.tags || [], crops: c.crops || (c.auto && c.auto.crops) || '' };
+}
+
+function csvCell(v) {
+  const s = v == null ? '' : (Array.isArray(v) ? v.join('|') : String(v));
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
 // ---------- ธง "รอติดต่อกลับ" (callback) ----------
 // (ก) บอทรับปาก: "ติดต่อกลับ / โทรกลับ / ส่งเรื่องให้…แล้ว / ประสาน…แล้ว / เจ้าหน้าที่จะรีบติดต่อ ฯลฯ"
 const CB_BOT_RX = /ติดต่อกลับ|โทรกลับ|(ส่งเรื่อง|ส่งต่อ|ประสาน|แจ้ง|บันทึกข้อมูล)[^\n]{0,40}?(เรียบร้อย|ให้แล้ว|แล้วนะ|แล้วค่ะ|แล้วจ้ะ)|(เจ้าหน้าที่|ทีมงาน|แอดมิน|ฝ่ายขาย|พี่ ?ๆ|ผู้แทน)[^\n]{0,24}?จะ(รีบ)?(ติดต่อ|โทร|เข้ามา|ตอบ|ประสาน)/;
@@ -458,6 +648,7 @@ async function handleEvent(ev) {
   pushHist(s, 'u', shown);
   fetchProfile(s, userId);
   if (ev.message.type === 'text') detectPhone(sessionId, s, text); // ลูกค้าทิ้งเบอร์ -> ธงรอติดต่อกลับ + เก็บเบอร์
+  if (stype === 'user') crmTouch(sessionId, s, ev.message.type === 'text' ? text : ''); // CRM: อัปเดตโปรไฟล์อัตโนมัติ
   // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
   if (isNewChat) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
 
@@ -545,6 +736,44 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .cbbtn { border-radius: 9px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; flex: none; margin-right: 6px; }
   .cbbtn.done { background: #c62828; color: #fff; }
   .cbbtn.set { background: #f1f3f5; color: #55606b; }
+  .srch { padding: 8px 12px; border-bottom: 1px solid #eef0f2; }
+  .srch input { width: 100%; padding: 8px 12px; border: 1px solid #e3e6ea; border-radius: 10px; font-size: 13px; background: #f7f9fb; color: #1f2329; outline: none; }
+  .srch input:focus { border-color: #06c755; background: #fff; }
+  .itag { display: inline-block; font-size: 10px; border-radius: 6px; padding: 0 5px; margin-left: 4px; background: #eef4fb; color: #3b6db3; vertical-align: 1px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .itag.st-customer { background: #e6f9ee; color: #0a9a4a; }
+  .itag.st-quoted { background: #fff1dd; color: #d97706; }
+  .itag.st-interested { background: #eef4fb; color: #3b6db3; }
+  .itag.st-inactive { background: #f1f3f5; color: #98a2ad; }
+  .crmbtn { border-radius: 9px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; flex: none; margin-right: 6px; background: #eef4fb; color: #2f5fa3; }
+  .crmbtn.on { background: #2f5fa3; color: #fff; }
+  .body { flex: 1; min-height: 0; display: flex; }
+  .msgs { flex: 1; overflow-y: auto; padding: 18px 18px 24px; background: #fff; }
+  .crm { width: 330px; flex: none; border-left: 1px solid #e3e6ea; overflow-y: auto; background: #fbfcfd; display: none; padding: 12px 14px 20px; font-size: 12.5px; }
+  .crm.on { display: block; }
+  .crm h4 { font-size: 12px; color: #55606b; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .3px; }
+  .crm h4:first-child { margin-top: 0; }
+  .crm label { display: block; font-size: 11px; color: #8a95a1; margin: 7px 0 2px; }
+  .crm input, .crm select, .crm textarea { width: 100%; padding: 7px 9px; border: 1px solid #dfe3e8; border-radius: 8px; font-size: 13px; font-family: inherit; background: #fff; color: #1f2329; outline: none; }
+  .crm input:focus, .crm select:focus, .crm textarea:focus { border-color: #06c755; }
+  .crm textarea { resize: vertical; min-height: 56px; }
+  .crm .row2 { display: flex; gap: 8px; }
+  .crm .row2 > div { flex: 1; min-width: 0; }
+  .crm .auto { background: #fff; border: 1px dashed #dfe3e8; border-radius: 8px; padding: 8px 10px; color: #55606b; line-height: 1.7; }
+  .crm .auto b { color: #1f2329; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .tag { background: #eef4fb; color: #2f5fa3; border-radius: 99px; padding: 2px 8px; font-size: 11.5px; cursor: pointer; border: 1px solid transparent; }
+  .tag.on { background: #2f5fa3; color: #fff; }
+  .tag.x::after { content: ' ✕'; opacity: .6; }
+  .crm .savebtn { width: 100%; margin-top: 10px; padding: 9px; border-radius: 9px; background: #06c755; color: #fff; font-weight: 700; font-size: 13.5px; }
+  .crm .savebtn:disabled { opacity: .5; }
+  .crm .saved { font-size: 11px; color: #0a9a4a; margin-top: 4px; min-height: 14px; }
+  .notes { margin-top: 6px; }
+  .note { background: #fff; border: 1px solid #eef0f2; border-radius: 8px; padding: 6px 9px; margin-bottom: 6px; }
+  .note .nt { font-size: 10.5px; color: #98a2ad; margin-bottom: 2px; }
+  .noteadd { display: flex; gap: 6px; margin-top: 6px; }
+  .noteadd input { flex: 1; }
+  .noteadd button { border-radius: 8px; padding: 0 12px; background: #2f5fa3; color: #fff; font-weight: 700; }
+  .exp { font-size: 11px; color: #3b6db3; cursor: pointer; text-decoration: underline; }
   .av { width: 46px; height: 46px; border-radius: 50%; flex: none; background: #cfd8e3; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; position: relative; overflow: visible; }
   .av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
   .stdot { position: absolute; right: -3px; bottom: -3px; font-size: 14px; line-height: 1; filter: drop-shadow(0 0 1px #fff); }
@@ -602,6 +831,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
     .main.show { transform: none; }
     .backbtn { display: block; }
     .bub { max-width: 78%; }
+    .crm { position: absolute; inset: 0; width: 100%; z-index: 6; }
   }
 </style>
 </head>
@@ -624,8 +854,9 @@ const ADMIN_HTML = `<!DOCTYPE html>
       <b>แชท<span class="cnt" id="count">0</span><span class="cnt red" id="cbcount" style="display:none" title="ลูกค้ารอติดต่อกลับ">📞 0</span><span class="live off" id="live">● กำลังเชื่อมต่อ…</span></b>
       <button class="rf" id="refreshbtn">⟳</button>
     </div>
+    <div class="srch"><input id="q" type="search" placeholder="🔍 ค้นหา ชื่อ / เบอร์ / แท็ก / จังหวัด / พืช"></div>
     <div class="items" id="items"></div>
-    <div class="side-note"><span id="ps"></span>📞 แดง = ลูกค้ารอติดต่อกลับ (บอทรับปากว่าจะให้เจ้าหน้าที่ติดต่อ / ลูกค้าทิ้งเบอร์) กด "✓ ติดต่อแล้ว" เมื่อจัดการเสร็จ · 🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · พิมพ์ตอบจากหน้านี้ = ส่งในนามน้องลัดดา (ใช้โควต้า Push ของ LINE OA)<span id="nt"></span></div>
+    <div class="side-note"><span id="ps"></span><span id="sb"></span><span class="exp" id="expbtn">⬇ ส่งออก CRM เป็น CSV/Excel</span> · 📞 แดง = ลูกค้ารอติดต่อกลับ (บอทรับปากว่าจะให้เจ้าหน้าที่ติดต่อ / ลูกค้าทิ้งเบอร์) กด "✓ ติดต่อแล้ว" เมื่อจัดการเสร็จ · 🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · พิมพ์ตอบจากหน้านี้ = ส่งในนามน้องลัดดา (ใช้โควต้า Push ของ LINE OA)<span id="nt"></span></div>
   </div>
   <div class="main" id="main">
     <div class="chat-head" id="chead">
@@ -635,12 +866,16 @@ const ADMIN_HTML = `<!DOCTYPE html>
         <div class="hname" id="hname"></div>
         <div class="hstat" id="hstat"></div>
       </div>
+      <button class="crmbtn" id="crmbtn">👤 โปรไฟล์</button>
       <button class="cbbtn set" id="cbbtn"></button>
       <button class="tgl stop" id="tglbtn"></button>
     </div>
     <div class="cbbar" id="cbbar"></div>
-    <div class="msgs" id="msgs">
-      <div class="chat-empty"><div class="big">💬</div><div>เลือกแชทจากรายการด้านซ้าย<br>เพื่อดูบทสนทนาและควบคุมบอท</div></div>
+    <div class="body">
+      <div class="msgs" id="msgs">
+        <div class="chat-empty"><div class="big">💬</div><div>เลือกแชทจากรายการด้านซ้าย<br>เพื่อดูบทสนทนาและควบคุมบอท</div></div>
+      </div>
+      <div class="crm" id="crm"></div>
     </div>
     <div class="composer" id="composer">
       <textarea id="ta" rows="1" placeholder="พิมพ์ตอบลูกค้าในนามน้องลัดดา… (Enter = ส่ง, Shift+Enter = ขึ้นบรรทัดใหม่)"></textarea>
@@ -656,6 +891,12 @@ var sel = null;
 var cache = [];
 var es = null;
 var esRetry = null;
+var q = '';
+var crmOpen = false;
+var crmData = null;
+var crmTags = [];
+var PRESET_TAGS = ['ลูกค้าใหม่', 'ลูกค้าประจำ', 'ตัวแทนจำหน่าย', 'เกษตรกร', 'สนใจสินค้า', 'รอตัดสินใจ', 'ซื้อแล้ว', 'ห้ามรบกวน'];
+var STATUS_TH = { new: 'ใหม่', interested: 'สนใจ', quoted: 'เสนอราคาแล้ว', customer: 'ซื้อแล้ว', inactive: 'เงียบ/ไม่สนใจ' };
 var COLORS = ['#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
 
 function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -750,6 +991,9 @@ function load(fromLogin) {
       ? '💾 เก็บแชทถาวร: <b style="color:#0a9a4a">เปิด</b> · '
       : '💾 เก็บแชทถาวร: <b style="color:#d33a41">ปิด</b> (ต่อ Volume ที่ /data ใน Railway) · ';
     document.getElementById('nt').textContent = d.notify ? ' · 🔔 แจ้งเตือนเข้า LINE แอดมิน ' + d.notify + ' คน' : ' · 🔔 แจ้งเตือน LINE แอดมิน: ปิด (ตั้ง ADMIN_NOTIFY_IDS ใน Railway)';
+    document.getElementById('sb').innerHTML = d.sb
+      ? '🗄️ CRM: <b style="color:#0a9a4a">Supabase</b> · '
+      : '🗄️ CRM: <b style="color:#d97706">เก็บในเครื่อง</b> (ตั้ง SUPABASE_URL + SUPABASE_SERVICE_KEY เพื่อซิงก์) · ';
     cache = d.sessions;
     var pend = d.pending || 0;
     var cbEl = document.getElementById('cbcount');
@@ -771,6 +1015,22 @@ function findSel() {
   return null;
 }
 
+function matchQ(s) {
+  if (!q) return true;
+  var c = s.crm || {};
+  var hay = [s.name, s.id, s.lastText, c.real_name, c.phone, c.province, c.crops, (c.tags || []).join(' '), STATUS_TH[c.status] || '', s.cb && s.cb.contact].join(' ').toLowerCase();
+  return hay.indexOf(q) !== -1;
+}
+
+function crmBadge(s) {
+  var c = s.crm;
+  if (!c) return '';
+  var h = '';
+  if (c.status && c.status !== 'new') h += '<span class="itag st-' + c.status + '">' + esc(STATUS_TH[c.status] || c.status) + '</span>';
+  if (c.tags && c.tags.length) h += '<span class="itag">' + esc(c.tags[0]) + (c.tags.length > 1 ? ' +' + (c.tags.length - 1) : '') + '</span>';
+  return h;
+}
+
 function renderList() {
   var now = Date.now();
   document.getElementById('count').textContent = cache.length;
@@ -779,8 +1039,11 @@ function renderList() {
     return;
   }
   var h = '';
+  var shown = 0;
   for (var i = 0; i < cache.length; i++) {
     var s = cache[i];
+    if (!matchQ(s)) continue;
+    shown++;
     var muted = s.mutedUntil > now;
     var isHo = muted && s.handoff;
     var isCb = !!s.cb;
@@ -792,11 +1055,129 @@ function renderList() {
     h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isCb ? ' cb' : (isHo ? ' ho' : '')) + '" data-id="' + s.id + '">'
       + av
       + '<div class="icol">'
-      + '<div class="irow1"><span class="iname">' + esc(dispName(s)) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
+      + '<div class="irow1"><span class="iname">' + esc((s.crm && s.crm.real_name) || dispName(s)) + crmBadge(s) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
       + '<div class="ilast' + (isCb ? ' cbtxt' : (isHo ? ' hotxt' : '')) + '">' + last + '</div>'
       + '</div></div>';
   }
+  if (!shown) h = '<div class="empty">ไม่พบแชทที่ตรงกับ "' + esc(q) + '"</div>';
   document.getElementById('items').innerHTML = h;
+}
+
+// ---------- CRM panel ----------
+function crmField(label, id, val, ph) {
+  return '<label>' + label + '</label><input id="' + id + '" value="' + esc(val == null ? '' : val) + '" placeholder="' + esc(ph || '') + '">';
+}
+
+function renderTags() {
+  var el = document.getElementById('cf_tags');
+  if (!el) return;
+  var h = '';
+  var i;
+  for (i = 0; i < PRESET_TAGS.length; i++) {
+    var on = crmTags.indexOf(PRESET_TAGS[i]) !== -1;
+    h += '<span class="tag' + (on ? ' on' : '') + '" data-tag="' + esc(PRESET_TAGS[i]) + '">' + esc(PRESET_TAGS[i]) + '</span>';
+  }
+  for (i = 0; i < crmTags.length; i++) {
+    if (PRESET_TAGS.indexOf(crmTags[i]) === -1) h += '<span class="tag on x" data-tag="' + esc(crmTags[i]) + '">' + esc(crmTags[i]) + '</span>';
+  }
+  el.innerHTML = h;
+}
+
+function renderNotes(notes) {
+  var el = document.getElementById('cf_notes');
+  if (!el) return;
+  if (!notes || !notes.length) { el.innerHTML = '<div class="nt" style="color:#98a2ad;font-size:11px">ยังไม่มีบันทึก</div>'; return; }
+  var h = '';
+  for (var i = 0; i < notes.length; i++) {
+    var n = notes[i];
+    h += '<div class="note"><div class="nt">' + dayLabel(Date.parse(n.created_at)) + ' ' + hhmm(Date.parse(n.created_at)) + '</div>' + esc(n.text) + '</div>';
+  }
+  el.innerHTML = h;
+}
+
+function renderCrm(d) {
+  var p = d.profile;
+  crmData = d;
+  crmTags = (p.tags || []).slice();
+  var a = p.auto || {};
+  var s = findSel() || {};
+  var statusOpts = '';
+  var keys = ['new', 'interested', 'quoted', 'customer', 'inactive'];
+  for (var i = 0; i < keys.length; i++) statusOpts += '<option value="' + keys[i] + '"' + (p.status === keys[i] ? ' selected' : '') + '>' + STATUS_TH[keys[i]] + '</option>';
+  var zone = d.zone ? '<b>เขต ' + esc(d.zone.zone) + '</b> — ' + esc(d.zone.team) : '<span style="color:#98a2ad">ใส่จังหวัดแล้วระบบจะบอกผู้ดูแลเขตให้</span>';
+  var h = ''
+    + '<div style="display:flex;justify-content:space-between;align-items:center"><h4>👤 โปรไฟล์ลูกค้า</h4><span class="exp" id="crmclose">✕ ปิด</span></div>'
+    + '<div class="row2"><div>' + crmField('ชื่อจริง / ชื่อที่ใช้เรียก', 'cf_real_name', p.real_name, s.name || '') + '</div><div>' + crmField('เบอร์โทร', 'cf_phone', p.phone, a.phone || '08x-xxx-xxxx') + '</div></div>'
+    + '<div class="row2"><div>' + crmField('จังหวัด', 'cf_province', p.province, a.province || '') + '</div><div>' + crmField('อำเภอ', 'cf_district', p.district, '') + '</div></div>'
+    + '<div class="row2"><div>' + crmField('พืชที่ปลูก', 'cf_crops', p.crops, a.crops || 'เช่น ทุเรียน, ข้าว') + '</div><div>' + crmField('พื้นที่ (ไร่)', 'cf_farm_rai', p.farm_rai, '') + '</div></div>'
+    + crmField('ร้านค้า/ตัวแทนที่ซื้อประจำ', 'cf_shop', p.shop, '')
+    + '<label>สถานะ</label><select id="cf_status">' + statusOpts + '</select>'
+    + '<label>แท็ก (กดเลือก หรือพิมพ์เพิ่มแล้ว Enter)</label><div class="tags" id="cf_tags"></div><input id="cf_newtag" placeholder="เพิ่มแท็กเอง…" style="margin-top:6px">'
+    + '<label>โน้ตสรุป (สิ่งที่ควรรู้เกี่ยวกับลูกค้ารายนี้)</label><textarea id="cf_note">' + esc(p.note || '') + '</textarea>'
+    + '<button class="savebtn" id="cf_save">💾 บันทึกโปรไฟล์</button><div class="saved" id="cf_saved"></div>'
+    + '<h4>ผู้ดูแลเขต (ME/MR)</h4><div class="auto" id="cf_zone">' + zone + '</div>'
+    + '<h4>ข้อมูลอัตโนมัติจากแชท</h4><div class="auto">'
+    + 'LINE: ' + esc(s.name || '-') + ' <span style="color:#98a2ad;font-size:10.5px">' + esc(p.line_user_id || '') + '</span><br>'
+    + 'ทักครั้งแรก: <b>' + (p.first_seen_at ? dayLabel(Date.parse(p.first_seen_at)) + ' ' + hhmm(Date.parse(p.first_seen_at)) : '-') + '</b> · ล่าสุด: <b>' + (p.last_chat_at ? dayLabel(Date.parse(p.last_chat_at)) + ' ' + hhmm(Date.parse(p.last_chat_at)) : '-') + '</b><br>'
+    + 'เบอร์ที่พิมพ์ในแชท: <b>' + esc(a.phone || '-') + '</b> · จังหวัดที่พูดถึง: <b>' + esc(a.province || '-') + '</b><br>'
+    + 'พืชที่พูดถึง: <b>' + esc(a.crops || '-') + '</b>'
+    + '</div>'
+    + '<h4>บันทึกการติดตาม</h4><div class="noteadd"><input id="cf_notein" placeholder="เช่น โทรแล้ว 17/8 ลูกค้าจะสั่ง 2 ลัง"><button id="cf_noteadd">เพิ่ม</button></div><div class="notes" id="cf_notes"></div>';
+  document.getElementById('crm').innerHTML = h;
+  renderTags();
+  renderNotes(d.notes);
+}
+
+function loadCrm(id) {
+  if (!id) return;
+  api('/admin/api/crm?id=' + encodeURIComponent(id)).then(function(d) {
+    if (id !== sel) return;
+    renderCrm(d);
+  }).catch(function(e) { document.getElementById('crm').innerHTML = '<div class="empty">โหลดโปรไฟล์ไม่ได้: ' + esc(e.message) + '</div>'; });
+}
+
+function toggleCrm(force) {
+  crmOpen = typeof force === 'boolean' ? force : !crmOpen;
+  document.getElementById('crm').className = 'crm' + (crmOpen ? ' on' : '');
+  document.getElementById('crmbtn').className = 'crmbtn' + (crmOpen ? ' on' : '');
+  if (crmOpen && sel) loadCrm(sel);
+}
+
+function saveCrm() {
+  if (!sel) return;
+  var g = function(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  var body = { id: sel, real_name: g('cf_real_name'), phone: g('cf_phone'), province: g('cf_province'), district: g('cf_district'), crops: g('cf_crops'), farm_rai: g('cf_farm_rai'), shop: g('cf_shop'), status: g('cf_status'), tags: crmTags, note: g('cf_note') };
+  var btn = document.getElementById('cf_save');
+  btn.disabled = true;
+  api('/admin/api/crm', { method: 'POST', body: JSON.stringify(body) }).then(function(d) {
+    btn.disabled = false;
+    document.getElementById('cf_saved').textContent = '✓ บันทึกแล้ว ' + hhmm(Date.now()) + (crmData && crmData.sb ? (d.synced ? ' · ซิงก์ Supabase แล้ว' : ' · ⚠️ ซิงก์ Supabase ไม่สำเร็จ (เก็บในเครื่องไว้ก่อน)') : ' (เก็บในเครื่อง)');
+    var z = document.getElementById('cf_zone');
+    if (z) z.innerHTML = d.zone ? '<b>เขต ' + esc(d.zone.zone) + '</b> — ' + esc(d.zone.team) : '<span style="color:#98a2ad">ใส่จังหวัดแล้วระบบจะบอกผู้ดูแลเขตให้</span>';
+    load();
+  }).catch(function(e) { btn.disabled = false; alert('บันทึกไม่สำเร็จ: ' + e.message); });
+}
+
+function addNote() {
+  var inp = document.getElementById('cf_notein');
+  var t = inp ? inp.value.trim() : '';
+  if (!t || !sel) return;
+  api('/admin/api/crm/note', { method: 'POST', body: JSON.stringify({ id: sel, text: t }) }).then(function() {
+    inp.value = '';
+    loadCrm(sel);
+  }).catch(function(e) { alert('เพิ่มบันทึกไม่สำเร็จ: ' + e.message); });
+}
+
+function exportCsv() {
+  fetch('/admin/api/crm/export.csv', { headers: { 'x-admin-key': KEY } }).then(function(r) {
+    if (!r.ok) throw new Error('ส่งออกไม่สำเร็จ (' + r.status + ')');
+    return r.blob();
+  }).then(function(b) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = 'crm_customers_' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  }).catch(function(e) { alert(e.message); });
 }
 
 function renderHead() {
@@ -874,6 +1255,7 @@ function selectChat(id) {
   document.getElementById('composer').classList.add('on');
   fetchHist(id);
   document.getElementById('main').classList.add('show');
+  if (crmOpen) loadCrm(id);
 }
 
 var sending = false;
@@ -931,6 +1313,33 @@ document.getElementById('cbbtn').addEventListener('click', function() {
   api('/admin/api/callback', { method: 'POST', body: JSON.stringify({ id: sel, action: a }) })
     .then(function() { load(); })
     .catch(function(e) { alert(e.message); });
+});
+
+document.getElementById('q').addEventListener('input', function() { q = this.value.trim().toLowerCase(); renderList(); });
+document.getElementById('crmbtn').addEventListener('click', function() { toggleCrm(); });
+document.getElementById('expbtn').addEventListener('click', exportCsv);
+document.getElementById('crm').addEventListener('click', function(e) {
+  var t = e.target;
+  if (t.id === 'crmclose') { toggleCrm(false); return; }
+  if (t.id === 'cf_save') { saveCrm(); return; }
+  if (t.id === 'cf_noteadd') { addNote(); return; }
+  var tg = t.closest ? t.closest('.tag') : null;
+  if (tg) {
+    var name = tg.getAttribute('data-tag');
+    var i = crmTags.indexOf(name);
+    if (i === -1) crmTags.push(name); else crmTags.splice(i, 1);
+    renderTags();
+  }
+});
+document.getElementById('crm').addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'cf_newtag') {
+    e.preventDefault();
+    var v = e.target.value.trim();
+    if (v && crmTags.indexOf(v) === -1) crmTags.push(v);
+    e.target.value = '';
+    renderTags();
+  } else if (e.target.id === 'cf_notein') { e.preventDefault(); addNote(); }
 });
 
 document.getElementById('sendbtn').addEventListener('click', doSend);
@@ -993,12 +1402,51 @@ function handleAdmin(req, res, path, body) {
     const now = Date.now();
     const rank = (x) => (x.cb ? 2 : 0) + ((x.handoff && x.mutedUntil > now) ? 1 : 0);
     const list = [...sessions.entries()]
-      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null }))
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id) }))
       // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
       .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
     const pending = [...sessions.values()].filter((s) => s.cb).length;
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, pending, now, sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pending, now, sessions: list });
+  }
+
+  // ---- CRM ----
+  if (path === '/admin/api/crm' && req.method === 'GET') {
+    const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    const c = crmGet(id);
+    crmListNotes(id).then((notes) => sendJson(res, 200, { ok: true, profile: c, notes, zone: zoneInfo(c.province || (c.auto && c.auto.province) || ''), sb: SB_ON, statuses: CRM_STATUS }))
+      .catch(() => sendJson(res, 200, { ok: true, profile: c, notes: [], zone: zoneInfo(c.province || ''), sb: SB_ON, statuses: CRM_STATUS }));
+    return;
+  }
+  if (path === '/admin/api/crm' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = data.id;
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    crmUpdate(id, data).then((saved) => {
+      const c = crmGet(id);
+      console.log(`[crm] ${id.slice(0, 8)} profile updated (sb=${saved})`);
+      sendJson(res, 200, { ok: true, profile: c, synced: saved, zone: zoneInfo(c.province || '') });
+    });
+    return;
+  }
+  if (path === '/admin/api/crm/note' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = data.id;
+    const text = String(data.text || '').trim();
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    if (!text) return sendJson(res, 400, { ok: false, error: 'empty text' });
+    crmAddNote(id, text).then((note) => sendJson(res, 200, { ok: true, note }));
+    return;
+  }
+  if (path === '/admin/api/crm/export.csv' && req.method === 'GET') {
+    const cols = ['line_user_id', 'display_name', 'real_name', 'phone', 'province', 'district', 'crops', 'farm_rai', 'shop', 'status', 'tags', 'note', 'first_seen_at', 'last_chat_at', 'updated_at'];
+    const rows = [cols.join(',')];
+    for (const c of crm.values()) rows.push(cols.map((k) => csvCell(k === 'crops' ? (c.crops || (c.auto && c.auto.crops) || '') : c[k])).join(','));
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="crm_customers.csv"' });
+    return res.end('\uFEFF' + rows.join('\r\n'));
   }
 
   // ธงรอติดต่อกลับ: action = 'done' (ติดต่อแล้ว) | 'set' (แอดมินตั้งเอง)
@@ -1085,7 +1533,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.8, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.9, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -1112,5 +1560,6 @@ const server = http.createServer((req, res) => {
 });
 
 initPersist();
+if (SB_ON) { console.log('[crm] Supabase ON:', SB_URL); crmLoadFromSupabase(); } else { console.log('[crm] Supabase OFF — CRM เก็บใน state file (ตั้ง SUPABASE_URL + SUPABASE_SERVICE_KEY เพื่อซิงก์)'); }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v2.8 (callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v2.9 (crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
