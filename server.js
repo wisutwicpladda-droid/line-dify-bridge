@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.7
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v2.8
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -16,7 +16,13 @@
 //     - ตอนบูท: เติมประวัติเก่าให้ทุกแชทที่รู้จัก + แชทจาก SEED_USER_IDS
 //     - ลูกค้า(เก่า)ทักครั้งแรก: ประวัติเดิมทั้งหมดโผล่ตามมาเองใน 1-2 วิ
 //     - หมายเหตุ: ข้อความที่แอดมินเคยพิมพ์ใน LINE OA Manager ดึงไม่ได้ (LINE ไม่มี API)
-//  8. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+//  8. v2.8: ธง "📞 รอติดต่อกลับ" ในหน้าแอดมิน — ติดให้เองเมื่อ
+//     (ก) บอทรับปากลูกค้าว่าจะให้เจ้าหน้าที่/แอดมินติดต่อกลับ หรือส่งเรื่องต่อให้แล้ว
+//     (ข) ลูกค้าทิ้งเบอร์โทรไว้ในแชท (เก็บชื่อ+เบอร์โชว์ให้แอดมินเลย)
+//     (ค) ลูกค้าพิมพ์ขอคุยกับแอดมิน
+//     แชทที่รอติดต่อกลับเด้งขึ้นบนสุด (พื้นแดง) แอดมินกด "✓ ติดต่อแล้ว" เมื่อจัดการเสร็จ
+//     + แจ้งเตือนเข้า LINE แอดมินได้ (ตั้ง ADMIN_NOTIFY_IDS) และแสดงจำนวนใน title หน้าเว็บ
+//  9. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -29,6 +35,9 @@
 //                                 ไม่งั้นไฟล์หายตอน redeploy (ระบบยังทำงานได้ แค่ไม่ถาวร)
 //  SEED_USER_IDS              (ไม่บังคับ) LINE userId คั่นด้วย , เพื่อดึงลูกค้าเก่า
 //                             เข้าลิสต์พร้อมประวัติทันทีตอนบูท (ใส่ครั้งเดียวพอ)
+//  ADMIN_NOTIFY_IDS           (ไม่บังคับ) LINE userId ของแอดมิน คั่นด้วย , — เมื่อมีลูกค้า
+//                             รอติดต่อกลับ ระบบจะ Push แจ้งเตือนเข้า LINE แอดมินทันที
+//                             (ใช้โควต้า Push 1 ข้อความ/คน/ครั้ง) ดู userId ตัวเองได้จากหน้า /admin
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -50,9 +59,12 @@ const HAS_VOLUME = !!RAILWAY_VOL && STATE_DIR.startsWith(RAILWAY_VOL); // ถา
 const DIFY_BASE = 'https://api.dify.ai/v1';
 const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
+const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
+const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
 
 // ---------- ทะเบียนแชท + สถานะ + ประวัติ ----------
-const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history}
+const sessions = new Map(); // id -> {name,pic,type,lastText,lastAt,mutedUntil,handoff,history,bf,cb,cbDone,cbCount}
+// cb = { at, src:'bot'|'phone'|'kw'|'admin', topic, contact, note }  ธง "รอติดต่อกลับ" (null = ไม่มี)
 
 // ---------- Persistence (เก็บถาวรลงดิสก์ ถ้ามี Volume) ----------
 const STATE_FILE = pathmod.join(STATE_DIR, 'nladda-state.json');
@@ -90,7 +102,10 @@ function initPersist() {
             name: s.name || '', pic: s.pic || '', type: s.type || 'user',
             lastText: s.lastText || '', lastAt: s.lastAt || 0,
             mutedUntil: s.mutedUntil || 0, handoff: !!s.handoff,
-            history: s.history.slice(-HIST_MAX), bf: !!s.bf
+            history: s.history.slice(-HIST_MAX), bf: !!s.bf,
+            cb: (s.cb && typeof s.cb === 'object') ? s.cb : null,
+            cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
+            cbCount: s.cbCount || 0
           });
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
@@ -152,7 +167,7 @@ setInterval(() => {
 function touchSession(id, type, text) {
   let s = sessions.get(id);
   if (!s) {
-    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false };
+    s = { name: '', pic: '', type, lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false, cb: null, cbDone: null, cbCount: 0 };
     sessions.set(id, s);
     if (sessions.size > 500) {
       let oldestId = null, oldestAt = Infinity;
@@ -267,7 +282,7 @@ function bootBackfill() {
   const seeds = (process.env.SEED_USER_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
   for (const id of seeds) {
     if (!sessions.has(id)) {
-      sessions.set(id, { name: '', pic: '', type: 'user', lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false });
+      sessions.set(id, { name: '', pic: '', type: 'user', lastText: '', lastAt: 0, mutedUntil: 0, handoff: false, history: [], bf: false, cb: null, cbDone: null, cbCount: 0 });
       fetchProfile(sessions.get(id), id);
     }
   }
@@ -296,6 +311,7 @@ async function findConversation(sessionId) {
 }
 
 async function askDify(sessionId, text) {
+  if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const conversationId = await findConversation(sessionId);
   try {
     const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, {
@@ -334,8 +350,70 @@ async function linePush(to, text) {
   } catch (e) { console.log('push fetch error:', e.message); return false; }
 }
 
+// ---------- ธง "รอติดต่อกลับ" (callback) ----------
+// (ก) บอทรับปาก: "ติดต่อกลับ / โทรกลับ / ส่งเรื่องให้…แล้ว / ประสาน…แล้ว / เจ้าหน้าที่จะรีบติดต่อ ฯลฯ"
+const CB_BOT_RX = /ติดต่อกลับ|โทรกลับ|(ส่งเรื่อง|ส่งต่อ|ประสาน|แจ้ง|บันทึกข้อมูล)[^\n]{0,40}?(เรียบร้อย|ให้แล้ว|แล้วนะ|แล้วค่ะ|แล้วจ้ะ)|(เจ้าหน้าที่|ทีมงาน|แอดมิน|ฝ่ายขาย|พี่ ?ๆ|ผู้แทน)[^\n]{0,24}?จะ(รีบ)?(ติดต่อ|โทร|เข้ามา|ตอบ|ประสาน)/;
+// (ข) ลูกค้าทิ้งเบอร์โทร (มือถือ 10 หลัก / บ้าน 9 หลัก มีหรือไม่มีขีด/ช่องว่างก็ได้)
+const PHONE_RX = /(?<!\d)0\d{1,2}[- ]?\d{3}[- ]?\d{3,4}(?!\d)/;
+
+function lastUserText(s) {
+  for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].r === 'u') return s.history[i].t;
+  return '';
+}
+
+function flagCallback(id, s, src, extra) {
+  const isNew = !s.cb;
+  if (isNew) {
+    s.cb = { at: Date.now(), src, topic: String(lastUserText(s)).slice(0, 120), contact: '', note: '' };
+    s.cbCount = (s.cbCount || 0) + 1;
+  }
+  if (extra && extra.note && !s.cb.note) s.cb.note = String(extra.note).slice(0, 160);
+  if (extra && extra.contact) s.cb.contact = String(extra.contact).slice(0, 80);
+  if (extra && extra.topic && !s.cb.topic) s.cb.topic = String(extra.topic).slice(0, 120);
+  markDirty();
+  broadcast();
+  console.log(`[callback] ${id.slice(0, 8)} src=${src} new=${isNew} contact=${s.cb.contact ? 'yes' : 'no'}`);
+  if (isNew || (extra && extra.contact)) notifyAdmins(id, s, isNew);
+}
+
+function clearCallback(s) {
+  if (!s.cb) return;
+  s.cbDone = Object.assign({}, s.cb, { doneAt: Date.now() });
+  s.cb = null;
+  markDirty();
+  broadcast();
+}
+
+function detectBotPromise(id, s, text) {
+  const m = CB_BOT_RX.exec(String(text || ''));
+  if (!m) return;
+  const i = Math.max(0, m.index - 40);
+  flagCallback(id, s, 'bot', { note: String(text).slice(i, m.index + 80).replace(/\s+/g, ' ') });
+}
+
+function detectPhone(id, s, text) {
+  const m = PHONE_RX.exec(String(text || ''));
+  if (!m) return;
+  flagCallback(id, s, 'phone', { contact: String(text).trim().slice(0, 80), topic: lastUserText(s) });
+}
+
+function notifyAdmins(id, s, isNew) {
+  if (!ADMIN_NOTIFY_IDS.length) return;
+  const name = (s.name && s.name !== '…') ? s.name : id.slice(0, 10) + '…';
+  const msg = (isNew ? '🔔 ลูกค้ารอติดต่อกลับ' : '📞 ลูกค้าทิ้งเบอร์ติดต่อแล้ว')
+    + `\nลูกค้า: ${name}`
+    + (s.cb.topic ? `\nเรื่อง: ${s.cb.topic.slice(0, 100)}` : '')
+    + (s.cb.contact ? `\nติดต่อ: ${s.cb.contact}` : '\nติดต่อ: (ยังไม่ได้ทิ้งเบอร์)')
+    + (PUBLIC_URL ? `\nเปิดหน้าแอดมิน: ${PUBLIC_URL}/admin` : '');
+  for (const to of ADMIN_NOTIFY_IDS) {
+    if (to === id) continue;
+    linePush(to, msg).catch(() => {});
+  }
+}
+
 async function sendAnswer(s, ev, fallbackTo, text) {
   pushHist(s, 'b', text);
+  detectBotPromise(fallbackTo || 'unknown', s, text);
   const ok = await lineReply(ev.replyToken, text);
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
     const pushed = await linePush(fallbackTo, text);
@@ -379,6 +457,7 @@ async function handleEvent(ev) {
   const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
   fetchProfile(s, userId);
+  if (ev.message.type === 'text') detectPhone(sessionId, s, text); // ลูกค้าทิ้งเบอร์ -> ธงรอติดต่อกลับ + เก็บเบอร์
   // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
   if (isNewChat) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
 
@@ -390,6 +469,7 @@ async function handleEvent(ev) {
     if (wantsBot(text)) {
       s.mutedUntil = 0;
       s.handoff = false;
+      if (s.cb && s.cb.src === 'kw') clearCallback(s); // ลูกค้ากลับมาคุยกับบอทเอง = ไม่รอแอดมินแล้ว
       console.log(`[unmute-kw] ${sessionId.slice(0, 8)}`);
       await sendAnswer(s, ev, pushTarget, 'น้องลัดดากลับมาแล้วค่ะ 😊 สอบถามเรื่องสินค้าได้เลยนะคะ');
       return;
@@ -397,6 +477,7 @@ async function handleEvent(ev) {
     if (wantsAdmin(text)) {
       s.mutedUntil = now + MUTE_MINUTES * 60000;
       s.handoff = true;
+      flagCallback(sessionId, s, 'kw', { note: 'ลูกค้าพิมพ์ขอคุยกับแอดมิน', topic: text });
       console.log(`[mute-kw] ${sessionId.slice(0, 8)} for ${MUTE_MINUTES}m (handoff)`);
       await sendAnswer(s, ev, pushTarget,
         `รับทราบค่ะ เดี๋ยวแอดมินจะเข้ามาตอบโดยเร็วที่สุดนะคะ 🙏\n\n(น้องลัดดาขอพักการตอบแชทนี้ ${MUTE_MINUTES} นาที ถ้าต้องการคุยกับน้องลัดดาต่อ พิมพ์ "คุยกับบอท" ได้เลยค่ะ)`);
@@ -454,6 +535,16 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .item.sel { background: #eef4fb; }
   .item.ho { background: #fff6e8; }
   .item.ho.sel { background: #ffefd6; }
+  .item.cb { background: #fdeeee; }
+  .item.cb.sel { background: #fadcdc; }
+  .ilast.cbtxt { color: #c62828; font-weight: 600; }
+  .cnt.red { background: #d33a41; }
+  .cbbar { display: none; padding: 9px 16px; background: #fdeeee; border-bottom: 1px solid #f5c6c6; font-size: 12.5px; color: #8a1f24; line-height: 1.6; }
+  .cbbar.on { display: block; }
+  .cbbar b { color: #c62828; }
+  .cbbtn { border-radius: 9px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; flex: none; margin-right: 6px; }
+  .cbbtn.done { background: #c62828; color: #fff; }
+  .cbbtn.set { background: #f1f3f5; color: #55606b; }
   .av { width: 46px; height: 46px; border-radius: 50%; flex: none; background: #cfd8e3; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; position: relative; overflow: visible; }
   .av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
   .stdot { position: absolute; right: -3px; bottom: -3px; font-size: 14px; line-height: 1; filter: drop-shadow(0 0 1px #fff); }
@@ -478,6 +569,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .pill.g { background: #e6f9ee; color: #0a9a4a; }
   .pill.r { background: #fdebec; color: #d33a41; }
   .pill.o { background: #fff1dd; color: #d97706; }
+  .pill.cb { background: #fdebec; color: #c62828; }
   .tgl { border-radius: 9px; padding: 9px 14px; font-size: 13px; font-weight: 700; flex: none; }
   .tgl.stop { background: #fdebec; color: #d33a41; }
   .tgl.start { background: #06c755; color: #fff; }
@@ -529,11 +621,11 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <div id="app" class="app">
   <div class="side">
     <div class="side-head">
-      <b>แชท<span class="cnt" id="count">0</span><span class="live off" id="live">● กำลังเชื่อมต่อ…</span></b>
+      <b>แชท<span class="cnt" id="count">0</span><span class="cnt red" id="cbcount" style="display:none" title="ลูกค้ารอติดต่อกลับ">📞 0</span><span class="live off" id="live">● กำลังเชื่อมต่อ…</span></b>
       <button class="rf" id="refreshbtn">⟳</button>
     </div>
     <div class="items" id="items"></div>
-    <div class="side-note"><span id="ps"></span>🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · พิมพ์ตอบจากหน้านี้ = ส่งในนามน้องลัดดา (ใช้โควต้า Push ของ LINE OA)</div>
+    <div class="side-note"><span id="ps"></span>📞 แดง = ลูกค้ารอติดต่อกลับ (บอทรับปากว่าจะให้เจ้าหน้าที่ติดต่อ / ลูกค้าทิ้งเบอร์) กด "✓ ติดต่อแล้ว" เมื่อจัดการเสร็จ · 🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · พิมพ์ตอบจากหน้านี้ = ส่งในนามน้องลัดดา (ใช้โควต้า Push ของ LINE OA)<span id="nt"></span></div>
   </div>
   <div class="main" id="main">
     <div class="chat-head" id="chead">
@@ -543,8 +635,10 @@ const ADMIN_HTML = `<!DOCTYPE html>
         <div class="hname" id="hname"></div>
         <div class="hstat" id="hstat"></div>
       </div>
+      <button class="cbbtn set" id="cbbtn"></button>
       <button class="tgl stop" id="tglbtn"></button>
     </div>
+    <div class="cbbar" id="cbbar"></div>
     <div class="msgs" id="msgs">
       <div class="chat-empty"><div class="big">💬</div><div>เลือกแชทจากรายการด้านซ้าย<br>เพื่อดูบทสนทนาและควบคุมบอท</div></div>
     </div>
@@ -655,7 +749,13 @@ function load(fromLogin) {
     document.getElementById('ps').innerHTML = d.persist
       ? '💾 เก็บแชทถาวร: <b style="color:#0a9a4a">เปิด</b> · '
       : '💾 เก็บแชทถาวร: <b style="color:#d33a41">ปิด</b> (ต่อ Volume ที่ /data ใน Railway) · ';
+    document.getElementById('nt').textContent = d.notify ? ' · 🔔 แจ้งเตือนเข้า LINE แอดมิน ' + d.notify + ' คน' : ' · 🔔 แจ้งเตือน LINE แอดมิน: ปิด (ตั้ง ADMIN_NOTIFY_IDS ใน Railway)';
     cache = d.sessions;
+    var pend = d.pending || 0;
+    var cbEl = document.getElementById('cbcount');
+    cbEl.style.display = pend ? 'inline-block' : 'none';
+    cbEl.textContent = '📞 ' + pend;
+    document.title = (pend ? '(' + pend + ') ' : '') + 'น้องลัดดา — ควบคุมบอท';
     renderList();
     if (sel) { renderHead(); fetchHist(sel); }
     if (!timer) timer = setInterval(load, 20000);
@@ -683,13 +783,17 @@ function renderList() {
     var s = cache[i];
     var muted = s.mutedUntil > now;
     var isHo = muted && s.handoff;
-    var dot = muted ? '<span class="stdot">' + (isHo ? '🙋' : '🔇') + '</span>' : '';
+    var isCb = !!s.cb;
+    var dot = isCb ? '<span class="stdot">📞</span>' : (muted ? '<span class="stdot">' + (isHo ? '🙋' : '🔇') + '</span>' : '');
     var av = avatarHtml(s, '').replace('</div>', dot + '</div>');
-    h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isHo ? ' ho' : '') + '" data-id="' + s.id + '">'
+    var last = isCb
+      ? '📞 รอติดต่อกลับ · ' + esc(s.cb.contact || s.cb.topic || s.lastText || '-')
+      : (isHo ? '🙋 ขอคุยกับแอดมิน · ' : '') + esc(s.lastText || '-');
+    h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isCb ? ' cb' : (isHo ? ' ho' : '')) + '" data-id="' + s.id + '">'
       + av
       + '<div class="icol">'
-      + '<div class="irow1"><span class="iname">' + esc(dispName(s)) + '</span><span class="itime">' + listTime(s.lastAt) + '</span></div>'
-      + '<div class="ilast' + (isHo ? ' hotxt' : '') + '">' + (isHo ? '🙋 ขอคุยกับแอดมิน · ' : '') + esc(s.lastText || '-') + '</div>'
+      + '<div class="irow1"><span class="iname">' + esc(dispName(s)) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
+      + '<div class="ilast' + (isCb ? ' cbtxt' : (isHo ? ' hotxt' : '')) + '">' + last + '</div>'
       + '</div></div>';
   }
   document.getElementById('items').innerHTML = h;
@@ -709,10 +813,25 @@ function renderHead() {
     ? '<span class="pill r">🔇 ' + (forever ? 'บอทหยุดอยู่ · แอดมินตอบ' : 'หยุดถึง ' + hhmm(s.mutedUntil)) + '</span>'
     : '<span class="pill g">🔊 บอทตอบอัตโนมัติ</span>';
   if (muted && s.handoff) st += '<span class="pill o">🙋 ลูกค้าขอแอดมิน</span>';
+  if (s.cb) st += '<span class="pill cb">📞 รอติดต่อกลับ</span>';
   document.getElementById('hstat').innerHTML = st;
   var b = document.getElementById('tglbtn');
   if (muted) { b.className = 'tgl start'; b.textContent = '▶ เปิดบอทตอบต่อ'; b.dataset.m = '0'; }
   else { b.className = 'tgl stop'; b.textContent = '⏸ หยุดบอท ตอบเอง'; b.dataset.m = '-1'; }
+  var cbb = document.getElementById('cbbtn');
+  var bar = document.getElementById('cbbar');
+  if (s.cb) {
+    cbb.className = 'cbbtn done'; cbb.textContent = '✓ ติดต่อแล้ว'; cbb.dataset.a = 'done';
+    var why = s.cb.src === 'phone' ? 'ลูกค้าทิ้งเบอร์ไว้' : (s.cb.src === 'kw' ? 'ลูกค้าพิมพ์ขอคุยกับแอดมิน' : (s.cb.src === 'admin' ? 'แอดมินตั้งธงเอง' : 'บอทรับปากว่าจะให้เจ้าหน้าที่ติดต่อกลับ'));
+    bar.className = 'cbbar on';
+    bar.innerHTML = '<b>📞 ลูกค้ารอติดต่อกลับ</b> ตั้งแต่ ' + dayLabel(s.cb.at) + ' ' + hhmm(s.cb.at) + ' · ' + esc(why)
+      + (s.cb.contact ? ' · <b>ติดต่อ: ' + esc(s.cb.contact) + '</b>' : ' · ยังไม่ได้ทิ้งเบอร์ (ดูในแชท)')
+      + (s.cb.topic ? '<br>เรื่อง: ' + esc(s.cb.topic) : '')
+      + (s.cb.note && s.cb.src === 'bot' ? '<br>บอทตอบว่า: “' + esc(s.cb.note) + '”' : '');
+  } else {
+    cbb.className = 'cbbtn set'; cbb.textContent = '📞 ตั้งรอติดต่อกลับ'; cbb.dataset.a = 'set';
+    bar.className = 'cbbar'; bar.innerHTML = '';
+  }
 }
 
 function fetchHist(id) {
@@ -805,6 +924,15 @@ document.getElementById('tglbtn').addEventListener('click', function() {
     .catch(function(e) { alert(e.message); });
 });
 
+document.getElementById('cbbtn').addEventListener('click', function() {
+  if (!sel) return;
+  var a = this.dataset.a;
+  if (a === 'done' && !confirm('ยืนยันว่าติดต่อลูกค้ารายนี้เรียบร้อยแล้ว?')) return;
+  api('/admin/api/callback', { method: 'POST', body: JSON.stringify({ id: sel, action: a }) })
+    .then(function() { load(); })
+    .catch(function(e) { alert(e.message); });
+});
+
 document.getElementById('sendbtn').addEventListener('click', doSend);
 document.getElementById('ta').addEventListener('input', autoGrow);
 document.getElementById('ta').addEventListener('keydown', function(e) {
@@ -862,11 +990,29 @@ function handleAdmin(req, res, path, body) {
   }
 
   if (path === '/admin/api/list' && req.method === 'GET') {
+    const now = Date.now();
+    const rank = (x) => (x.cb ? 2 : 0) + ((x.handoff && x.mutedUntil > now) ? 1 : 0);
     const list = [...sessions.entries()]
-      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff }))
-      .sort((a, b) => ((b.handoff && b.mutedUntil > Date.now()) ? 1 : 0) - ((a.handoff && a.mutedUntil > Date.now()) ? 1 : 0) || b.lastAt - a.lastAt)
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null }))
+      // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
+      .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, now: Date.now(), sessions: list });
+    const pending = [...sessions.values()].filter((s) => s.cb).length;
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, pending, now, sessions: list });
+  }
+
+  // ธงรอติดต่อกลับ: action = 'done' (ติดต่อแล้ว) | 'set' (แอดมินตั้งเอง)
+  if (path === '/admin/api/callback' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = data.id;
+    if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
+    const s = sessions.get(id);
+    if (data.action === 'done') clearCallback(s);
+    else if (data.action === 'set') { if (!s.cb) flagCallback(id, s, 'admin', { note: 'แอดมินตั้งธงเอง' }); }
+    else return sendJson(res, 400, { ok: false, error: 'bad action' });
+    console.log(`[admin] ${id.slice(0, 8)} callback ${data.action}`);
+    return sendJson(res, 200, { ok: true, id, cb: s.cb || null });
   }
 
   if (path === '/admin/api/history' && req.method === 'GET') {
@@ -939,7 +1085,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.7, persist: persistOK, chats: sessions.size, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 2.8, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -967,4 +1113,4 @@ const server = http.createServer((req, res) => {
 
 initPersist();
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v2.7 (backfill+send+persist=${persistOK}+SSE) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v2.8 (callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}) running on port ${PORT}`));
