@@ -1,11 +1,13 @@
 -- ============================================================
--- น้องลัดดา LINE bridge — Supabase setup (CRM v2.9 + POS link v3.0) — รันซ้ำได้ (idempotent)
+-- น้องลัดดา LINE bridge — Supabase setup (CRM v2.9 + POS link v3.0 + พืช/พื้นที่ v3.6) — รันซ้ำได้ (idempotent)
 -- วิธีใช้: Supabase Dashboard (โปรเจกต์ POS-FARMER) -> SQL Editor -> New query -> วางทั้งหมด -> Run
 -- ทำอะไรบ้าง:
 --   1) สร้างตาราง crm_customers (โปรไฟล์ลูกค้า LINE) + crm_notes (บันทึกติดตาม) ถ้ายังไม่มี
 --   2) เพิ่ม column pos_* ใน crm_customers สำหรับเก็บผลการผูกกับรายชื่อ POS
 --   3) เพิ่ม column line_user_id ในตาราง customers (POS) เพื่อให้ bridge เขียน LINE userId กลับ
 --      (เป็น column ใหม่ค่าว่าง ไม่กระทบข้อมูล/แอป POS เดิม)
+--   4) v3.6: เพิ่ม column crops / farm_rai / crop_areas ในตาราง customers (POS) ให้ POS เห็นพืชที่ปลูก/พื้นที่ปลูก
+--      ที่ลูกค้ากรอกตอนลงทะเบียนผ่าน LINE (bridge เขียนให้เอง; column ใหม่ค่าว่าง ไม่กระทบแอป POS เดิม)
 -- ============================================================
 
 -- 1) CRM tables
@@ -58,3 +60,12 @@ create index if not exists crm_customers_pos_idx on public.crm_customers (pos_id
 alter table public.customers add column if not exists line_user_id text;
 create index if not exists customers_line_user_idx on public.customers (line_user_id);
 create index if not exists customers_phone_idx     on public.customers (phone);
+
+-- 4) v3.6: พืชที่ปลูก / พื้นที่ปลูก จากการลงทะเบียนผ่าน LINE (bridge เขียนให้อัตโนมัติ; POS จะแก้/กรอกเองก็ได้ — ฝั่งที่ว่างจะถูกเติมให้ ไม่ทับค่าที่กรอกไว้)
+alter table public.customers
+  add column if not exists crops      text,                        -- พืชที่ปลูก คั่นด้วย ", " เช่น "ทุเรียน, มังคุด"
+  add column if not exists farm_rai   numeric,                     -- พื้นที่ปลูกรวม (ไร่) = ไร่ + งาน/4 เช่น 25 ไร่ 2 งาน -> 25.5
+  add column if not exists crop_areas jsonb default '[]'::jsonb;   -- รายพืช [{"name":"ทุเรียน","rai":25,"ngan":2},{"name":"มังคุด","rai":10,"ngan":null}]
+comment on column public.customers.crops      is 'พืชที่ปลูก (จากลงทะเบียน LINE น้องลัดดา / POS กรอกเอง)';
+comment on column public.customers.farm_rai   is 'พื้นที่ปลูกรวม หน่วยไร่ (งานแปลงเป็น /4)';
+comment on column public.customers.crop_areas is 'รายพืช+พื้นที่ [{name,rai,ngan}] จากฟอร์มลงทะเบียน LINE';

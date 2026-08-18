@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.5
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.6
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -56,7 +56,11 @@
 // 13. v3.5: Rich Menu (เมนูล่างแชท) สร้างจากหน้าแอดมินปุ่มเดียว "🧩 สร้าง Rich Menu ลงทะเบียน" — รูป richmenu.png (2500x843) คู่กับ server.js
 //     3 ปุ่ม: ลงทะเบียนสมาชิก (เปิดฟอร์ม LIFF / ถ้าไม่มี LIFF_ID = พิมพ์ "ลงทะเบียน") · ทีมงานในพื้นที่ (บอทตอบทีม ME/MR ตามจังหวัดที่ลงทะเบียน)
 //     · คุยกับแอดมิน — ตั้งเป็นเมนูเริ่มต้นของทุกคน และลบเมนูเก่าที่ระบบสร้างไว้ให้ (ใช้ LINE_CHANNEL_ACCESS_TOKEN ที่มีอยู่แล้ว)
-// 12. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+// 14. v3.6: POS เห็นพืชที่ปลูก/พื้นที่ปลูกด้วย — ถ้าตาราง POS มี column crops (text) / farm_rai (numeric) / crop_areas (jsonb)
+//     (เพิ่มด้วย supabase_crm_pos_setup.sql ข้อ 4) ระบบจะเขียนให้เองตอนสร้าง/อัปเดต/ผูก และซิงก์สองทาง:
+//     CRM มีพืชแต่ POS ว่าง -> เติมให้ POS · POS มีพืชแต่ CRM ว่าง -> เติมให้ CRM (ไม่ทับค่าที่อีกฝั่งกรอกไว้)
+//     แอดมินแก้พืช/ไร่ในแผงโปรไฟล์ -> อัปเดตแถว POS ที่ผูกอยู่ทันที · ตรวจโครงสร้างตารางใหม่ทุกครั้งที่รีเฟรช (เพิ่ม column แล้วไม่ต้อง redeploy)
+// 15. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -78,6 +82,9 @@
 //  POS_COL_ID / POS_COL_NAME / POS_COL_PHONE / POS_COL_PROVINCE / POS_COL_DISTRICT / POS_COL_LINE / POS_COL_EXTRA
 //                             (ไม่บังคับ) ระบุชื่อ column เองถ้าระบบเดาไม่ถูก (NAME ใช้ + ต่อหลาย column เช่น first_name+last_name,
 //                             PHONE/EXTRA คั่นด้วย , ได้) — POS_COL_LINE = column ที่ให้เขียน LINE userId กลับ (ค่าเริ่ม line_user_id ถ้ามี)
+//  POS_COL_CROPS / POS_COL_RAI / POS_COL_AREAS
+//                             (ไม่บังคับ) column พืชที่ปลูก (text) / พื้นที่รวมเป็นไร่ (numeric) / รายพืช (jsonb) ในตาราง POS
+//                             ค่าเริ่ม: เดาจากชื่อ crops / farm_rai / crop_areas — ไม่มี column = ไม่เขียน (ระบบยังทำงานปกติ)
 //  POS_REFRESH_MIN            (ไม่บังคับ) นาทีต่อการรีเฟรชรายชื่อ POS ค่าเริ่ม 15
 //  POS_INSERT_DEFAULTS        (ไม่บังคับ) JSON ค่าเพิ่มเติมตอนสร้างลูกค้าใหม่ใน POS เช่น {"type":"retail","customer_tier":"General"}
 //  REGISTER                   (ไม่บังคับ) on (ค่าเริ่ม) = บังคับลงทะเบียน ชื่อ/เบอร์/จังหวัด ก่อนบอทตอบ · soft = ถามแต่ไม่บังคับ · off = ปิด
@@ -120,7 +127,8 @@ const POS_TABLE_RAW = (process.env.POS_TABLE || '').trim().replace(/^public\./, 
 const POS_SCHEMA = POS_TABLE_RAW.includes('.') ? POS_TABLE_RAW.split('.')[0] : '';
 const POS_TABLE = POS_TABLE_RAW.includes('.') ? POS_TABLE_RAW.split('.').slice(1).join('.') : POS_TABLE_RAW;
 const POS_ON = SB_ON && !!POS_TABLE;
-const POS_COLS_ENV = { id: process.env.POS_COL_ID, name: process.env.POS_COL_NAME, phone: process.env.POS_COL_PHONE, province: process.env.POS_COL_PROVINCE, district: process.env.POS_COL_DISTRICT, line: process.env.POS_COL_LINE, extra: process.env.POS_COL_EXTRA };
+const POS_COLS_ENV = { id: process.env.POS_COL_ID, name: process.env.POS_COL_NAME, phone: process.env.POS_COL_PHONE, province: process.env.POS_COL_PROVINCE, district: process.env.POS_COL_DISTRICT, line: process.env.POS_COL_LINE, extra: process.env.POS_COL_EXTRA,
+  crops: process.env.POS_COL_CROPS, rai: process.env.POS_COL_RAI, areas: process.env.POS_COL_AREAS };
 const POS_REFRESH_MIN = Math.max(1, parseInt(process.env.POS_REFRESH_MIN || '15', 10) || 15);
 let POS_INSERT_DEFAULTS = {};
 try { POS_INSERT_DEFAULTS = JSON.parse(process.env.POS_INSERT_DEFAULTS || '{}') || {}; } catch (_) { console.log('[pos] POS_INSERT_DEFAULTS ไม่ใช่ JSON ที่ถูกต้อง — ข้าม'); }
@@ -528,8 +536,12 @@ async function sbIntrospect() {
     }
     sbSchema = out;
     const cc = out.tables.crm_customers;
-    if (cc) for (const k of ['pos_id', 'pos_name', 'pos_linked_at', 'pos_link_by', 'pos_candidates']) if (!cc.includes(k)) sbMissing.add(k);
-    if (sbMissing.size) console.log('[crm] crm_customers ยังไม่มี column:', [...sbMissing].join(','), '-> รัน supabase_pos_link_setup.sql เพื่อเก็บผล POS ลง Supabase (ตอนนี้เก็บในเครื่อง)');
+    if (cc) {
+      for (const k of ['pos_id', 'pos_name', 'pos_linked_at', 'pos_link_by', 'pos_candidates']) if (!cc.includes(k)) sbMissing.add(k);
+      for (const k of [...sbMissing]) if (cc.includes(k)) sbMissing.delete(k); // เพิ่ม column แล้ว (รัน SQL ทีหลัง) -> กลับมาส่งให้
+    }
+    const missSig = [...sbMissing].sort().join(',');
+    if (missSig !== sbIntrospect.lastMiss) { sbIntrospect.lastMiss = missSig; if (sbMissing.size) console.log('[crm] crm_customers ยังไม่มี column:', missSig, '-> รัน supabase_crm_pos_setup.sql เพื่อเก็บผล POS ลง Supabase (ตอนนี้เก็บในเครื่อง)'); }
     return out;
   } catch (e) { return null; }
 }
@@ -613,6 +625,7 @@ function crmTouch(id, s, userText) {
 function crmUpdate(id, fields) {
   const c = crmGet(id);
   const before = (c.phone || '') + '|' + (c.real_name || '');
+  const oldCrops = String(c.crops || ''), oldRai = c.farm_rai == null ? null : Number(c.farm_rai);
   for (const k of CRM_FIELDS) {
     if (!(k in fields)) continue;
     let v = fields[k];
@@ -623,6 +636,7 @@ function crmUpdate(id, fields) {
     c[k] = v;
   }
   c.updated_at = new Date().toISOString();
+  const exChanged = [String(c.crops || '') !== oldCrops ? 'crops' : '', (c.farm_rai == null ? null : Number(c.farm_rai)) !== oldRai ? 'rai' : ''].filter(Boolean); // ต้องคำนวณก่อน posMatch (ผูกแล้วระบบอาจเติมพืชจาก POS)
   // แอดมินกรอก ชื่อ+เบอร์+จังหวัด ครบ = ถือว่าลงทะเบียนแล้ว (บอทจะไม่ถามลูกค้าซ้ำ)
   if (!regDone(c) && c.real_name && c.phone && c.province) {
     c.auto = c.auto || {};
@@ -633,6 +647,10 @@ function crmUpdate(id, fields) {
   markDirty();
   broadcast();
   if (POS_ON && !c.pos_id && before !== (c.phone || '') + '|' + (c.real_name || '')) posMatch(id); // แอดมินกรอกเบอร์/ชื่อ -> จับคู่ POS
+  if (POS_ON && c.pos_id && exChanged.length) { // v3.6: แอดมินแก้พืช/ไร่ -> อัปเดตเฉพาะช่องที่แก้ในแถว POS ที่ผูกอยู่
+    const rec = pos.byId.get(String(c.pos_id));
+    if (rec) posPushExtras(c, rec, 'set', exChanged).catch(() => {});
+  }
   return SB_ON ? sbUpsert(c) : Promise.resolve(true);
 }
 
@@ -761,12 +779,90 @@ async function posDetectCols() {
   const linec = envList(POS_COLS_ENV.line)[0] || pick([/^(line_?user_?id|line_?uid|line_?id|lineid)$/i]);
   let extra = envList(POS_COLS_ENV.extra).filter(has);
   if (!extra.length) extra = cols.filter((c) => /^(customer_?tier|tier|customer_?type|type|group|segment|grade|level|entity_?type)$/i.test(c)).slice(0, 3);
-  pos.cols = { id: idc, name: nameCols, alt, phone: phoneCols, province: has(provc) ? provc : '', district: has(distc) ? distc : '', subd: has(subdc) ? subdc : '', gender: has(genc) ? genc : '', line: has(linec) ? linec : '', extra, all: cols };
+  // v3.6: พืชที่ปลูก / พื้นที่ปลูก (ไร่) / รายพืช (jsonb) — ถ้าตาราง POS มี column เหล่านี้ ระบบจะเขียนให้ด้วย
+  const cropc = envList(POS_COLS_ENV.crops)[0] || pick([/^(crops?|crop_?names?|main_?crops?|crops?_?text|plants?|พืช|พืชที่ปลูก)$/i]);
+  const raic = envList(POS_COLS_ENV.rai)[0] || pick([/^(farm_?rai|area_?rai|total_?rai|land_?rai|farm_?area|planting_?area|farm_?size|rai|พื้นที่ปลูก|จำนวนไร่)$/i]);
+  const areasc = envList(POS_COLS_ENV.areas)[0] || pick([/^(crop_?areas?|crops?_?json|crop_?details?|crop_?list|planting_?areas?)$/i]);
+  pos.cols = { id: idc, name: nameCols, alt, phone: phoneCols, province: has(provc) ? provc : '', district: has(distc) ? distc : '', subd: has(subdc) ? subdc : '', gender: has(genc) ? genc : '', line: has(linec) ? linec : '',
+    crops: has(cropc) ? cropc : '', rai: has(raic) ? raic : '', areas: has(areasc) ? areasc : '', extra, all: cols };
   if (!pos.cols.phone.length) pos.error = `หา column เบอร์โทรในตาราง ${POS_TABLE_RAW} ไม่เจอ (ตั้ง POS_COL_PHONE) — column ที่มี: ${cols.join(', ').slice(0, 200)}`;
   else if (!pos.cols.name.length) pos.error = `หา column ชื่อในตาราง ${POS_TABLE_RAW} ไม่เจอ (ตั้ง POS_COL_NAME) — column ที่มี: ${cols.join(', ').slice(0, 200)}`;
   else pos.error = '';
-  console.log('[pos] columns:', JSON.stringify(Object.assign({}, pos.cols, { all: undefined })), pos.error ? '⚠️ ' + pos.error : '');
+  const sig = JSON.stringify(Object.assign({}, pos.cols, { all: undefined }));
+  if (sig !== pos.colsSig) { pos.colsSig = sig; console.log('[pos] columns:', sig, pos.error ? '⚠️ ' + pos.error : ''); }
   return pos.cols;
+}
+// ค่าพืช/พื้นที่จากแถว POS -> รูปแบบกลาง { crops:'ทุเรียน, มังคุด', rai:25.5|null, areas:[{name,rai,ngan}] }
+function posExtrasOfRow(row) {
+  const k = pos.cols;
+  const out = { crops: '', rai: null, areas: [] };
+  if (!k) return out;
+  if (k.crops && row[k.crops] != null) out.crops = String(row[k.crops]).trim().slice(0, 200);
+  if (k.rai && row[k.rai] != null && String(row[k.rai]).trim() !== '') { const n = Number(row[k.rai]); out.rai = isFinite(n) ? n : null; }
+  if (k.areas && row[k.areas] != null) {
+    let v = row[k.areas];
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = []; } }
+    if (Array.isArray(v)) out.areas = v.filter((a) => a && typeof a === 'object' && a.name).slice(0, 20).map((a) => ({ name: String(a.name).slice(0, 40), rai: a.rai == null || a.rai === '' ? null : Number(a.rai), ngan: a.ngan == null || a.ngan === '' ? null : Number(a.ngan) }));
+  }
+  return out;
+}
+// ค่าพืช/พื้นที่จากโปรไฟล์ CRM -> body สำหรับเขียนลง POS (เฉพาะ column ที่ตารางมี) — คืน {} ถ้าไม่มีอะไรจะเขียน
+function posExtrasBody(c, opts) {
+  const k = pos.cols;
+  const body = {};
+  if (!k || !c) return body;
+  const reg = (c.auto && c.auto.reg) || {};
+  const crops = String(c.crops || '').trim();
+  const cropSet = new Set(crops.split(/[,;\/·|]+/).map((x) => x.trim()).filter(Boolean));
+  // รายพืชจากฟอร์ม เฉพาะพืชที่ยังอยู่ในช่อง "พืชที่ปลูก" (แอดมินแก้ข้อความพืชแล้ว รายพืชจะตามให้สอดคล้อง)
+  const areas = Array.isArray(reg.areas) ? reg.areas.filter((a) => a && a.name && cropSet.has(String(a.name).trim())).slice(0, 20).map((a) => ({ name: String(a.name).trim().slice(0, 40), rai: a.rai === '' || a.rai == null || !isFinite(Number(a.rai)) ? null : Number(a.rai), ngan: a.ngan === '' || a.ngan == null || !isFinite(Number(a.ngan)) ? null : Number(a.ngan) })) : [];
+  const rai = c.farm_rai == null || c.farm_rai === '' ? null : Number(c.farm_rai);
+  const force = !!(opts && opts.force); // true = ส่งค่าว่างด้วย (ลูกค้าอัปเดตแล้วลบพืชออก)
+  if (k.crops && (crops || force)) body[k.crops] = crops || null;
+  if (k.rai && ((rai != null && isFinite(rai)) || force)) body[k.rai] = rai != null && isFinite(rai) ? rai : null;
+  if (k.areas && (areas.length || force)) body[k.areas] = areas;
+  return body;
+}
+function posExtrasSame(rec, body) {
+  const k = pos.cols;
+  if (!rec || !k) return true;
+  for (const [col, v] of Object.entries(body)) {
+    if (col === k.crops && String(v || '') !== String(rec.crops || '')) return false;
+    if (col === k.rai && (v == null ? null : Number(v)) !== (rec.rai == null ? null : Number(rec.rai))) return false;
+    if (col === k.areas && JSON.stringify(v || []) !== JSON.stringify(rec.areas || [])) return false;
+  }
+  return true;
+}
+// เขียนพืช/พื้นที่จาก CRM ลงแถว POS ที่ผูกอยู่ (mode: 'fill' = เฉพาะช่องที่ POS ยังว่าง · 'set' = ทับด้วยค่าล่าสุดจากลูกค้า/แอดมิน)
+async function posPushExtras(c, rec, mode, only) {
+  const k = pos.cols;
+  if (!POS_ON || !k || !rec || !c || !(k.crops || k.rai || k.areas)) return false;
+  let body = posExtrasBody(c, { force: mode === 'set' });
+  if (mode === 'set' && Array.isArray(only)) { // ทับเฉพาะช่องที่แก้ (แก้พืช -> รายพืชตามไปด้วย)
+    const keep = new Set(only); if (keep.has('crops')) keep.add('areas');
+    if (!keep.has('crops') && k.crops && k.crops in body) delete body[k.crops];
+    if (!keep.has('rai') && k.rai && k.rai in body) delete body[k.rai];
+    if (!keep.has('areas') && k.areas && k.areas in body) delete body[k.areas];
+  }
+  if (mode !== 'set') { // fill: ไม่ทับค่าที่ POS มีอยู่แล้ว
+    if (k.crops in body && rec.crops) delete body[k.crops];
+    if (k.rai in body && rec.rai != null) delete body[k.rai];
+    if (k.areas in body && Array.isArray(rec.areas) && rec.areas.length) delete body[k.areas];
+  }
+  if (!Object.keys(body).length || posExtrasSame(rec, body)) return false;
+  return posUpdateRow(rec, { extras: body });
+}
+// เติมพืช/พื้นที่จาก POS ให้ CRM ถ้า CRM ยังว่าง (จำไว้ใน auto.pos_filled เพื่อล้างคืนตอนยกเลิกผูก)
+function posFillCrmExtras(c, rec) {
+  if (!c || !rec) return false;
+  c.auto = c.auto || {};
+  const filled = c.auto.pos_filled || (c.auto.pos_filled = {});
+  let changed = false;
+  if (!String(c.crops || '').trim() && rec.crops) { c.crops = rec.crops.slice(0, 200); filled.crops = c.crops; changed = true; }
+  if ((c.farm_rai == null || c.farm_rai === '') && rec.rai != null) { c.farm_rai = rec.rai; filled.farm_rai = c.farm_rai; changed = true; }
+  const reg = c.auto.reg;
+  if (Array.isArray(rec.areas) && rec.areas.length && !(reg && Array.isArray(reg.areas) && reg.areas.length)) { c.auto.pos_areas = rec.areas.slice(0, 20); changed = true; }
+  return changed;
 }
 
 function posRecOf(row) {
@@ -778,7 +874,8 @@ function posRecOf(row) {
   const phones = [...new Set(k.phone.flatMap((c) => phonesOf(row[c])))];
   const extra = {};
   for (const c of k.extra) if (str(row[c])) extra[c] = str(row[c]).slice(0, 60);
-  return { id: str(row[k.id]), name: name.slice(0, 120), names, nnames: names.map(normName), phones, province: k.province ? str(row[k.province]).slice(0, 60) : '', district: k.district ? str(row[k.district]).slice(0, 60) : '', line: k.line ? str(row[k.line]) : undefined, extra };
+  const ex = posExtrasOfRow(row);
+  return { id: str(row[k.id]), name: name.slice(0, 120), names, nnames: names.map(normName), phones, province: k.province ? str(row[k.province]).slice(0, 60) : '', district: k.district ? str(row[k.district]).slice(0, 60) : '', line: k.line ? str(row[k.line]) : undefined, extra, crops: ex.crops, rai: ex.rai, areas: ex.areas };
 }
 
 async function posRefresh() {
@@ -786,10 +883,12 @@ async function posRefresh() {
   if (pos.loading) return pos.loading;
   pos.loading = (async () => {
     try {
-      if (!pos.cols || !pos.cols.phone.length || !pos.cols.name.length) await posDetectCols();
+      // ตรวจโครงสร้างตารางใหม่ทุกครั้งที่รีเฟรช (เพิ่ม column เช่น crops ใน Supabase แล้วระบบเห็นเองใน POS_REFRESH_MIN นาที ไม่ต้อง redeploy)
+      if (pos.cols && !POS_SCHEMA && pos.source === 'openapi') await sbIntrospect();
+      if (!pos.cols || !pos.cols.phone.length || !pos.cols.name.length || pos.source === 'openapi') await posDetectCols();
       if (!pos.cols || !pos.cols.phone.length || !pos.cols.name.length) return false;
       const k = pos.cols;
-      const want = [...new Set([k.id, ...k.name, ...k.alt.flat(), ...k.phone, k.province, k.district, k.subd, k.line, ...k.extra].filter(Boolean))];
+      const want = [...new Set([k.id, ...k.name, ...k.alt.flat(), ...k.phone, k.province, k.district, k.subd, k.line, k.crops, k.rai, k.areas, ...k.extra].filter(Boolean))];
       const sel = want.every((c) => /^[A-Za-z0-9_]+$/.test(c)) ? want.join(',') : '*';
       const rows = [];
       let from = 0;
@@ -812,7 +911,7 @@ async function posRefresh() {
       console.log(`[pos] loaded ${list.length} farmers from ${POS_TABLE_RAW} (${byPhone.size} phones indexed, writeback=${k.line ? k.line : 'off'})`);
       posRematchAll();
       broadcast();
-      posSyncRegistered().catch((e) => console.log('[pos] sync registered error:', e.message));
+      posSyncRegistered().then(() => posSyncExtras()).catch((e) => console.log('[pos] sync registered error:', e.message));
       return true;
     } catch (e) { pos.error = 'โหลดรายชื่อ POS ผิดพลาด: ' + e.message; console.log('[pos]', pos.error); return false; }
     finally { pos.loading = null; }
@@ -821,7 +920,7 @@ async function posRefresh() {
 }
 
 function posBrief(rec, hints) {
-  return { id: rec.id, name: rec.name, phone: rec.phones[0] || '', province: rec.province, district: rec.district, extra: rec.extra, ok: nameConsistent(hints || [], rec.names) };
+  return { id: rec.id, name: rec.name, phone: rec.phones[0] || '', province: rec.province, district: rec.district, extra: rec.extra, crops: rec.crops || '', rai: rec.rai == null ? null : rec.rai, ok: nameConsistent(hints || [], rec.names) };
 }
 function posHints(c, s) {
   const arr = [c.real_name, s && s.reg && s.reg.data && s.reg.data.name, c.auto && c.auto.reg && c.auto.reg.name, (s && s.name && s.name !== '…') ? s.name : (c.display_name || ''), c.auto && c.auto.phone_ctx, s && s.cb && s.cb.contact, s && s.cbDone && s.cbDone.contact];
@@ -893,6 +992,7 @@ function posLink(id, rec, by) {
   if (!c.province && rec.province) { c.province = rec.province.slice(0, 200); filled.province = c.province; }
   if (!c.district && rec.district) { c.district = rec.district.slice(0, 200); filled.district = c.district; }
   c.auto.pos_filled = filled;
+  posFillCrmExtras(c, rec); // POS มีพืช/พื้นที่ แต่ CRM ยังว่าง -> เติมให้ CRM
   c.tags = Array.isArray(c.tags) ? c.tags : [];
   if (!c.tags.includes('ลูกค้า POS')) c.tags.push('ลูกค้า POS');
   c.auto.pos_wb = pos.cols && pos.cols.line ? 'pending' : 'nocol';
@@ -903,7 +1003,23 @@ function posLink(id, rec, by) {
   const detail = [rec.phones[0], rec.province].filter(Boolean).join(' · ');
   crmAddNote(id, (by === 'auto' ? '🔗 ระบบผูกกับ POS อัตโนมัติ: ' : '🔗 แอดมินผูกกับ POS: ') + rec.name + (detail ? ' (' + detail + ')' : '') + (by === 'auto' ? ' — เบอร์ตรง+ชื่อสอดคล้อง' : ''), by === 'auto' ? 'system' : 'admin').catch(() => {});
   console.log(`[pos] ${id.slice(0, 8)} linked -> ${rec.id} (${rec.name}) by=${by}`);
-  posWriteBack(rec, id).then((st) => { if (c.auto.pos_wb !== st) { c.auto.pos_wb = st; markDirty(); if (SB_ON) sbUpsert(c); } });
+  posWriteBack(rec, id).then((st) => { if (c.auto.pos_wb !== st) { c.auto.pos_wb = st; markDirty(); if (SB_ON) sbUpsert(c); } })
+    .then(() => posPushExtras(c, rec, 'fill')) // CRM มีพืช/พื้นที่ (เช่น กรอกในฟอร์ม) แต่แถว POS ยังว่าง -> เติมให้ POS
+    .catch(() => {});
+}
+// หลังโหลดรายชื่อ POS: ซิงก์พืช/พื้นที่สองทางให้ลูกค้าที่ผูกอยู่ (เติมเฉพาะฝั่งที่ว่าง ไม่ทับค่าที่กรอกไว้)
+async function posSyncExtras() {
+  const k = pos.cols;
+  if (!POS_ON || !k || !(k.crops || k.rai || k.areas)) return;
+  let toPos = 0, toCrm = 0;
+  for (const c of crm.values()) {
+    if (!c.pos_id) continue;
+    const rec = pos.byId.get(String(c.pos_id));
+    if (!rec) continue;
+    if (posFillCrmExtras(c, rec)) { toCrm++; c.updated_at = new Date().toISOString(); markDirty(); if (SB_ON) sbUpsert(c); }
+    if (toPos < 200 && await posPushExtras(c, rec, 'fill').catch(() => false)) toPos++;
+  }
+  if (toPos || toCrm) { console.log(`[pos] crops/area sync: -> POS ${toPos}, -> CRM ${toCrm}`); broadcast(); }
 }
 function posUnlink(id) {
   const c = crm.get(id);
@@ -913,8 +1029,9 @@ function posUnlink(id) {
   c.auto = c.auto || {};
   c.auto.pos_unlinked = [...new Set([...(c.auto.pos_unlinked || []), oldId])].slice(-10); // กันระบบผูกซ้ำคนเดิมโดยอัตโนมัติ
   const filled = c.auto.pos_filled || {};
-  for (const k of Object.keys(filled)) if (c[k] === filled[k]) c[k] = ''; // ล้างค่าที่ระบบเติมจาก POS (ถ้าแอดมินแก้เองแล้วจะไม่แตะ)
+  for (const k of Object.keys(filled)) if (c[k] === filled[k]) c[k] = k === 'farm_rai' ? null : ''; // ล้างค่าที่ระบบเติมจาก POS (ถ้าแอดมินแก้เองแล้วจะไม่แตะ)
   delete c.auto.pos_filled;
+  delete c.auto.pos_areas;
   c.pos_id = null; c.pos_name = ''; c.pos_linked_at = null; c.pos_link_by = null;
   c.tags = (c.tags || []).filter((t) => t !== 'ลูกค้า POS');
   delete c.auto.pos_wb;
@@ -953,7 +1070,7 @@ function posSearch(qraw) {
 function posStatus() {
   const linked = [...crm.values()].filter((c) => c.pos_id).length;
   const waiting = [...crm.values()].filter((c) => !c.pos_id && Array.isArray(c.pos_candidates) && c.pos_candidates.length).length;
-  return { on: POS_ON, table: POS_TABLE_RAW || '', rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, source: pos.source, cols: pos.cols ? { id: pos.cols.id, name: pos.cols.name, phone: pos.cols.phone, province: pos.cols.province, district: pos.cols.district, line: pos.cols.line, extra: pos.cols.extra, alt: pos.cols.alt } : null, writeback: !!(pos.cols && pos.cols.line), linked, waiting, refreshMin: POS_REFRESH_MIN, sbMissing: [...sbMissing] };
+  return { on: POS_ON, table: POS_TABLE_RAW || '', rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, source: pos.source, cols: pos.cols ? { id: pos.cols.id, name: pos.cols.name, phone: pos.cols.phone, province: pos.cols.province, district: pos.cols.district, subd: pos.cols.subd, line: pos.cols.line, crops: pos.cols.crops, rai: pos.cols.rai, areas: pos.cols.areas, extra: pos.cols.extra, alt: pos.cols.alt } : null, writeback: !!(pos.cols && pos.cols.line), extras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), linked, waiting, refreshMin: POS_REFRESH_MIN, sbMissing: [...sbMissing] };
 }
 function posInfoFor(c) {
   const rec = c.pos_id ? pos.byId.get(String(c.pos_id)) : null;
@@ -998,6 +1115,7 @@ async function posCreate(id, by) {
   }
   if (k.gender && !shopLike && (reg.gender === 'male' || reg.gender === 'female')) row[k.gender] = reg.gender;
   if (k.all.includes('entity_type') && !('entity_type' in POS_INSERT_DEFAULTS)) row.entity_type = shopLike ? 'organization' : 'person';
+  Object.assign(row, posExtrasBody(c)); // v3.6: พืชที่ปลูก / พื้นที่ (ไร่) / รายพืช ถ้าตาราง POS มี column
   for (const [kk, v] of Object.entries(POS_INSERT_DEFAULTS)) if (k.all.includes(kk)) row[kk] = v;
   try {
     const r = await sb('POST', `/${POS_TABLE}?select=*`, [row], Object.assign({ Prefer: 'return=representation' }, POS_HEADERS));
@@ -1160,7 +1278,10 @@ async function posUpdateRow(rec, fields) {
   const body = {};
   if (fields.phone !== undefined && k.phone[0]) body[k.phone[0]] = fields.phone || null;
   if (fields.province !== undefined && k.province) body[k.province] = fields.province || null;
+  if (fields.district !== undefined && k.district) body[k.district] = fields.district || null;
+  if (fields.subdistrict !== undefined && k.subd) body[k.subd] = fields.subdistrict || null;
   if (fields.name !== undefined && k.name.length === 1) body[k.name[0]] = fields.name;
+  if (fields.extras && typeof fields.extras === 'object') Object.assign(body, fields.extras); // v3.6: crops / farm_rai / crop_areas (column จริงของ POS)
   if (!Object.keys(body).length) return false;
   try {
     const r = await sb('PATCH', `/${POS_TABLE}?${encodeURIComponent(k.id)}=eq.${encodeURIComponent(rec.id)}`, body, Object.assign({ Prefer: 'return=minimal' }, POS_HEADERS));
@@ -1171,7 +1292,9 @@ async function posUpdateRow(rec, fields) {
       for (const p of rec.phones) { const arr = pos.byPhone.get(p) || []; arr.push(rec); pos.byPhone.set(p, arr); }
     }
     if (fields.province !== undefined) rec.province = fields.province || '';
+    if (fields.district !== undefined) rec.district = fields.district || '';
     if (fields.name !== undefined && k.name.length === 1) { rec.name = fields.name; rec.names[0] = fields.name; rec.nnames[0] = normName(fields.name); }
+    if (fields.extras) { const ex = posExtrasOfRow(fields.extras); if (k.crops in fields.extras) rec.crops = ex.crops; if (k.rai in fields.extras) rec.rai = ex.rai; if (k.areas in fields.extras) rec.areas = ex.areas; }
     return true;
   } catch (e) { console.log('[pos] update error:', e.message); return false; }
 }
@@ -1182,14 +1305,16 @@ async function regApply(id, c, d, opts) {
   const source = (opts && opts.source) || 'chat';
   const phone = d.phone && d.phone !== '-' ? d.phone : '';
   c.auto = c.auto || {};
-  const oldPhone = c.phone || '', oldProv = c.province || '';
-  if (isUpdate || !c.real_name || (c.auto.pos_filled && c.auto.pos_filled.real_name === c.real_name)) c.real_name = d.name;
+  const oldPhone = c.phone || '', oldProv = c.province || '', oldDist = c.district || '', oldSubd = c.auto.subdistrict || '';
+  const pf = c.auto.pos_filled || {};
+  if (isUpdate || !c.real_name || pf.real_name === c.real_name) c.real_name = d.name;
   if (phone) { c.phone = phone; c.auto.phone = isUpdate ? phone : (c.auto.phone || phone); }
   if (d.province && (isUpdate || !c.province)) c.province = d.province;
   if (d.district && (isUpdate || !c.district)) c.district = String(d.district).slice(0, 60);
-  if (d.crops && (isUpdate || !c.crops)) c.crops = String(d.crops).slice(0, 200);
+  if (d.crops && (isUpdate || !c.crops || pf.crops === c.crops)) c.crops = String(d.crops).slice(0, 200);
   if (d.subdistrict) c.auto.subdistrict = String(d.subdistrict).slice(0, 60);
   if (d.farm_rai != null && isFinite(d.farm_rai)) c.farm_rai = d.farm_rai;
+  if (d.crops) delete c.auto.pos_areas; // ลูกค้ากรอกพืชเองแล้ว ไม่ต้องใช้รายพืชจาก POS เป็นค่าตั้งต้นอีก
   c.auto.reg = { done_at: new Date().toISOString(), source: isUpdate ? source + '-update' : source, name: d.name, phone, province: d.province || '', type: d.type || '',
     first_name: d.first_name || '', last_name: d.last_name || '', gender: d.gender || '', subdistrict: d.subdistrict || '', areas: Array.isArray(d.areas) ? d.areas.slice(0, 20) : undefined, area_line: d.area_line || '' };
   c.updated_at = new Date().toISOString();
@@ -1203,16 +1328,23 @@ async function regApply(id, c, d, opts) {
     if (!pos.rows.length && !pos.loading) posRefresh().catch(() => {});
     if (c.pos_id) {
       posNote = isUpdate ? '' : 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
-      if (isUpdate) { // ผูก POS อยู่แล้ว -> อัปเดตเบอร์/จังหวัดในแถว POS ให้ตรงกัน
-        const rec = pos.byId.get(String(c.pos_id));
-        const fields = {};
+      const rec = pos.byId.get(String(c.pos_id));
+      const fields = {};
+      if (isUpdate) { // ผูก POS อยู่แล้ว -> อัปเดตเบอร์/จังหวัด/อำเภอ/ตำบลในแถว POS ให้ตรงกัน
         if (phone && phone !== oldPhone) fields.phone = phone;
         if (d.province && d.province !== oldProv) fields.province = d.province;
-        if (rec && Object.keys(fields).length) { const okU = await posUpdateRow(rec, fields); if (okU) posNote = 'อัปเดตข้อมูลสมาชิกในระบบเรียบร้อยแล้ว ✅'; }
+        if (d.district && d.district !== oldDist) fields.district = String(d.district).slice(0, 60);
+        if (d.subdistrict && d.subdistrict !== oldSubd) fields.subdistrict = String(d.subdistrict).slice(0, 60);
       }
+      // v3.6: พืช/พื้นที่ที่ลูกค้ากรอก -> เขียนลงแถว POS (ทับค่าเดิม เพราะเป็นข้อมูลล่าสุดจากลูกค้าเอง)
+      if (d.crops && rec) { const ex = posExtrasBody(c); if (Object.keys(ex).length && !posExtrasSame(rec, ex)) fields.extras = ex; }
+      if (rec && Object.keys(fields).length) { const okU = await posUpdateRow(rec, fields); if (okU && isUpdate) posNote = 'อัปเดตข้อมูลสมาชิกในระบบเรียบร้อยแล้ว ✅'; }
     } else {
       const m = phone ? posMatch(id) : null;
-      if (m && m.linked) posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
+      if (m && m.linked) {
+        posNote = 'พบข้อมูลของคุณในระบบสมาชิกของเราแล้ว ✅';
+        if (d.crops) { const rec = pos.byId.get(String(c.pos_id)); if (rec) await posPushExtras(c, rec, 'set').catch(() => {}); } // พืช/พื้นที่ที่เพิ่งกรอก -> ลงแถว POS ที่เพิ่งผูก
+      }
       else if (m && m.candidates && m.candidates.length) posNote = ''; // เบอร์ตรงกับรายชื่ออื่น -> ให้แอดมินยืนยัน (ไม่สร้างซ้ำ)
       else if (pos.cols) { const r = await posCreate(id, 'reg'); if (r.ok) posNote = 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว ✅'; }
     }
@@ -1274,11 +1406,15 @@ async function liffVerify(idToken, accessToken) {
 }
 function liffProfileFor(id, c, s) {
   const z = zoneInfo(c.province || '');
+  const ri = regInfo(s, c);
+  // ยังไม่เคยกรอกรายพืชในฟอร์ม แต่ POS มีรายพืช (crop_areas) -> ใช้เป็นค่าตั้งต้นในฟอร์ม
+  const pa = c.auto && Array.isArray(c.auto.pos_areas) ? c.auto.pos_areas : null;
+  if (pa && pa.length && !(ri.data && Array.isArray(ri.data.areas) && ri.data.areas.length)) ri.data = Object.assign({}, ri.data || {}, { areas: pa.map((a) => ({ name: a.name, rai: a.rai == null ? '' : String(a.rai), ngan: a.ngan == null ? '' : String(a.ngan) })) });
   return {
     real_name: c.real_name || '', phone: c.phone || (c.auto && c.auto.phone) || '', province: c.province || (c.auto && c.auto.province) || '', district: c.district || '',
     subdistrict: (c.auto && c.auto.subdistrict) || '', farm_rai: c.farm_rai == null ? null : c.farm_rai,
     crops: c.crops || (c.auto && c.auto.crops) || '', type: (c.auto && c.auto.reg && c.auto.reg.type) || '',
-    registered: regDone(c), reg: regInfo(s, c), pos: c.pos_id ? { linked: true, name: c.pos_name || '' } : { linked: false }, zone: z ? Object.assign({}, z, { rows: zoneTeamRows(z) }) : null
+    registered: regDone(c), reg: ri, pos: c.pos_id ? { linked: true, name: c.pos_name || '' } : { linked: false }, zone: z ? Object.assign({}, z, { rows: zoneTeamRows(z) }) : null
   };
 }
 // รับข้อมูลจากฟอร์ม -> ตรวจ -> บันทึก (regApply) -> คืนข้อความยืนยัน
@@ -2237,6 +2373,7 @@ function renderPos(p) {
     var l = p.linked;
     var meta = [l.phone ? '📱 ' + esc(l.phone) : '', [l.province, l.district].filter(Boolean).map(esc).join(' / ')].filter(Boolean).join(' · ');
     var ex = []; if (l.extra) for (var k in l.extra) if (l.extra[k]) ex.push(esc(l.extra[k]));
+    if (l.crops || l.rai != null) ex.push('🌱 ' + esc(l.crops || '-') + (l.rai != null ? ' · ' + esc(String(l.rai)) + ' ไร่' : ''));
     var wb = p.writeback === 'ok' ? ' · ส่ง LINE ID กลับ POS แล้ว ✓' : (p.writeback === 'fail' ? ' · ⚠️ ส่ง LINE ID กลับ POS ไม่สำเร็จ' : (p.writeback === 'nocol' ? '' : ''));
     h += '<div class="posbox">🔗 ผูกกับ POS แล้ว: <b>' + esc(l.name || l.id) + '</b>' + (meta ? '<br>' + meta : '') + (ex.length ? '<br>' + ex.join(' · ') : '')
       + '<br><small style="color:#55606b">' + (p.link_by === 'auto' ? 'ระบบผูกอัตโนมัติ (เบอร์ตรง+ชื่อสอดคล้อง)' : 'แอดมินผูกเอง') + (p.linked_at ? ' · ' + dayLabel(Date.parse(p.linked_at)) + ' ' + hhmm(Date.parse(p.linked_at)) : '') + wb + '</small>'
@@ -2875,7 +3012,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.5, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -2918,4 +3055,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.5 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
