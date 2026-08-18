@@ -1,5 +1,5 @@
 // ============================================================
-// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.4
+// LINE OA <-> Dify Bridge (Node.js สำหรับ Railway) — v3.5
 // บอท "น้องลัดดา ICPL LINE Chatbot"
 //
 // จุดเด่น:
@@ -53,6 +53,9 @@
 //     ข้อมูลลง CRM (real_name, phone, province, district, crops, farm_rai, auto.subdistrict, auto.reg.{gender,first_name,last_name,areas})
 //     และตาราง POS (name, first_name, last_name, gender, phone, province, district, subdistrict, entity_type, line_user_id)
 //     *** ต้อง deploy 3 ไฟล์คู่กัน: server.js, liff.html, thai_locations.json ***
+// 13. v3.5: Rich Menu (เมนูล่างแชท) สร้างจากหน้าแอดมินปุ่มเดียว "🧩 สร้าง Rich Menu ลงทะเบียน" — รูป richmenu.png (2500x843) คู่กับ server.js
+//     3 ปุ่ม: ลงทะเบียนสมาชิก (เปิดฟอร์ม LIFF / ถ้าไม่มี LIFF_ID = พิมพ์ "ลงทะเบียน") · ทีมงานในพื้นที่ (บอทตอบทีม ME/MR ตามจังหวัดที่ลงทะเบียน)
+//     · คุยกับแอดมิน — ตั้งเป็นเมนูเริ่มต้นของทุกคน และลบเมนูเก่าที่ระบบสร้างไว้ให้ (ใช้ LINE_CHANNEL_ACCESS_TOKEN ที่มีอยู่แล้ว)
 // 12. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
@@ -103,6 +106,7 @@ const STATE_DIR = process.env.STATE_DIR || RAILWAY_VOL || '/data';
 const HAS_VOLUME = !!RAILWAY_VOL && STATE_DIR.startsWith(RAILWAY_VOL); // ถาวรจริงเฉพาะเมื่อ Railway Attach Volume แล้ว (Railway ตั้ง RAILWAY_VOLUME_MOUNT_PATH ให้เอง) และ STATE_DIR ชี้เข้า Volume นั้น
 const DIFY_BASE = 'https://api.dify.ai/v1';
 const LINE_API = (process.env.LINE_API_BASE || 'https://api.line.me').replace(/\/+$/, ''); // override ได้เฉพาะตอนเทส
+const LINE_DATA_API = (process.env.LINE_DATA_API_BASE || process.env.LINE_API_BASE || 'https://api-data.line.me').replace(/\/+$/, ''); // อัปโหลดรูป rich menu
 const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
 const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
@@ -289,7 +293,7 @@ function request(method, url, headers, bodyObj) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const isHttp = u.protocol === 'http:';
-    const body = bodyObj == null ? null : (typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj)); // string = ส่งดิบ (เช่น form-urlencoded)
+    const body = bodyObj == null ? null : (typeof bodyObj === 'string' || Buffer.isBuffer(bodyObj) ? bodyObj : JSON.stringify(bodyObj)); // string/Buffer = ส่งดิบ (form-urlencoded / รูปภาพ)
     const opts = {
       hostname: u.hostname,
       port: u.port || (isHttp ? 80 : 443),
@@ -1331,6 +1335,63 @@ async function liffConfirmPush(id) {
   return { ok };
 }
 // หน้า LIFF (liff.html วางคู่กับ server.js) + ข้อมูลจังหวัด/อำเภอ/ตำบล (thai_locations.json — จาก kongvut/thai-province-data, MIT)
+// ---------- Rich Menu (v3.5): เมนูล่างแชท "ลงทะเบียนสมาชิก / ทีมงานในพื้นที่ / คุยกับแอดมิน" สร้างจากหน้าแอดมิน ----------
+const RICHMENU_NAME = 'nladda-register';
+function richMenuSpec() {
+  const regAction = LIFF_URL ? { type: 'uri', label: 'ลงทะเบียนสมาชิก', uri: LIFF_URL } : { type: 'message', label: 'ลงทะเบียนสมาชิก', text: 'ลงทะเบียน' };
+  return {
+    size: { width: 2500, height: 843 }, selected: true, name: RICHMENU_NAME + '-' + (LIFF_URL ? 'liff' : 'chat'), chatBarText: 'เมนู',
+    areas: [
+      { bounds: { x: 0, y: 0, width: 833, height: 843 }, action: regAction },
+      { bounds: { x: 833, y: 0, width: 834, height: 843 }, action: { type: 'message', label: 'ทีมงานในพื้นที่', text: 'ทีมงานในพื้นที่ของฉัน' } },
+      { bounds: { x: 1667, y: 0, width: 833, height: 843 }, action: { type: 'message', label: 'คุยกับแอดมิน', text: 'คุยกับแอดมิน' } }
+    ]
+  };
+}
+async function lineApi(method, path, body, extraHeaders) {
+  return request(method, LINE_API + path, Object.assign({ Authorization: `Bearer ${CH_TOKEN}` }, extraHeaders || {}), body);
+}
+async function richMenuList() {
+  const r = await lineApi('GET', '/v2/bot/richmenu/list');
+  const def = await lineApi('GET', '/v2/bot/user/all/richmenu');
+  return { ok: r.status === 200, menus: (r.data && r.data.richmenus) || [], defaultId: def.status === 200 && def.data ? def.data.richMenuId : null, error: r.status === 200 ? '' : `${r.status} ${JSON.stringify(r.data).slice(0, 160)}` };
+}
+async function richMenuDelete(id) {
+  const r = await lineApi('DELETE', '/v2/bot/richmenu/' + encodeURIComponent(id));
+  return r.status === 200;
+}
+// สร้าง rich menu + อัปโหลดรูป (richmenu.png คู่กับ server.js) + ตั้งเป็นเมนูเริ่มต้นของทุกคน + ลบเมนูเก่าที่เราสร้างไว้
+async function richMenuCreate() {
+  let img;
+  try { img = fs.readFileSync(pathmod.join(__dirname, 'richmenu.png')); } catch (e) { return { ok: false, error: 'ไม่พบไฟล์ richmenu.png บนเซิร์ฟเวอร์ (ต้อง deploy คู่กับ server.js)' }; }
+  const spec = richMenuSpec();
+  const c = await lineApi('POST', '/v2/bot/richmenu', spec);
+  if (c.status !== 200 || !c.data || !c.data.richMenuId) return { ok: false, error: `สร้างเมนูไม่สำเร็จ: ${c.status} ${JSON.stringify(c.data).slice(0, 200)}` };
+  const id = c.data.richMenuId;
+  const up = await request('POST', LINE_DATA_API + '/v2/bot/richmenu/' + encodeURIComponent(id) + '/content', { Authorization: `Bearer ${CH_TOKEN}`, 'Content-Type': 'image/png' }, img);
+  if (up.status !== 200) { await richMenuDelete(id).catch(() => {}); return { ok: false, error: `อัปโหลดรูปเมนูไม่สำเร็จ: ${up.status} ${JSON.stringify(up.data).slice(0, 200)}` }; }
+  const def = await lineApi('POST', '/v2/bot/user/all/richmenu/' + encodeURIComponent(id));
+  if (def.status !== 200) return { ok: false, richMenuId: id, error: `ตั้งเป็นเมนูเริ่มต้นไม่สำเร็จ: ${def.status} ${JSON.stringify(def.data).slice(0, 200)}` };
+  // ลบเมนูเก่าที่ระบบสร้างไว้ (ชื่อขึ้นต้น nladda-register) เพื่อไม่ให้รก
+  let removed = 0;
+  try {
+    const l = await richMenuList();
+    for (const m of l.menus) if (m.richMenuId !== id && String(m.name || '').startsWith(RICHMENU_NAME)) { if (await richMenuDelete(m.richMenuId)) removed++; }
+  } catch (_) {}
+  console.log(`[richmenu] created ${id} (${spec.name}) default=true removed_old=${removed}`);
+  return { ok: true, richMenuId: id, name: spec.name, liff: !!LIFF_URL, removed };
+}
+// ทีมงานในพื้นที่ (จากปุ่มเมนู) -> ตอบจากจังหวัดในโปรไฟล์ ไม่ต้องผ่าน Dify
+const TEAM_CMD_RX = /^(ขอ|ดู|อยากรู้)?(ทีมงาน|ทีมขาย|เจ้าหน้าที่|ผู้ดูแล|ผู้แทน)(ใน|ประจำ)?(พื้นที่|เขต)(ของฉัน|ของผม|ของหนู|ของเรา)?[\s.!]*$/;
+function teamReply(c) {
+  const prov = c && (c.province || (c.auto && c.auto.province)) || '';
+  if (!prov) return null;
+  const z = zoneInfo(prov);
+  if (!z) return `ขออภัยค่ะ ยังไม่พบข้อมูลทีมงานสำหรับ จ.${prov} 🙏 พิมพ์ "คุยกับแอดมิน" ได้เลยนะคะ เดี๋ยวเจ้าหน้าที่ติดต่อกลับค่ะ`;
+  const rows = zoneTeamRows(z);
+  return `📍 ทีมงานดูแลพื้นที่ จ.${prov} (เขต ${z.zone})\n` + rows.map((r) => `• ${r.name} ${r.phone}`).join('\n') + '\n\nโทรหรือทัก LINE ทีมงานได้เลยนะคะ 🌾';
+}
+
 let liffHtmlCache = null;
 function liffPage() {
   if (liffHtmlCache === null) {
@@ -1581,6 +1642,16 @@ async function handleEvent(ev) {
       if (c.auto.reg) c.auto.reg.confirmed = true;
       markDirty();
       await sendAnswer(s, ev, pushTarget, msgs, { system: 1 });
+      return;
+    }
+    // ปุ่มเมนู "ทีมงานในพื้นที่" -> ตอบทีม ME/MR ตามจังหวัดที่ลงทะเบียน (ยังไม่ลงทะเบียน -> ชวนลงทะเบียน)
+    if (ev.message.type === 'text' && TEAM_CMD_RX.test(text.trim())) {
+      const tr = teamReply(c);
+      if (tr) { await sendAnswer(s, ev, pushTarget, tr, { system: true }); return; }
+      const ask = 'น้องลัดดายังไม่ทราบจังหวัดของคุณลูกค้าค่ะ 🙏 ลงทะเบียนสั้นๆ ก่อนนะคะ แล้วจะบอกทีมงานที่ดูแลพื้นที่ของคุณให้ทันที';
+      if (liffOn) { await sendAnswer(s, ev, pushTarget, [ask].concat(liffButtonMsg('gate')), { system: true }); return; }
+      if (!s.reg) { regStart(s, ''); }
+      await sendAnswer(s, ev, pushTarget, [ask, regPrompt(s.reg.step, s)], { system: true });
       return;
     }
     // "ลงทะเบียนผ่านแชท" = ขอกรอกในแชทแทนฟอร์ม (สำรองเมื่อเปิด LIFF ไม่ได้)
@@ -1998,7 +2069,8 @@ function load(fromLogin) {
         : '🔗 POS: <b style="color:#0a9a4a">' + (p.rows || 0).toLocaleString('th-TH') + ' รายชื่อ</b>' + (p.loadedAt ? ' (อัปเดต ' + hhmm(p.loadedAt) + ')' : ' (กำลังโหลด…)') + (p.writeback ? ' · เขียน LINE ID กลับ POS: เปิด' : '') + ' · ');
     unreg = d.unregistered || 0;
     document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b>' + (d.regUi === 'liff' ? ' <span title="' + esc(d.liffUrl || '') + '">(ฟอร์ม LIFF)</span>' : ' (ถามในแชท)')
-      + (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว') + ' · ';
+      + (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว')
+      + ' · <span class="exp" id="rmbtn" title="สร้าง Rich Menu (เมนูล่างแชท): ลงทะเบียนสมาชิก / ทีมงานในพื้นที่ / คุยกับแอดมิน แล้วตั้งเป็นเมนูเริ่มต้นของทุกคน">🧩 สร้าง Rich Menu ลงทะเบียน</span> · ';
     cache = d.sessions;
     var pend = d.pending || 0;
     var cbEl = document.getElementById('cbcount');
@@ -2210,6 +2282,20 @@ function inviteAllUi() {
     alert('ส่งคำเชิญแล้ว ' + d.sent + ' แชท' + (d.failed ? ' · ส่งไม่ได้ ' + d.failed + ' แชท (บล็อก OA/โควต้า)' : '') + '\\nเมื่อลูกค้าตอบกลับ บอทจะเดินขั้นตอนลงทะเบียนต่อให้เอง');
     load();
   }).catch(function(e) { alert('ส่งไม่สำเร็จ: ' + e.message); load(); });
+}
+
+function richMenuUi() {
+  api('/admin/api/richmenu').then(function(d) {
+    var cur = (d.menus || []).find(function(m) { return m.richMenuId === d.defaultId; });
+    var msg = 'สร้าง Rich Menu (เมนูล่างแชท) 3 ปุ่ม: ลงทะเบียนสมาชิก' + (d.spec && d.spec.areas[0].action.type === 'uri' ? ' (เปิดฟอร์ม LIFF)' : ' (พิมพ์ "ลงทะเบียน" — ยังไม่ได้ตั้ง LIFF_ID)') + ' / ทีมงานในพื้นที่ / คุยกับแอดมิน\\nแล้วตั้งเป็นเมนูเริ่มต้นของลูกค้าทุกคน' + (cur ? '\\n\\n(เมนูปัจจุบัน: ' + cur.name + ' — จะถูกแทนที่)' : (d.menus && d.menus.length ? '\\n\\n(มีเมนูอื่นอยู่ ' + d.menus.length + ' รายการ เมนูที่ระบบสร้างไว้จะถูกลบ)' : ''));
+    if (!d.hasImage) { alert('ไม่พบ richmenu.png บนเซิร์ฟเวอร์ — ต้อง deploy คู่กับ server.js'); return; }
+    if (!confirm(msg)) return;
+    var el = document.getElementById('rmbtn'); if (el) el.textContent = '🧩 กำลังสร้าง…';
+    api('/admin/api/richmenu/create', { method: 'POST', body: '{}' }).then(function(r) {
+      alert('สร้าง Rich Menu แล้ว ✅\\n' + r.name + ' (' + r.richMenuId + ')' + (r.removed ? '\\nลบเมนูเก่า ' + r.removed + ' รายการ' : '') + '\\nลูกค้าเปิดแชทน้องลัดดาจะเห็นเมนูใหม่ทันที');
+      load();
+    }).catch(function(e) { alert('สร้างไม่สำเร็จ: ' + e.message); load(); });
+  }).catch(function(e) { alert('ตรวจสอบ Rich Menu ไม่ได้: ' + e.message); });
 }
 
 function regActionUi(action) {
@@ -2445,6 +2531,7 @@ document.getElementById('crmbtn').addEventListener('click', function() { toggleC
 document.getElementById('expbtn').addEventListener('click', exportCsv);
 document.getElementById('posst').addEventListener('click', function(e) {
   if (e.target && e.target.id === 'invbtn') inviteAllUi();
+  if (e.target && e.target.id === 'rmbtn') richMenuUi();
 });
 document.getElementById('crm').addEventListener('click', function(e) {
   var t = e.target;
@@ -2604,6 +2691,22 @@ function handleAdmin(req, res, path, body) {
     const id = data.id;
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     regInvite(id).then((r) => sendJson(res, r.ok ? 200 : 400, Object.assign({ ok: r.ok, error: r.err }, r.ok ? { reg: regInfo(sessions.get(id), crmGet(id)) } : {})));
+    return;
+  }
+  // ---- Rich menu ----
+  if (path === '/admin/api/richmenu' && req.method === 'GET') {
+    richMenuList().then((l) => sendJson(res, 200, Object.assign({ spec: richMenuSpec(), hasImage: fs.existsSync(pathmod.join(__dirname, 'richmenu.png')) }, l))).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+  if (path === '/admin/api/richmenu/create' && req.method === 'POST') {
+    richMenuCreate().then((r) => { console.log('[admin] richmenu create ->', JSON.stringify(r)); sendJson(res, r.ok ? 200 : 502, r); }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+  if (path === '/admin/api/richmenu/delete' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    if (!data.id) return sendJson(res, 400, { ok: false, error: 'missing id' });
+    richMenuDelete(String(data.id)).then((ok) => sendJson(res, ok ? 200 : 502, { ok })).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
     return;
   }
   if (path === '/admin/api/pos/create' && req.method === 'POST') {
@@ -2772,7 +2875,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.4, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.5, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -2815,4 +2918,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.4 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.5 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
