@@ -66,6 +66,10 @@
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
 //  LINE_CHANNEL_ACCESS_TOKEN  จาก LINE Developers -> Messaging API
 //  DIFY_API_KEY               จาก Dify -> แอปน้องลัดดา -> API Access (app-...)
+//  DIFY_TEST_API_KEY          (ไม่บังคับ) API key ของแอป Dify ตัวทดสอบ (เช่น "น้องลัดดา ทดลอง B (มี Jev)")
+//  DIFY_TEST_USER_IDS         (ไม่บังคับ) LINE userId/groupId ของคนทดสอบ คั่นด้วย , — เฉพาะ id เหล่านี้คุยกับแอปทดสอบ
+//                             ลูกค้าคนอื่นยังคุยกับแอปตัวจริงตามเดิม · ลบ id ออกแล้ว redeploy = กลับไปใช้ตัวจริง
+//                             แอปทดสอบต้องกด Publish ใน Dify ก่อน API จึงจะเห็นเวอร์ชันล่าสุด
 //  ADMIN_KEY                  รหัสผ่านหน้าแอดมิน (อังกฤษ/ตัวเลข)
 //  MUTE_MINUTES               (ไม่บังคับ) นาทีที่บอทเงียบเมื่อลูกค้าขอแอดมิน ค่าเริ่ม 60
 //  STATE_DIR                  (ไม่บังคับ) โฟลเดอร์เก็บไฟล์ถาวร ค่าเริ่ม /data
@@ -106,6 +110,11 @@ const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
 const CH_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
 const DIFY_KEY = process.env.DIFY_API_KEY || '';
+// ทดสอบแอป Dify ตัวใหม่กับ LINE OA เดิม: userId/groupId ที่อยู่ใน DIFY_TEST_USER_IDS จะคุยกับแอปของ DIFY_TEST_API_KEY
+// ลูกค้าคนอื่นยังคุยกับแอปตัวจริง (DIFY_API_KEY) ตามเดิม · บทสนทนาแยกกันเองเพราะ Dify ผูก conversation กับ API key ของแต่ละแอป
+const DIFY_TEST_KEY = (process.env.DIFY_TEST_API_KEY || '').trim();
+const DIFY_TEST_IDS = new Set((process.env.DIFY_TEST_USER_IDS || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x)));
+function difyKeyFor(id) { return (DIFY_TEST_KEY && DIFY_TEST_IDS.has(id)) ? DIFY_TEST_KEY : DIFY_KEY; }
 const ADMIN_KEY = (process.env.ADMIN_KEY || '').trim();
 const MUTE_MINUTES = Math.max(1, parseInt(process.env.MUTE_MINUTES || '60', 10) || 60);
 const RAILWAY_VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
@@ -334,7 +343,7 @@ function request(method, url, headers, bodyObj) {
 async function backfillFromDify(id, s) {
   try {
     const rc = await request('GET', `${DIFY_BASE}/conversations?user=${encodeURIComponent(id)}&limit=20`, {
-      Authorization: `Bearer ${DIFY_KEY}`
+      Authorization: `Bearer ${difyKeyFor(id)}`
     });
     if (rc.status !== 200 || !rc.data || !Array.isArray(rc.data.data)) {
       console.log(`[backfill] ${id.slice(0, 8)} conv list failed (${rc.status})`);
@@ -344,7 +353,7 @@ async function backfillFromDify(id, s) {
     const entries = [];
     for (const c of convs) {
       const rm = await request('GET', `${DIFY_BASE}/messages?user=${encodeURIComponent(id)}&conversation_id=${encodeURIComponent(c.id)}&limit=100`, {
-        Authorization: `Bearer ${DIFY_KEY}`
+        Authorization: `Bearer ${difyKeyFor(id)}`
       });
       if (rm.status === 200 && rm.data && Array.isArray(rm.data.data)) {
         for (const m of rm.data.data) {
@@ -398,7 +407,7 @@ function bootBackfill() {
 async function findConversation(sessionId) {
   try {
     const r = await request('GET', `${DIFY_BASE}/conversations?user=${encodeURIComponent(sessionId)}&limit=1`, {
-      Authorization: `Bearer ${DIFY_KEY}`
+      Authorization: `Bearer ${difyKeyFor(sessionId)}`
     });
     if (r.status === 200 && r.data && r.data.data && r.data.data[0]) return r.data.data[0].id || '';
   } catch (e) { console.log('findConversation error:', e.message); }
@@ -409,7 +418,7 @@ async function askDify(sessionId, text) {
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const conversationId = await findConversation(sessionId);
   try {
-    const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, {
+    const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${difyKeyFor(sessionId)}` }, {
       inputs: {},
       query: text,
       response_mode: 'blocking',
@@ -3012,7 +3021,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, difyTestUsers: DIFY_TEST_KEY ? DIFY_TEST_IDS.size : 0, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -3055,4 +3064,4 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
-server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}, difyTest=${DIFY_TEST_KEY ? DIFY_TEST_IDS.size : 0}) running on port ${PORT}`));
