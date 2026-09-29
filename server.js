@@ -417,13 +417,35 @@ async function askDify(sessionId, text) {
       conversation_id: conversationId,
       auto_generate_name: true
     });
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return r.data.answer.trim();
+    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardPhones(r.data.answer.trim(), sessionId);
     console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
   } catch (e) { console.log('dify fetch error:', e.message); }
   return '';
 }
 
 // ---------- LINE ----------
+// กันเบอร์โทรที่บอทแต่งเอง: เบอร์ในคำตอบต้องเป็นเบอร์ทีมขายใน ZONE_TEAM เท่านั้น ถ้าไม่ใช่ ตัดบรรทัดนั้นออก
+function knownPhones() {
+  const set = new Set();
+  for (const t of Object.values(ZONE_TEAM)) for (const m of String(t).match(/0\d[\d-]{7,11}/g) || []) set.add(m.replace(/\D/g, ''));
+  (process.env.EXTRA_PHONES || '').split(',').map((x) => x.replace(/\D/g, '')).filter(Boolean).forEach((x) => set.add(x));
+  return set;
+}
+const GUARD_PHONE_RX = /0\d{1,2}[-\s.]?\d{3}[-\s.]?\d{3,4}/g;
+function guardPhones(answer, sessionId) {
+  const ok = knownPhones();
+  const bad = [];
+  const lines = String(answer).split('\n').filter((line) => {
+    const found = (line.match(GUARD_PHONE_RX) || []).map((p) => p.replace(/\D/g, '')).filter((p) => p.length >= 9 && p.length <= 10);
+    const unknown = found.filter((p) => !ok.has(p));
+    if (unknown.length) { bad.push(...unknown); return false; }
+    return true;
+  });
+  if (!bad.length) return answer;
+  console.log(`[guard] ${String(sessionId).slice(0, 8)} removed unknown phone(s): ${bad.join(',')}`);
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n\nเบอร์ทีมงานที่ถูกต้อง พิมพ์ "ทีมงานในพื้นที่" หรือบอกจังหวัดของคุณลูกค้าได้เลยนะคะ';
+}
+
 // text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
 function lineMsgs(text) {
   return (Array.isArray(text) ? text : [text])
