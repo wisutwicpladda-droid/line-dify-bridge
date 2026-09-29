@@ -505,6 +505,69 @@ const ZONE_TEAM = {
   A09: 'ME สุชาดา ราชคม (โบว์) 098-8326952 · MR กัญญารัตน์ (นุ้ย) 080-0430977 / ศิรินาฏ (ปังหวาน) 063-2059082 / ภาณุพงษ์ (ท็อป) 063-2284037 / กาญจนาพร (ลูกเจี๊ยบ) 065-5255690',
   A10: 'ME พิรยา สินสุวรรณ์ (แป้ง) 063-2059063 · MR สุประวีณ์ บุญมี (ปอ) 063-2059068'
 };
+// v3.7: รายชื่อทีมขายดึงจาก Google Sheet "เบอร์ติดต่อรายเขต" (แก้ในชีทแล้วบอทเปลี่ยนตามเอง) — ดึงไม่ได้ใช้ค่าเดิมด้านบน
+const TEAM_SHEET_URL = process.env.TEAM_SHEET_URL || 'https://docs.google.com/spreadsheets/d/1V8urwZfZyAAMF8bMdKHhlWGqBPNAp5MDScKDPtRrBOk/gviz/tq?tqx=out:html&sheet=%E0%B9%80%E0%B8%9A%E0%B8%AD%E0%B8%A3%E0%B9%8C%E0%B8%95%E0%B8%B4%E0%B8%94%E0%B8%95%E0%B9%88%E0%B8%AD%E0%B8%A3%E0%B8%B2%E0%B8%A2%E0%B9%80%E0%B8%82%E0%B8%95';
+const TEAM_SHEET_MIN = Math.max(1, parseInt(process.env.TEAM_SHEET_MIN || '10', 10) || 10);
+const teamSheet = { ok: false, zones: 0, people: 0, at: 0, error: '' };
+function fetchText(url, left) {
+  left = left == null ? 3 : left;
+  return new Promise((resolve, reject) => {
+    const rq = https.get(url, { timeout: 15000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && left > 0) {
+        res.resume();
+        return resolve(fetchText(new URL(res.headers.location, url).toString(), left - 1));
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+    });
+    rq.on('error', reject);
+    rq.on('timeout', () => rq.destroy(new Error('timeout')));
+  });
+}
+function htmlText(s) {
+  return String(s).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+}
+function parseTeamSheet(html) {
+  const team = {};
+  let zone = '';
+  const trRx = /<tr[^>]*>([\s\S]*?)<\/tr>/g;
+  let m;
+  while ((m = trRx.exec(html))) {
+    const r = [];
+    const tdRx = /<td[^>]*>([\s\S]*?)<\/td>/g;
+    let c;
+    while ((c = tdRx.exec(m[1]))) r.push(htmlText(c[1]));
+    while (r.length < 7) r.push('');
+    if (r[0] === 'เขต' || !r.slice(0, 7).some(Boolean)) continue;
+    if (/^A\d{2}$/.test(r[0])) { zone = r[0]; team[zone] = { me: [], mr: [] }; if (r[1]) team[zone].me.push((r[1] + ' ' + r[2]).trim()); }
+    if (r[4] && zone && team[zone]) team[zone].mr.push((r[4] + ' ' + r[5]).trim());
+  }
+  return team;
+}
+async function refreshTeamSheet() {
+  try {
+    const r = await fetchText(TEAM_SHEET_URL);
+    if (r.status !== 200) throw new Error('HTTP ' + r.status);
+    const team = parseTeamSheet(r.text);
+    const zones = Object.keys(team);
+    if (zones.length < 5) throw new Error('found only ' + zones.length + ' zones');
+    let people = 0;
+    for (const z of zones) {
+      const t = team[z];
+      people += t.me.length + t.mr.length;
+      ZONE_TEAM[z] = (t.me.length ? 'ME ' + t.me.join(' / ') : '') + (t.me.length && t.mr.length ? ' · ' : '') + (t.mr.length ? 'MR ' + t.mr.join(' / ') : '');
+    }
+    Object.assign(teamSheet, { ok: true, zones: zones.length, people, at: Date.now(), error: '' });
+    console.log('[team] sheet loaded: ' + zones.length + ' zones, ' + people + ' people');
+  } catch (e) {
+    Object.assign(teamSheet, { ok: false, error: e.message });
+    console.log('[team] sheet load failed (keep previous list): ' + e.message);
+  }
+}
+setTimeout(() => { refreshTeamSheet().catch(() => {}); }, 1500);
+setInterval(() => { refreshTeamSheet().catch(() => {}); }, TEAM_SHEET_MIN * 60000);
+
 const PROVINCE_RX = new RegExp('(' + Object.keys(ZONE_OF).sort((a, b) => b.length - a.length).join('|') + ')');
 // จังหวัดทั้งหมด (รวมที่ไม่อยู่ในเขตขาย) + ชื่อย่อ -> ชื่อเต็ม สำหรับตรวจตอนลงทะเบียน
 const PROVINCE_ALIAS = { 'กรุงเทพ': 'กรุงเทพมหานคร', 'กทม': 'กรุงเทพมหานคร', 'กทม.': 'กรุงเทพมหานคร', 'โคราช': 'นครราชสีมา', 'อยุธยา': 'พระนครศรีอยุธยา', 'อุบล': 'อุบลราชธานี', 'สุราษ': 'สุราษฎร์ธานี', 'สุราษฎร์': 'สุราษฎร์ธานี', 'นครศรี': 'นครศรีธรรมราช', 'ประจวบ': 'ประจวบคีรีขันธ์', 'หนองบัว': 'หนองบัวลำภู', 'ปราจีน': 'ปราจีนบุรี', 'สมุทรสาคร': 'สมุทรสาคร' };
@@ -3036,7 +3099,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
