@@ -101,6 +101,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const pathmod = require('path');
 const zlib = require('zlib');
+const kbSync = require('./kb_sync'); // v3.8: sync ข้อมูลสินค้าจาก Google Sheet เข้า Dify KB
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -506,7 +507,7 @@ const ZONE_TEAM = {
   A10: 'ME พิรยา สินสุวรรณ์ (แป้ง) 063-2059063 · MR สุประวีณ์ บุญมี (ปอ) 063-2059068'
 };
 // v3.7: รายชื่อทีมขายดึงจาก Google Sheet "เบอร์ติดต่อรายเขต" (แก้ในชีทแล้วบอทเปลี่ยนตามเอง) — ดึงไม่ได้ใช้ค่าเดิมด้านบน
-const TEAM_SHEET_URL = process.env.TEAM_SHEET_URL || 'https://docs.google.com/spreadsheets/d/1V8urwZfZyAAMF8bMdKHhlWGqBPNAp5MDScKDPtRrBOk/gviz/tq?tqx=out:html&sheet=%E0%B9%80%E0%B8%9A%E0%B8%AD%E0%B8%A3%E0%B9%8C%E0%B8%95%E0%B8%B4%E0%B8%94%E0%B8%95%E0%B9%88%E0%B8%AD%E0%B8%A3%E0%B8%B2%E0%B8%A2%E0%B9%80%E0%B8%82%E0%B8%95';
+const TEAM_SHEET_URL = process.env.TEAM_SHEET_URL || 'https://docs.google.com/spreadsheets/d/1V8urwZfZyAAMF8bMdKHhlWGqBPNAp5MDScKDPtRrBOk/gviz/tq?tqx=out:html&gid=606075717';
 const TEAM_SHEET_MIN = Math.max(1, parseInt(process.env.TEAM_SHEET_MIN || '10', 10) || 10);
 const teamSheet = { ok: false, zones: 0, people: 0, at: 0, error: '' };
 function fetchText(url, left) {
@@ -2841,6 +2842,12 @@ function handleAdmin(req, res, path, body) {
   if (authed === null) return sendJson(res, 503, { ok: false, error: 'ADMIN_KEY not set' });
   if (!authed) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
 
+  // v3.8: สั่ง sync สินค้าจาก Google Sheet เข้า KB ทันที
+  if (path === '/admin/api/kb-sync' && req.method === 'POST') {
+    kbSync.syncOnce(true).then((st) => sendJson(res, st.ok ? 200 : 502, Object.assign({}, st))).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+    return;
+  }
+
   if (path === '/admin/api/token' && req.method === 'POST') {
     const token = crypto.randomBytes(16).toString('hex');
     sseTokens.set(token, Date.now() + 24 * 3600000);
@@ -3099,7 +3106,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -3142,4 +3149,5 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 setTimeout(bootBackfill, 3000);
+kbSync.start();
 server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
