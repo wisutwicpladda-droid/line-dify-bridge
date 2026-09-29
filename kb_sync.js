@@ -59,7 +59,8 @@ const CAT = { Insecticide: 'สารกำจัดแมลง', Fungicide: '�
 const PKG = { 'ถุงฟอยด์': 'ถุงฟอยล์', 'แกลอน': 'แกลลอน' };
 const TO_BASE = { 'ซีซี': 1, 'มล.': 1, 'ลิตร': 1000, 'กรัม': 1, 'กิโลกรัม': 1000, 'เม็ด': 1 };
 const KIND = { 'ซีซี': 'v', 'มล.': 'v', 'ลิตร': 'v', 'กรัม': 'w', 'กิโลกรัม': 'w', 'เม็ด': 'p' };
-const STRAT_LEVEL = { 'expand': 1, 'skyrocket': 2, 'natural': 3, 'standard': 4, 'cosmic-star': 5 };
+// ลำดับแนะนำ (ผู้ใช้กำหนด 29 ก.ย.): Expand > Skyrocket > Natural > Cosmic-Star > Standard
+const STRAT_LEVEL = { 'expand': 1, 'skyrocket': 2, 'natural': 3, 'cosmic-star': 4, 'standard': 5 };
 
 function buildText(master, usage, packages) {
   const hm = master[0].length, mrows = master.slice(1).filter((r) => s(r[0]).startsWith('P'));
