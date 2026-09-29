@@ -418,7 +418,7 @@ async function askDify(sessionId, text) {
       conversation_id: conversationId,
       auto_generate_name: true
     });
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardInternal(guardPhones(r.data.answer.trim(), sessionId), sessionId);
+    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardOrder(guardInternal(guardPhones(r.data.answer.trim(), sessionId), sessionId), sessionId);
     console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
   } catch (e) { console.log('dify fetch error:', e.message); }
   return '';
@@ -446,6 +446,47 @@ function guardPhones(answer, sessionId) {
   console.log(`[guard] ${String(sessionId).slice(0, 8)} removed unknown phone(s): ${bad.join(',')}`);
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n\nเบอร์ทีมงานที่ถูกต้อง พิมพ์ "ทีมงานในพื้นที่" หรือบอกจังหวัดของคุณลูกค้าได้เลยนะคะ';
 }
+
+
+// v3.10: เรียงสินค้าในคำตอบตามระดับแนะนำภายใน (Expand > Skyrocket > Natural > Cosmic-Star > Standard)
+// LLM เรียงเองไม่ตรงทุกครั้ง จึงจัดใหม่ก่อนส่ง: ย้ายเฉพาะก้อนสินค้าที่ติดกัน ข้อความเปิด หัวข้อคั่น และคำแนะนำท้ายอยู่ที่เดิม
+const ORDER_CONT_RX = /^(ใช้กับ|อัตรา|วิธีใช้|ระยะ|พ่น|หว่าน|คนพ่น|โดรน|ผสม|ขนาด|บรรจุ|กลุ่ม|สารกลุ่ม|\(|[-•])/;
+const ORDER_NUM_RX = /^(\s*)(\d+)([.)]\s*)/;
+function orderProductAt(par) {
+  const first = String(par).split('\n')[0].replace(/^\s*(\d+[.)]\s*)?[-•*_\s]*/, '');
+  return kbSync.levels.names.find((n) => first.startsWith(n)) || '';
+}
+function guardOrder(answer, sessionId) {
+  const L = kbSync.levels;
+  if (!L.names.length) return answer;
+  const pars = String(answer).split(/\n[ \t]*\n/);
+  const out = [];
+  let moved = false, i = 0;
+  while (i < pars.length) {
+    if (!orderProductAt(pars[i])) { out.push(pars[i]); i++; continue; }
+    const run = [];
+    while (i < pars.length) {
+      const name = orderProductAt(pars[i]);
+      if (name) { run.push({ name, level: L.map[name], parts: [pars[i]] }); i++; continue; }
+      if (ORDER_CONT_RX.test(pars[i].trim())) { run[run.length - 1].parts.push(pars[i]); i++; continue; }
+      break;
+    }
+    let sorted = run;
+    if (run.length > 1 && run.every((b) => b.level)) {
+      sorted = run.map((b, k) => ({ b, k })).sort((x, y) => x.b.level - y.b.level || x.k - y.k).map((x) => x.b);
+      if (sorted.some((b, k) => b !== run[k])) {
+        moved = true;
+        const nums = run.map((b) => (b.parts[0].match(ORDER_NUM_RX) || [])[2]).filter(Boolean).map(Number);
+        if (nums.length === run.length) sorted.forEach((b, k) => { b.parts[0] = b.parts[0].replace(ORDER_NUM_RX, (m, sp, n, dot) => sp + (nums[0] + k) + dot); });
+      }
+    }
+    sorted.forEach((b) => out.push(...b.parts));
+  }
+  if (!moved) return answer;
+  console.log(`[order] ${String(sessionId).slice(0, 8)} reordered products by level`);
+  return out.join('\n\n');
+}
+
 
 // text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
 // v3.9: ชื่อกลุ่มสินค้าภายใน (Expand, Skyrocket, Natural, Standard, Cosmic-Star) และระดับแนะนำ ห้ามหลุดถึงลูกค้า
@@ -3119,7 +3160,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.9, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.10', persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

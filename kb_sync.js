@@ -16,6 +16,8 @@ const OVERRIDES = {};
 (process.env.NAME_OVERRIDES || 'โซนิก=ทริปสัน').split(',').forEach((p) => { const [a, b] = p.split('=').map((x) => (x || '').trim()); if (a && b) OVERRIDES[a] = b; });
 
 const state = { enabled: !!KEY, ok: false, at: 0, products: 0, chars: 0, hash: '', docId: '', action: '', error: '' };
+// v3.10: ระดับแนะนำของสินค้าแต่ละชื่อ ใช้เรียงสินค้าในคำตอบก่อนส่งถึงลูกค้า (server.js guardOrder)
+const levels = { map: {}, names: [], at: 0 };
 
 function get(url, left) {
   left = left == null ? 4 : left;
@@ -67,7 +69,7 @@ function buildText(master, usage, packages) {
   const U = {}, P = {};
   usage.slice(1).forEach((r) => { const id = s(r[1]); if (id) (U[id] = U[id] || []).push(r); });
   packages.slice(1).forEach((r) => { const id = s(r[1]); if (id) (P[id] = P[id] || []).push(r); });
-  const blocks = [];
+  const blocks = [], lv = {};
   for (const r of mrows) {
     const id = s(r[0]); let name = s(r[1]).replace(/\s*\(ไม่มีรูป\)\s*/g, '').trim();
     const oldName = OVERRIDES[name] ? name : ''; if (oldName) name = OVERRIDES[name];
@@ -77,6 +79,7 @@ function buildText(master, usage, packages) {
     const crops = [...new Set(withTarget.map((u) => u.crop || u.group))];
     const targets = [...new Set(withTarget.flatMap((u) => u.target.split(/\s*,\s*/)).filter(Boolean))];
     const L = [];
+    if (STRAT_LEVEL[strat.toLowerCase()]) lv[name] = STRAT_LEVEL[strat.toLowerCase()];
     L.push(name + (common ? ' (' + common + ')' : '') + (oldName ? ' — ชื่อเดิม ' + oldName : ''));
     L.push('รหัสสินค้า: ' + id);
     // v3.9: ชื่อกลุ่มสินค้า (Expand/Skyrocket/...) เป็นข้อมูลภายใน ห้ามเขียนลง KB ใส่เป็นเลขลำดับแทน
@@ -146,7 +149,7 @@ function buildText(master, usage, packages) {
     }
     blocks.push(L.join('\n').replace(/\n{3,}/g, '\n\n').trim());
   }
-  return { text: blocks.join('\n' + SEP + '\n'), products: blocks.length };
+  return { text: blocks.join('\n' + SEP + '\n'), products: blocks.length, levels: lv };
 }
 
 async function fetchSheets() {
@@ -164,8 +167,9 @@ async function syncOnce(force) {
   if (!KEY) { state.error = 'DIFY_DATASET_KEY not set'; return state; }
   try {
     const sh = await fetchSheets();
-    const { text, products } = buildText(sh.master, sh.usage, sh.packages);
+    const { text, products, levels: lv } = buildText(sh.master, sh.usage, sh.packages);
     if (products < 50) throw new Error('found only ' + products + ' products, skip');
+    setLevels(lv);
     const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
     if (!force && hash === state.hash && state.docId) { Object.assign(state, { ok: true, at: Date.now(), action: 'unchanged', error: '' }); return state; }
     const rule = { mode: 'custom', rules: { pre_processing_rules: [{ id: 'remove_extra_spaces', enabled: false }, { id: 'remove_urls_emails', enabled: false }], segmentation: { separator: SEP, max_tokens: 4000 } } };
@@ -196,4 +200,10 @@ function start() {
   setInterval(() => syncOnce(false), SYNC_MIN * 60000);
 }
 
-module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state };
+function setLevels(lv) {
+  levels.map = lv || {};
+  levels.names = Object.keys(levels.map).sort((a, b) => b.length - a.length); // ชื่อยาวก่อน กัน "นาแดน" ชนกับ "นาแดน 6 จี"
+  levels.at = Date.now();
+}
+
+module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels };
