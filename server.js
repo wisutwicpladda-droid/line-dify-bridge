@@ -418,7 +418,7 @@ async function askDify(sessionId, text) {
       conversation_id: conversationId,
       auto_generate_name: true
     });
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardPhones(r.data.answer.trim(), sessionId);
+    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardInternal(guardPhones(r.data.answer.trim(), sessionId), sessionId);
     console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
   } catch (e) { console.log('dify fetch error:', e.message); }
   return '';
@@ -448,6 +448,19 @@ function guardPhones(answer, sessionId) {
 }
 
 // text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
+// v3.9: ชื่อกลุ่มสินค้าภายใน (Expand, Skyrocket, Natural, Standard, Cosmic-Star) และระดับแนะนำ ห้ามหลุดถึงลูกค้า
+// Natural/Standard เป็นคำทั่วไป จึงตัดเฉพาะเมื่ออยู่หลังคำว่า กลุ่ม/ระดับ
+const INTERNAL_RX = /\b(expand|skyrocket|cosmic[\s-]?star)\b|(กลุ่ม|ระดับ)\s*(สินค้า\s*)?(natural|standard)\b|ระดับแนะนำ|ลำดับแนะนำภายใน/i;
+const INTERNAL_REPLY = 'เรื่องนี้เป็นข้อมูลภายในของบริษัท น้องลัดดาให้ข้อมูลไม่ได้ค่ะ';
+function guardInternal(answer, sessionId) {
+  const lines = String(answer).split('\n');
+  const kept = lines.filter((line) => !INTERNAL_RX.test(line));
+  if (kept.length === lines.length) return answer;
+  console.log(`[guard] ${String(sessionId).slice(0, 8)} removed ${lines.length - kept.length} line(s) with internal group names`);
+  const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return out || INTERNAL_REPLY;
+}
+
 function lineMsgs(text) {
   return (Array.isArray(text) ? text : [text])
     .filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()))
@@ -3106,7 +3119,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.6, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: 3.9, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

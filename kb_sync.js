@@ -59,6 +59,7 @@ const CAT = { Insecticide: 'สารกำจัดแมลง', Fungicide: '�
 const PKG = { 'ถุงฟอยด์': 'ถุงฟอยล์', 'แกลอน': 'แกลลอน' };
 const TO_BASE = { 'ซีซี': 1, 'มล.': 1, 'ลิตร': 1000, 'กรัม': 1, 'กิโลกรัม': 1000, 'เม็ด': 1 };
 const KIND = { 'ซีซี': 'v', 'มล.': 'v', 'ลิตร': 'v', 'กรัม': 'w', 'กิโลกรัม': 'w', 'เม็ด': 'p' };
+const STRAT_LEVEL = { 'expand': 1, 'skyrocket': 2, 'natural': 3, 'standard': 4, 'cosmic-star': 5 };
 
 function buildText(master, usage, packages) {
   const hm = master[0].length, mrows = master.slice(1).filter((r) => s(r[0]).startsWith('P'));
@@ -77,7 +78,8 @@ function buildText(master, usage, packages) {
     const L = [];
     L.push(name + (common ? ' (' + common + ')' : '') + (oldName ? ' — ชื่อเดิม ' + oldName : ''));
     L.push('รหัสสินค้า: ' + id);
-    if (strat) L.push('กลุ่มสินค้า: ' + strat);
+    // v3.9: ชื่อกลุ่มสินค้า (Expand/Skyrocket/...) เป็นข้อมูลภายใน ห้ามเขียนลง KB ใส่เป็นเลขลำดับแทน
+    if (STRAT_LEVEL[strat.toLowerCase()]) L.push('ลำดับแนะนำภายใน (ห้ามบอกลูกค้า): ' + STRAT_LEVEL[strat.toLowerCase()]);
     if (status) L.push('สถานะการขาย: ' + status);
     L.push('สรุป: ' + name + ' คือ' + (CAT[cat] || cat) + (crops.length ? ' ใช้กับ ' + crops.join(' ') : '') + (targets.length ? ' เป้าหมาย ' + targets.join(' ') : ''));
     L.push('');
@@ -194,4 +196,3 @@ function start() {
 }
 
 module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state };
-
