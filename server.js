@@ -494,7 +494,8 @@ function guardOrder(answer, sessionId) {
 const PIMG_DIR = pathmod.join(__dirname, 'product_images');
 const PIMG_ON = (process.env.PRODUCT_IMAGES || 'on') !== 'off';
 const PIMG_MAX = Math.min(10, Math.max(1, parseInt(process.env.PRODUCT_IMG_MAX || '3', 10) || 3));
-const PIMG_BG = process.env.PRODUCT_IMG_BG || '#EAF6EC';
+const PIMG_BG = process.env.PRODUCT_IMG_BG || '#00000000'; // v3.11.1: พื้นโปร่งใส เห็นแค่ตัวสินค้า
+const PIMG_MODE = process.env.PRODUCT_IMG_MODE === 'image' ? 'image' : 'flex'; // image = ส่งเป็นรูปภาพธรรมดา (สำรอง)
 let PIMG = {};
 try { PIMG = JSON.parse(fs.readFileSync(pathmod.join(PIMG_DIR, 'index.json'), 'utf8')); } catch (e) { console.log('[pimg] index.json not found:', e.message); }
 const PIMG_NAMES = Object.keys(PIMG).sort((a, b) => b.length - a.length);
@@ -515,12 +516,16 @@ function productImageMsg(answer) {
   const seen = new Set();
   const names = productsInAnswer(answer).filter((n) => !seen.has(PIMG[n]) && seen.add(PIMG[n])).slice(0, PIMG_MAX);
   if (!names.length) return null;
+  if (PIMG_MODE === 'image') {
+    const imgs = names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
+    return imgs;
+  }
+  // แสดงเฉพาะรูปสินค้า ไม่มีข้อความ และพื้นการ์ดโปร่งใส
   const bubbles = names.map((n) => ({
     type: 'bubble', size: 'kilo',
     styles: { body: { backgroundColor: PIMG_BG } },
-    body: { type: 'box', layout: 'vertical', paddingAll: '12px', contents: [
-      { type: 'image', url: PUBLIC_URL + '/img/p/' + PIMG[n], size: 'full', aspectRatio: '1:1', aspectMode: 'fit' },
-      { type: 'text', text: n, weight: 'bold', size: 'md', align: 'center', wrap: true, margin: 'md', color: '#1B5E20' }
+    body: { type: 'box', layout: 'vertical', paddingAll: '0px', backgroundColor: PIMG_BG, contents: [
+      { type: 'image', url: PUBLIC_URL + '/img/p/' + PIMG[n], size: 'full', aspectRatio: '3:4', aspectMode: 'fit', backgroundColor: PIMG_BG }
     ] }
   }));
   const msg = { type: 'flex', altText: 'รูปสินค้า: ' + names.join(', '), contents: bubbles.length === 1 ? bubbles[0] : { type: 'carousel', contents: bubbles } };
@@ -2059,7 +2064,7 @@ async function handleEvent(ev) {
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
   const pimg = productImageMsg(answer); // v3.11: การ์ดรูปสินค้า
-  if (pimg) msgs.push(pimg);
+  if (pimg) msgs.push(...[].concat(pimg).slice(0, 3));
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
   if (stype === 'user' && REG_MODE === 'soft') {
     const c = crmGet(sessionId);
@@ -3218,7 +3223,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.11', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.11.1', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
