@@ -488,6 +488,56 @@ function guardOrder(answer, sessionId) {
 }
 
 
+
+// v3.11: รูปสินค้า (product_images/ + index.json ชื่อสินค้า -> ไฟล์) แนบเป็นการ์ดพื้นเขียวอ่อนต่อท้ายคำตอบ
+// รูปเป็น PNG พื้นโปร่งใส จึงวางบนพื้นการ์ดสีเขียวอ่อน ไม่มีพื้นขาว · สินค้าที่ยังไม่เปิดตัวไม่มีรูปในโฟลเดอร์นี้
+const PIMG_DIR = pathmod.join(__dirname, 'product_images');
+const PIMG_ON = (process.env.PRODUCT_IMAGES || 'on') !== 'off';
+const PIMG_MAX = Math.min(10, Math.max(1, parseInt(process.env.PRODUCT_IMG_MAX || '3', 10) || 3));
+const PIMG_BG = process.env.PRODUCT_IMG_BG || '#EAF6EC';
+let PIMG = {};
+try { PIMG = JSON.parse(fs.readFileSync(pathmod.join(PIMG_DIR, 'index.json'), 'utf8')); } catch (e) { console.log('[pimg] index.json not found:', e.message); }
+const PIMG_NAMES = Object.keys(PIMG).sort((a, b) => b.length - a.length);
+const pimgMsgs = new WeakSet();
+function productsInAnswer(answer) {
+  let t = String(answer);
+  const hits = [];
+  for (const n of PIMG_NAMES) {
+    let i = t.indexOf(n);
+    while (i >= 0) { hits.push({ n, i }); t = t.slice(0, i) + ' '.repeat(n.length) + t.slice(i + n.length); i = t.indexOf(n); }
+  }
+  hits.sort((a, b) => a.i - b.i);
+  return [...new Set(hits.map((h) => h.n))];
+}
+function productImageMsg(answer) {
+  if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return null;
+  if (/1669|โรงพยาบาล/.test(answer)) return null; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
+  const seen = new Set();
+  const names = productsInAnswer(answer).filter((n) => !seen.has(PIMG[n]) && seen.add(PIMG[n])).slice(0, PIMG_MAX);
+  if (!names.length) return null;
+  const bubbles = names.map((n) => ({
+    type: 'bubble', size: 'kilo',
+    styles: { body: { backgroundColor: PIMG_BG } },
+    body: { type: 'box', layout: 'vertical', paddingAll: '12px', contents: [
+      { type: 'image', url: PUBLIC_URL + '/img/p/' + PIMG[n], size: 'full', aspectRatio: '1:1', aspectMode: 'fit' },
+      { type: 'text', text: n, weight: 'bold', size: 'md', align: 'center', wrap: true, margin: 'md', color: '#1B5E20' }
+    ] }
+  }));
+  const msg = { type: 'flex', altText: 'รูปสินค้า: ' + names.join(', '), contents: bubbles.length === 1 ? bubbles[0] : { type: 'carousel', contents: bubbles } };
+  pimgMsgs.add(msg);
+  return msg;
+}
+function servePimg(res, path) {
+  const f = path.slice('/img/p/'.length);
+  if (!/^p\d{3}\.png$/.test(f) || !Object.values(PIMG).includes(f)) { res.writeHead(404); return res.end(); }
+  fs.readFile(pathmod.join(PIMG_DIR, f), (err, buf) => {
+    if (err) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Content-Length': buf.length });
+    res.end(buf);
+  });
+}
+
+
 // text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
 // v3.9: ชื่อกลุ่มสินค้าภายใน (Expand, Skyrocket, Natural, Standard, Cosmic-Star) และระดับแนะนำ ห้ามหลุดถึงลูกค้า
 // Natural/Standard เป็นคำทั่วไป จึงตัดเฉพาะเมื่ออยู่หลังคำว่า กลุ่ม/ระดับ
@@ -1804,7 +1854,12 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
   const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
   arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || '(ข้อความแบบปุ่ม)') : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
-  const ok = await lineReply(ev.replyToken, arr);
+  let ok = await lineReply(ev.replyToken, arr);
+  if (!ok && arr.some((m) => pimgMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ
+    console.log('[pimg] reply with images failed, retry text only');
+    text = arr.filter((m) => !pimgMsgs.has(m));
+    ok = await lineReply(ev.replyToken, text);
+  }
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
     const pushed = await linePush(fallbackTo, text);
     console.log(`[send] reply=failed push=${pushed}`);
@@ -2003,6 +2058,8 @@ async function handleEvent(ev) {
   let answer = await askDify(sessionId, text);
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
+  const pimg = productImageMsg(answer); // v3.11: การ์ดรูปสินค้า
+  if (pimg) msgs.push(pimg);
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
   if (stype === 'user' && REG_MODE === 'soft') {
     const c = crmGet(sessionId);
@@ -3135,6 +3192,7 @@ function handleAdmin(req, res, path, body) {
 // ---------- Server ----------
 const server = http.createServer((req, res) => {
   const path = (req.url || '/').split('?')[0];
+  if (req.method === 'GET' && path.startsWith('/img/p/')) return servePimg(res, path);
 
   if (req.method === 'GET' && path === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -3160,7 +3218,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.10', persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.11', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
