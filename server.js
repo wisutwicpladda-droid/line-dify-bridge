@@ -495,7 +495,7 @@ const PIMG_DIR = pathmod.join(__dirname, 'product_images');
 const PIMG_ON = (process.env.PRODUCT_IMAGES || 'on') !== 'off';
 const PIMG_MAX = Math.min(10, Math.max(1, parseInt(process.env.PRODUCT_IMG_MAX || '3', 10) || 3));
 const PIMG_BG = process.env.PRODUCT_IMG_BG || '#00000000'; // v3.11.1: พื้นโปร่งใส เห็นแค่ตัวสินค้า
-const PIMG_MODE = process.env.PRODUCT_IMG_MODE === 'image' ? 'image' : 'flex'; // image = ส่งเป็นรูปภาพธรรมดา (สำรอง)
+const PIMG_MODE = process.env.PRODUCT_IMG_MODE === 'flex' ? 'flex' : 'image'; // v3.11.2: ค่าเริ่มต้นส่งเป็นรูปภาพธรรมดา (PNG โปร่งใสแสดงบนพื้นแชทตรง ๆ) · flex = การ์ด (LINE ใส่พื้นขาวให้เสมอ)
 let PIMG = {};
 try { PIMG = JSON.parse(fs.readFileSync(pathmod.join(PIMG_DIR, 'index.json'), 'utf8')); } catch (e) { console.log('[pimg] index.json not found:', e.message); }
 const PIMG_NAMES = Object.keys(PIMG).sort((a, b) => b.length - a.length);
@@ -3223,7 +3223,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.11.1', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.11.2', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
