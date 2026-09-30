@@ -418,7 +418,7 @@ async function askDify(sessionId, text) {
       conversation_id: conversationId,
       auto_generate_name: true
     });
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardOrder(guardInternal(guardPhones(guardCalc(r.data.answer.trim(), sessionId), sessionId), sessionId), sessionId);
+    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
     console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
   } catch (e) { console.log('dify fetch error:', e.message); }
   return '';
@@ -488,6 +488,20 @@ function guardOrder(answer, sessionId) {
 }
 
 
+
+
+
+// v3.13: บอกอัตราใช้เฉพาะเมื่อลูกค้าถาม (P-57) ถ้าข้อความลูกค้าไม่ได้ถามอัตรา/ปริมาณ/วิธีผสม ตัดบรรทัดอัตราออกก่อนส่ง
+const RATE_ASK_RX = /อัตรา|เท่า(ไหร่|ไร|ไร)|กี่\s*(ซีซี|cc|มล|ลิตร|กรัม|กิโล|ขวด|ถุง|กระสอบ|ไร่|ช้อน|ฝา|ถัง)|ผสม|วิธีใช้|ใช้(ยัง|อย่าง)ไง|ฉีด(ยัง|อย่าง)ไง|พ่น(ยัง|อย่าง)ไง|หว่าน(ยัง|อย่าง)ไง|ปริมาณ|ถัง|\d+\s*ไร่|ทำ.*(ยัง|อย่าง)ไง|ขั้นตอน/i;
+const RATE_LINE_RX = /^\s*(\d+[.)]\s*)?[-•]?\s*อัตรา\s*[:：]|\d[\d,.\-–\s]*(ซีซี|cc|มล\.?|ลิตร|กรัม|กิโลกรัม|กก\.?)[^\n]*(ต่อน้ำ|กับน้ำ|ต่อไร่|\/\s*ไร่|พ่นได้|ฉีดได้|หว่าน)|ใช้ได้ประมาณ\s*[\d\-–]+\s*ไร่|^\s*(พ่นด้วย(คน|โดรน)|คนพ่น|โดรน)\s*[:：]?\s*ผสม/;
+function guardRate(answer, userText, sessionId) {
+  if (RATE_ASK_RX.test(String(userText || ''))) return answer;
+  const lines = String(answer).split('\n');
+  const kept = lines.filter((l) => !RATE_LINE_RX.test(l));
+  if (kept.length === lines.length) return answer;
+  console.log(`[rate] ${String(sessionId).slice(0, 8)} removed ${lines.length - kept.length} rate line(s) (not asked)`);
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
 
 
 // v3.12: ตัวคิดเลขให้บอท (รายการทีมข้อ 8) LLM เขียนสูตร ⟦250*10⟧ จากตัวเลขในข้อมูล แล้ว bridge คิดให้ กันเลขผิด
@@ -3247,7 +3261,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.12', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.13', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
