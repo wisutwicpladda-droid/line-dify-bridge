@@ -588,6 +588,58 @@ function productImageMsg(answer) {
   pimgMsgs.add(msg);
   return msg;
 }
+
+// v3.14: ส่งรูปสินค้าไม่ให้รก (ผู้ใช้กำหนด 30 ก.ย.)
+// - คำตอบที่แนะนำสินค้า (มีบรรทัด "ใช้กับ:") ส่งรูปอัตโนมัติ 1 รูป = ตัวแรกที่แนะนำ ตัวอื่นเป็นปุ่ม quick reply "📷 ชื่อ"
+// - พูดชื่อสินค้าผ่าน ๆ ไม่ส่งรูป มีแต่ปุ่ม · รูปสินค้าเดิมไม่ส่งซ้ำในแชทเดียวกันภายใน PRODUCT_IMG_DEDUP_H ชม.
+// - ลูกค้าขอรูปเอง ส่งทันที (สูงสุด PRODUCT_IMG_MAX รูป) · กดปุ่ม "ขอรูป ชื่อ" bridge ส่งรูปเองไม่เรียก Dify
+const PIMG_DEDUP_MS = (parseFloat(process.env.PRODUCT_IMG_DEDUP_H || '24') || 24) * 3600000;
+const PIMG_ASK_RX = /(ขอ|ส่ง|มี|ดู|อยากเห็น|โชว์|เห็น).{0,8}(รูป|ภาพ)|(รูป|ภาพ)\s*(สินค้า|ขวด|ยา|หน่อย|ของ|ไหม)|หน้าตา(เป็น)?\s*(ยัง|อย่าง)ไง|แพ็คเกจ|ฉลาก/;
+function pimgBuild(names) {
+  if (!names.length) return [];
+  if (PIMG_MODE === 'image') return names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
+  const m = productImageMsg(names.join('\n'));
+  return m ? [].concat(m) : [];
+}
+function pimgPlan(s, userText, answer) {
+  const none = { images: [], buttons: [] };
+  if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return none;
+  if (/1669|โรงพยาบาล/.test(answer)) return none; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
+  const seenFile = new Set();
+  const names = productsInAnswer(answer).filter((n) => !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
+  if (!names.length) return none;
+  const now = Date.now();
+  s.pimgSent = s.pimgSent || {};
+  for (const f of Object.keys(s.pimgSent)) if (now - s.pimgSent[f] > PIMG_DEDUP_MS) delete s.pimgSent[f];
+  const asked = PIMG_ASK_RX.test(String(userText || ''));
+  let send = [];
+  if (asked) send = names.slice(0, PIMG_MAX);
+  else if (/(^|\n)\s*(\d+[.)]\s*)?ใช้กับ\s*[:：]/.test(answer) && !s.pimgSent[PIMG[names[0]]]) send = [names[0]];
+  send.forEach((n) => { s.pimgSent[PIMG[n]] = now; });
+  const buttons = names.filter((n) => !send.includes(n) && !s.pimgSent[PIMG[n]]).slice(0, 4);
+  if (send.length) console.log(`[pimg] ${asked ? 'asked' : 'auto'} ${send.join(', ')} · buttons ${buttons.length}`);
+  return { images: pimgBuild(send), buttons };
+}
+function pimgAttachButtons(msgs, names) {
+  if (!names || !names.length || !msgs.length) return;
+  const items = names.map((n) => ({ type: 'action', action: { type: 'message', label: ('📷 ' + n).slice(0, 20), text: 'ขอรูป ' + n } }));
+  const i = msgs.length - 1;
+  if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i].slice(0, 4900), quickReply: { items } };
+  else if (msgs[i] && typeof msgs[i] === 'object') msgs[i].quickReply = { items };
+}
+// ข้อความจากปุ่ม "ขอรูป ชื่อสินค้า" (ชื่อตรงกับรายการรูป) -> ตอบเป็นรูปทันที
+function pimgTap(s, userText) {
+  const m = String(userText || '').trim().match(/^ขอรูป\s*(.+)$/);
+  if (!m || !PIMG_ON || !PUBLIC_URL) return null;
+  const n = m[1].trim();
+  if (!PIMG[n]) return null;
+  s.pimgSent = s.pimgSent || {};
+  s.pimgSent[PIMG[n]] = Date.now();
+  console.log('[pimg] tap ' + n);
+  return pimgBuild([n]);
+}
+
+
 function servePimg(res, path) {
   const f = path.slice('/img/p/'.length);
   if (!/^p\d{3}\.png$/.test(f) || !Object.values(PIMG).includes(f)) { res.writeHead(404); return res.end(); }
@@ -1914,11 +1966,11 @@ function notifyAdmins(id, s, isNew) {
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
   const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || '(ข้อความแบบปุ่ม)') : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
+  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)')) : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
   let ok = await lineReply(ev.replyToken, arr);
   if (!ok && arr.some((m) => pimgMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ
     console.log('[pimg] reply with images failed, retry text only');
-    text = arr.filter((m) => !pimgMsgs.has(m));
+    text = arr.filter((m) => !pimgMsgs.has(m)).map((m) => (m && typeof m === 'object' && m.quickReply ? Object.assign({}, m, { quickReply: undefined }) : m));
     ok = await lineReply(ev.replyToken, text);
   }
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
@@ -2114,13 +2166,16 @@ async function handleEvent(ev) {
     }
   }
 
+  const tapImgs = ev.message.type === 'text' ? pimgTap(s, text) : null; // v3.14: ปุ่มดูรูปสินค้า
+  if (tapImgs && tapImgs.length) { markDirty(); await sendAnswer(s, ev, pushTarget, tapImgs, { system: true }); return; }
+
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
 
   let answer = await askDify(sessionId, text);
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
-  const pimg = productImageMsg(answer); // v3.11: การ์ดรูปสินค้า
-  if (pimg) msgs.push(...[].concat(pimg).slice(0, 3));
+  const pplan = pimgPlan(s, text, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
+  if (pplan.images.length) msgs.push(...pplan.images);
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
   if (stype === 'user' && REG_MODE === 'soft') {
     const c = crmGet(sessionId);
@@ -2132,6 +2187,7 @@ async function handleEvent(ev) {
       markDirty();
     }
   }
+  pimgAttachButtons(msgs, pplan.buttons);
   await sendAnswer(s, ev, pushTarget, msgs);
 }
 
@@ -3279,7 +3335,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.13.1', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.14', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
