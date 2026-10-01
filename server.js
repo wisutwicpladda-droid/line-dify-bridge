@@ -102,6 +102,7 @@ const fs = require('fs');
 const pathmod = require('path');
 const zlib = require('zlib');
 const kbSync = require('./kb_sync'); // v3.8: sync ข้อมูลสินค้าจาก Google Sheet เข้า Dify KB
+const orderFix = require('./order_fix'); // v3.16: แก้ประโยค "เริ่มจาก..." ให้ตรงกับลำดับที่ guardOrder จัดใหม่
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -461,6 +462,7 @@ function guardOrder(answer, sessionId) {
   if (!L.names.length) return answer;
   const pars = String(answer).split(/\n[ \t]*\n/);
   const out = [];
+  const fixes = [];
   let moved = false, i = 0;
   while (i < pars.length) {
     if (!orderProductAt(pars[i])) { out.push(pars[i]); i++; continue; }
@@ -478,12 +480,22 @@ function guardOrder(answer, sessionId) {
         moved = true;
         const nums = run.map((b) => (b.parts[0].match(ORDER_NUM_RX) || [])[2]).filter(Boolean).map(Number);
         if (nums.length === run.length) sorted.forEach((b, k) => { b.parts[0] = b.parts[0].replace(ORDER_NUM_RX, (m, sp, n, dot) => sp + (nums[0] + k) + dot); });
+        if (sorted[0] !== run[0]) fixes.push({ at: -1, oldFirst: run[0].name, first: sorted[0].name, others: sorted.slice(1).map((b) => b.name) });
       }
     }
     sorted.forEach((b) => out.push(...b.parts));
+    if (fixes.length && fixes[fixes.length - 1].at === -1) fixes[fixes.length - 1].at = out.length;
   }
   if (!moved) return answer;
-  console.log(`[order] ${String(sessionId).slice(0, 8)} reordered products by level`);
+  let fixed = 0;
+  for (const f of fixes) {
+    for (let k = f.at; k < out.length; k++) {
+      if (orderProductAt(out[k])) break; // ถึงก้อนสินค้าชุดถัดไปแล้ว
+      const nw = orderFix.fixClosing(out[k], f, kbSync.levels.moa);
+      if (nw != null) { out[k] = nw; fixed++; break; }
+    }
+  }
+  console.log(`[order] ${String(sessionId).slice(0, 8)} reordered products by level${fixed ? ', fixed start sentence' : ''}`);
   return out.join('\n\n');
 }
 
@@ -3348,7 +3360,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.15', rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.16', rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
