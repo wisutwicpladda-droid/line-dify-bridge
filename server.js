@@ -506,6 +506,10 @@ function guardOrder(answer, sessionId) {
 // v3.13: บอกอัตราใช้เฉพาะเมื่อลูกค้าถาม (P-57) ถ้าข้อความลูกค้าไม่ได้ถามอัตรา/ปริมาณ/วิธีผสม ตัดบรรทัดอัตราออกก่อนส่ง
 const RATE_ASK_RX = /อัตรา|เท่า(ไหร่|ไร|ไร)|กี่\s*(ซีซี|cc|มล|ลิตร|กรัม|กิโล|ขวด|ถุง|กระสอบ|ไร่|ช้อน|ฝา|ถัง)|ผสม|วิธีใช้|ใช้(ยัง|อย่าง)ไง|ฉีด(ยัง|อย่าง)ไง|พ่น(ยัง|อย่าง)ไง|หว่าน(ยัง|อย่าง)ไง|ปริมาณ|ถัง|\d+\s*ไร่|ทำ.*(ยัง|อย่าง)ไง|ขั้นตอน/i;
 const RATE_LABEL_RX = /^\s*(\d+[.)]\s*)?[-•]?\s*(อัตรา\s*[:：]|(พ่นด้วย(คน|โดรน)|คนพ่น|โดรน|ใช้โดรน|หว่านด้วย(คน|โดรน))\s*[:：]?\s*(ผสม|ใช้|หว่าน|อัตรา)?\s*\d)/;
+// Gemini often formats the label in Markdown and writes set rates as 50+50.
+// Remove that whole rate line when the customer did not ask for a rate so a
+// partial value such as "50+" cannot remain visible.
+const RATE_MARKED_LINE_RX = /^\s*(?:\d+[.)]\s*)?[-•]?\s*(?:\*\*)?\s*(อัตรา|พ่นด้วย(คน|โดรน)|คนพ่น|โดรน|ใช้โดรน|หว่านด้วย(คน|โดรน))\s*(?:\*\*)?\s*[:：]/;
 const U = '(ซีซี|cc|มล\\.?|ลิตร|กรัม|กิโลกรัม|กก\\.?)';
 const N = '[\\d.,]+(\\s*[-–]\\s*[\\d.,]+)?';
 const RATE_PHRASES = [
@@ -526,7 +530,7 @@ function guardRate(answer, userText, sessionId) {
   let n = 0;
   const out = [];
   for (const line of String(answer).split('\n')) {
-    if (RATE_LABEL_RX.test(line)) { n++; continue; }
+    if (RATE_LABEL_RX.test(line) || RATE_MARKED_LINE_RX.test(line)) { n++; continue; }
     let l = line;
     for (const rx of RATE_PHRASES) l = l.replace(rx, () => { n++; return ' '; });
     if (l !== line) {
