@@ -612,13 +612,22 @@ function pimgPlan(s, userText, answer) {
   s.pimgSent = s.pimgSent || {};
   for (const f of Object.keys(s.pimgSent)) if (now - s.pimgSent[f] > PIMG_DEDUP_MS) delete s.pimgSent[f];
   const asked = PIMG_ASK_RX.test(String(userText || ''));
+  // v3.14.1: ลูกค้าพิมพ์ชื่อสินค้ามาถามเอง (เช่น "ไบเตอร์" "โมเดิน" "กล่องม่วง") ส่งรูปตัวนั้นเลย 1 รูป
+  const named = pimgNamedInText(userText, names).filter((n) => !s.pimgSent[PIMG[n]]);
   let send = [];
   if (asked) send = names.slice(0, PIMG_MAX);
+  else if (named.length) send = [named[0]];
   else if (/(^|\n)\s*(\d+[.)]\s*)?ใช้กับ\s*[:：]/.test(answer) && !s.pimgSent[PIMG[names[0]]]) send = [names[0]];
   send.forEach((n) => { s.pimgSent[PIMG[n]] = now; });
   const buttons = names.filter((n) => !send.includes(n) && !s.pimgSent[PIMG[n]]).slice(0, 4);
   if (send.length) console.log(`[pimg] ${asked ? 'asked' : 'auto'} ${send.join(', ')} · buttons ${buttons.length}`);
   return { images: pimgBuild(send), buttons };
+}
+const pimgCore = (x) => String(x || '').replace(/[\s\-–.%()0-9]/g, '').replace(/ดับเบิ้?ลยู.*$/, '').toLowerCase();
+function pimgNamedInText(userText, names) {
+  const u = pimgCore(userText);
+  if (u.length < 3) return [];
+  return names.filter((n) => { const c = pimgCore(n); return c.length >= 3 && (u.includes(c) || (u.length >= 4 && c.includes(u))); });
 }
 function pimgAttachButtons(msgs, names) {
   if (!names || !names.length || !msgs.length) return;
@@ -3335,7 +3344,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.14', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.14.1', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
