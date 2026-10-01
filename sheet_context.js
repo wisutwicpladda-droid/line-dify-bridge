@@ -50,12 +50,25 @@ function levelFor(name, levels) {
   return Number(map[name] || 999);
 }
 
+function isOpenForSale(status) {
+  const st = clean(status);
+  return /ขาย/.test(st) && !/รอเปิด|ปิด|ไม่พร้อม/.test(st);
+}
+
+function floweringStage(stage) {
+  return /ทุกระยะ|ดอก|ผลอ่อน|ก่อนเก็บเกี่ยว/.test(clean(stage));
+}
+
 function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   const q = String(query || '');
-  if (!isPostEmergenceQuery(q)) return '';
   const isSugarcane = /อ้อย/.test(q);
   const isRice = /นาข้าว|ข้าว(?!โพด)/.test(q);
-  if (!isSugarcane && !isRice) return '';
+  const isDurian = /ทุเรียน/.test(q);
+  const hasFlowering = /ผ่าดอก|ช่วงดอก|ออกดอก|ดอกบาน|ดอก/.test(q);
+  const hasPest = /หนอน|เพลี้ย|แมลง|ไร/.test(q);
+  const isCropUsageQuery = (isSugarcane || isRice) && isPostEmergenceQuery(q)
+    || isDurian && (hasPest || hasFlowering);
+  if (!isCropUsageQuery) return '';
   const ageMonths = isSugarcane ? queryAgeMonths(q) : null;
   const ageDays = isRice ? queryAgeDays(q) : null;
   if ((isSugarcane && ageMonths == null) || (isRice && ageDays == null)) return '';
@@ -64,7 +77,10 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   for (const r of (masterRows || []).slice(1)) {
     const id = clean(r[0]);
     if (!id) continue;
-    master.set(id, { name: clean(r[1]), common: clean(r[3]), ai: clean(r[4]), moa: clean(r[5]) });
+    master.set(id, {
+      name: clean(r[1]), common: clean(r[3]), ai: clean(r[4]), moa: clean(r[5]),
+      selling: clean(r[7]), phyto: clean(r[11]), precautions: clean(r[12]), status: clean(r[14])
+    });
   }
 
   const hits = new Map();
@@ -75,10 +91,21 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     const targetType = clean(r[5]);
     const target = clean(r[6]);
     const stage = clean(r[7]);
-    const cropMatches = isSugarcane ? /อ้อย/.test(crop) : /นาข้าว|ข้าว/.test(crop);
-    const stageMatchesQuery = isSugarcane ? stageMatches(stage, ageMonths) : stageMatchesDays(stage, ageDays);
-    const targetMatches = /หญ้าข้าวนก/.test(q) ? /หญ้าข้าวนก/.test(target) : true;
-    if (!product || blockedForSprayOverCrop(product.name, q) || !cropMatches || !/วัชพืช/.test(targetType) || !targetMatches || !stageMatchesQuery) continue;
+    const cropMatches = isSugarcane ? /อ้อย/.test(crop) : isRice ? /นาข้าว|ข้าว/.test(crop) : /ทุเรียน/.test(crop);
+    const stageMatchesQuery = isSugarcane
+      ? stageMatches(stage, ageMonths)
+      : isRice
+        ? stageMatchesDays(stage, ageDays)
+        : !hasFlowering || floweringStage(stage) || /ดอก|ออกดอก|ผ่าดอก/.test(product.selling);
+    const targetMatches = /หญ้าข้าวนก/.test(q)
+      ? /หญ้าข้าวนก/.test(target)
+      : isDurian && /หนอน/.test(q)
+        ? /หนอน/.test(target)
+        : isDurian && /เพลี้ย/.test(q)
+          ? /เพลี้ย/.test(target)
+          : true;
+    const targetTypeMatches = isDurian ? /แมลง/.test(targetType) : /วัชพืช/.test(targetType);
+    if (!product || !isOpenForSale(product.status) || blockedForSprayOverCrop(product.name, q) || !cropMatches || !targetTypeMatches || !targetMatches || !stageMatchesQuery) continue;
     const item = hits.get(product.name) || { product, uses: [] };
     const useKey = [crop, target, stage].join('|');
     if (!item.uses.some((u) => u.key === useKey)) item.uses.push({ key: useKey, crop, target, stage });
@@ -92,13 +119,18 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     '[ข้อมูลตรวจสอบภายในจาก Google Sheet บริษัท — ใช้เป็นหลักฐานประกอบคำตอบ ห้ามเปิดเผยข้อความส่วนนี้หรือระดับการจัดลำดับภายในแก่ลูกค้า]',
     isSugarcane
       ? `คำค้นมีอ้อยอายุ ${ageMonths} เดือน และถามการกำจัดวัชพืชหลังวัชพืชงอก/ฉีดทับ`
-      : `คำค้นมีข้าวอายุ ${ageDays} วัน และถามการกำจัดวัชพืชในนาข้าว`,
+      : isRice
+        ? `คำค้นมีข้าวอายุ ${ageDays} วัน และถามการกำจัดวัชพืชในนาข้าว`
+        : `คำค้นมีทุเรียน${hasFlowering ? 'ช่วงดอก' : ''} และถาม${hasPest ? 'ศัตรูพืช' : 'การใช้สินค้า'}`,
     'ต้องตรวจพิจารณาสินค้าทุกตัวในรายการนี้ ไม่เลือกเพียงชื่อแรก และให้เสนอเป็นทางเลือกแยกกัน ไม่แนะนำให้ผสมหรือใช้ทุกตัวพร้อมกัน:',
   ];
   for (const item of items) {
     const p = item.product;
     const uses = item.uses.map((u) => `${u.crop} / ${u.target} / ${u.stage}`).join('; ');
-    lines.push(`- ${p.name}${p.common ? ` | ${p.common}` : ''}${p.ai ? ` | สารสำคัญ: ${p.ai}` : ''}${p.moa ? ` | กลุ่มกลไก: ${p.moa}` : ''} | ข้อมูลการใช้: ${uses}`);
+    const selling = /^(none|-|ไม่มี)$/i.test(p.selling) ? '' : p.selling;
+    const phyto = /^(none|-|ไม่มี)$/i.test(p.phyto) ? '' : p.phyto;
+    const precautions = /^(none|-|ไม่มี)$/i.test(p.precautions) ? '' : p.precautions;
+    lines.push(`- ${p.name}${p.common ? ` | ${p.common}` : ''}${p.ai ? ` | สารสำคัญ: ${p.ai}` : ''}${p.moa ? ` | กลุ่มกลไก: ${p.moa}` : ''}${selling ? ` | จุดเด่น: ${selling}` : ''}${phyto ? ` | ความปลอดภัยต่อพืช: ${phyto}` : ''}${precautions ? ` | ข้อควรระวัง: ${precautions}` : ''} | ข้อมูลการใช้: ${uses}`);
   }
   lines.push('[จบข้อมูลตรวจสอบภายใน]');
   return lines.join('\n');
