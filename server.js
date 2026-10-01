@@ -645,6 +645,32 @@ function pimgNamedInText(userText, names) {
   if (u.length < 3) return [];
   return names.filter((n) => { const c = pimgCore(n); return c.length >= 3 && (u.includes(c) || (u.length >= 4 && c.includes(u))); });
 }
+// v3.17: คำขอรูป "ทั้งหมด" ต้องใช้รายการสินค้าจาก Product master ที่ kb_sync
+// โหลดจาก Google Sheet ไม่ใช้รายชื่อที่ LLM ดึงมาได้เพียงบาง chunk
+const PIMG_ALL_RX = /(?:ทั้งหมด|ทุกตัว|ทุกรายการ).*(?:กำจัดแมลง|ยาฆ่าแมลง|ยาแมลง)|(?:กำจัดแมลง|ยาฆ่าแมลง|ยาแมลง).*(?:ทั้งหมด|ทุกตัว|ทุกรายการ)/;
+function pimgAllCategoryNames(userText) {
+  if (!PIMG_ALL_RX.test(String(userText || ''))) return [];
+  const cats = kbSync.levels.categories || {};
+  const sts = kbSync.levels.status || {};
+  const lv = kbSync.levels.map || {};
+  return Object.keys(cats)
+    .filter((n) => /^Insecticide$/i.test(String(cats[n] || '')) && /ขาย/.test(String(sts[n] || '')) && !/รอเปิด|ปิด|ไม่พร้อม/.test(String(sts[n] || '')) && PIMG[n])
+    .sort((a, b) => (lv[a] || 99) - (lv[b] || 99) || a.localeCompare(b, 'th'));
+}
+async function sendAllProductImages(s, ev, pushTarget, names) {
+  if (!names.length) return false;
+  const text = `รูปสินค้ากำจัดแมลงที่เปิดขายและมีรูปในระบบ (${names.length} รายการ)\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
+  const imgs = pimgBuild(names);
+  // LINE รับได้ไม่เกิน 5 ข้อความต่อ request: ใช้ reply แรกเป็นข้อความ + รูป 4 รูป
+  await sendAnswer(s, ev, pushTarget, [text].concat(imgs.slice(0, 4)));
+  for (let i = 4; i < imgs.length; i += 5) {
+    const batch = imgs.slice(i, i + 5);
+    const ok = await linePush(pushTarget, batch);
+    batch.forEach(() => pushHist(s, 'b', '(รูปสินค้า)'));
+    console.log(`[pimg] all-category push ${i + 1}-${Math.min(i + batch.length, imgs.length)} ok=${ok}`);
+  }
+  return true;
+}
 function pimgAttachButtons(msgs, names) {
   if (!names || !names.length || !msgs.length) return;
   const items = names.map((n) => ({ type: 'action', action: { type: 'message', label: ('📷 ' + n).slice(0, 20), text: 'ขอรูป ' + n } }));
@@ -2193,6 +2219,15 @@ async function handleEvent(ev) {
 
   const tapImgs = ev.message.type === 'text' ? pimgTap(s, text) : null; // v3.14: ปุ่มดูรูปสินค้า
   if (tapImgs && tapImgs.length) { markDirty(); await sendAnswer(s, ev, pushTarget, tapImgs, { system: true }); return; }
+
+  // คำขอรายการรูปสินค้าทั้งหมวดต้องตอบจาก Product master โดยตรง เพื่อไม่ให้
+  // retrieval ของ Dify ตัดเหลือเพียงบางรายการ และส่งรูปครบผ่านหลาย batch ของ LINE
+  const allCategoryNames = pimgAllCategoryNames(text);
+  if (allCategoryNames.length) {
+    markDirty();
+    await sendAllProductImages(s, ev, pushTarget, allCategoryNames);
+    return;
+  }
 
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
 

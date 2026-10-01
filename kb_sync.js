@@ -17,7 +17,7 @@ const OVERRIDES = {};
 
 const state = { enabled: !!KEY, ok: false, at: 0, products: 0, chars: 0, hash: '', docId: '', action: '', error: '' };
 // v3.10: ระดับแนะนำของสินค้าแต่ละชื่อ ใช้เรียงสินค้าในคำตอบก่อนส่งถึงลูกค้า (server.js guardOrder)
-const levels = { map: {}, names: [], moa: {}, at: 0 }; // v3.16: moa = กลุ่มกลไกการออกฤทธิ์ ใช้ตรวจว่าตัวทางเลือกใช้สลับกลุ่มได้จริง
+const levels = { map: {}, names: [], moa: {}, categories: {}, status: {}, at: 0 }; // v3.17: metadata สำหรับคำขอรายการสินค้าทั้งหมดและรูปสินค้า
 
 function get(url, left) {
   left = left == null ? 4 : left;
@@ -69,15 +69,21 @@ function buildText(master, usage, packages) {
   const U = {}, P = {};
   usage.slice(1).forEach((r) => { const id = s(r[1]); if (id) (U[id] = U[id] || []).push(r); });
   packages.slice(1).forEach((r) => { const id = s(r[1]); if (id) (P[id] = P[id] || []).push(r); });
-  const blocks = [], lv = {}, mo = {};
+  const blocks = [], usageIndex = [], lv = {}, mo = {}, categories = {}, statuses = {};
   for (const r of mrows) {
     const id = s(r[0]); let name = s(r[1]).replace(/\s*\(ไม่มีรูป\)\s*/g, '').trim();
     const oldName = OVERRIDES[name] ? name : ''; if (oldName) name = OVERRIDES[name];
-    const cat = s(r[2]), common = s(r[3]), ai = s(r[4]), moa = s(r[5]), form = s(r[6]), sell = s(r[7]), absorb = s(r[8]), mech = s(r[9]), act = s(r[10]), phyto = s(r[11]), prec = s(r[12]), strat = s(r[13]).replace(/^Cosmic-star$/i, 'Cosmic-Star'), status = s(r[14]);
+    const cat = s(r[2]), common = s(r[3]), ai = s(r[4]), moa = s(r[5]), form = s(r[6]), sell = s(r[7]), absorb = s(r[8]), mech = s(r[9]), act = s(r[10]), phyto = s(r[11]), prec = s(r[12]), strat = s(r[13]).replace(/^Cosmic-star$/i, 'Cosmic-Star'), sellStatus = s(r[14]);
+    categories[name] = cat;
+    statuses[name] = sellStatus;
     const uses = (U[id] || []).map((u) => ({ group: s(u[3]), crop: s(u[4]), ttype: s(u[5]), target: s(u[6]), stage: s(u[7]), eq: s(u[8]), method: s(u[9]), how: s(u[10]), rmin: num(u[11]), rmax: num(u[12]), unit: s(u[13]), bval: num(u[14]), bunit: s(u[15]), cov: num(u[16]), cunit: s(u[17]), note: s(u[18]), dnote: s(u[19]) }));
     const withTarget = uses.filter((u) => u.target);
     const crops = [...new Set(withTarget.map((u) => u.crop || u.group))];
     const targets = [...new Set(withTarget.flatMap((u) => u.target.split(/\s*,\s*/)).filter(Boolean))];
+    if (/ขาย/.test(sellStatus) && !/รอเปิด|ปิด|ไม่พร้อม/.test(sellStatus) && withTarget.length) {
+      const useSummary = withTarget.map((u) => [u.crop || u.group, u.target, u.stage, u.method].filter(Boolean).join(' / '));
+      usageIndex.push(name + ' | ' + [...new Set(useSummary)].join(' ; '));
+    }
     const L = [];
     if (STRAT_LEVEL[strat.toLowerCase()]) lv[name] = STRAT_LEVEL[strat.toLowerCase()];
     if (moa) mo[name] = moa;
@@ -85,7 +91,7 @@ function buildText(master, usage, packages) {
     L.push('รหัสสินค้า: ' + id);
     // v3.9: ชื่อกลุ่มสินค้า (Expand/Skyrocket/...) เป็นข้อมูลภายใน ห้ามเขียนลง KB ใส่เป็นเลขลำดับแทน
     if (STRAT_LEVEL[strat.toLowerCase()]) L.push('ลำดับแนะนำภายใน (ห้ามบอกลูกค้า): ' + STRAT_LEVEL[strat.toLowerCase()]);
-    if (status) L.push('สถานะการขาย: ' + status);
+    if (sellStatus) L.push('สถานะการขาย: ' + sellStatus);
     L.push('สรุป: ' + name + ' คือ' + (CAT[cat] || cat) + (crops.length ? ' ใช้กับ ' + crops.join(' ') : '') + (targets.length ? ' เป้าหมาย ' + targets.join(' ') : ''));
     L.push('');
     L.push('หมวดสินค้า: ' + (CAT[cat] || cat) + (cat ? ' (' + cat + ')' : ''));
@@ -150,7 +156,19 @@ function buildText(master, usage, packages) {
     }
     blocks.push(L.join('\n').replace(/\n{3,}/g, '\n\n').trim());
   }
-  return { text: blocks.join('\n' + SEP + '\n'), products: blocks.length, levels: lv, moa: mo };
+  const usageIndexBlock = ['สารบัญการใช้สินค้าที่เปิดขายจาก Google Sheet (ใช้ค้นพืช ปัญหา และช่วงการใช้)', 'ชื่อสินค้า | พืช / เป้าหมาย / ระยะ / วิธีใช้', ...usageIndex].join('\n');
+  // สารบัญสั้น ๆ เป็น chunk แรกสำหรับคำถามแบบ "มีสินค้าหมวดนี้อะไรบ้าง"
+  // ทำให้ Dify ค้นเจอรายการทั้งหมวดจากชีต โดยไม่ต้องเพิ่มชื่อสินค้าแบบตายตัวใน prompt
+  const indexLines = ['สารบัญสินค้าเปิดขายจาก Google Sheet (ใช้ค้นรายการหมวดสินค้า)', 'ชื่อสินค้า | หมวดสินค้า | สารสำคัญภาษาไทยและสูตร | การดูดซึม'];
+  for (const r of mrows) {
+    const id = s(r[0]); let name = s(r[1]).replace(/\s*\(ไม่มีรูป\)\s*/g, '').trim();
+    if (OVERRIDES[name]) name = OVERRIDES[name];
+    const sellStatus = statuses[name] || '';
+    if (!/ขาย/.test(sellStatus) || /รอเปิด|ปิด|ไม่พร้อม/.test(sellStatus)) continue;
+    indexLines.push([name, CAT[s(r[2])] || s(r[2]), s(r[3]), s(r[8])].join(' | '));
+  }
+  const indexBlock = indexLines.join('\n');
+  return { text: [indexBlock, usageIndexBlock, ...blocks].join('\n' + SEP + '\n'), products: blocks.length, categories, status: statuses, levels: lv, moa: mo };
 }
 
 async function fetchSheets() {
@@ -168,9 +186,9 @@ async function syncOnce(force) {
   if (!KEY) { state.error = 'DIFY_DATASET_KEY not set'; return state; }
   try {
     const sh = await fetchSheets();
-    const { text, products, levels: lv, moa: mo } = buildText(sh.master, sh.usage, sh.packages);
+    const { text, products, levels: lv, moa: mo, categories, status } = buildText(sh.master, sh.usage, sh.packages);
     if (products < 50) throw new Error('found only ' + products + ' products, skip');
-    setLevels(lv, mo);
+    setLevels(lv, mo, categories, status);
     const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
     if (!force && hash === state.hash && state.docId) { Object.assign(state, { ok: true, at: Date.now(), action: 'unchanged', error: '' }); return state; }
     const rule = { mode: 'custom', rules: { pre_processing_rules: [{ id: 'remove_extra_spaces', enabled: false }, { id: 'remove_urls_emails', enabled: false }], segmentation: { separator: SEP, max_tokens: 4000 } } };
@@ -201,9 +219,11 @@ function start() {
   setInterval(() => syncOnce(false), SYNC_MIN * 60000);
 }
 
-function setLevels(lv, mo) {
+function setLevels(lv, mo, categories, status) {
   levels.map = lv || {};
   levels.moa = mo || {};
+  levels.categories = categories || {};
+  levels.status = status || {};
   levels.names = Object.keys(levels.map).sort((a, b) => b.length - a.length); // ชื่อยาวก่อน กัน "นาแดน" ชนกับ "นาแดน 6 จี"
   levels.at = Date.now();
 }
