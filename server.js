@@ -103,6 +103,7 @@ const pathmod = require('path');
 const zlib = require('zlib');
 const kbSync = require('./kb_sync'); // v3.8: sync ข้อมูลสินค้าจาก Google Sheet เข้า Dify KB
 const orderFix = require('./order_fix'); // v3.16: แก้ประโยค "เริ่มจาก..." ให้ตรงกับลำดับที่ guardOrder จัดใหม่
+const sheetContext = require('./sheet_context'); // v3.22: แนบตัวเลือกจากชีตให้ครบเมื่อ Dify retrieval ได้มาแค่ตัวแรก
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -410,10 +411,12 @@ async function findConversation(sessionId) {
 async function askDify(sessionId, text) {
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const conversationId = await findConversation(sessionId);
+  const difyQuery = sheetContext.enrichQuery(text, productMaster.master, productMaster.usage, kbSync.levels);
+  if (difyQuery !== text) console.log(`[sheet-context] ${String(sessionId).slice(0, 8)} attached verified sugarcane herbicide matches`);
   try {
     const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, {
       inputs: {},
-      query: text,
+      query: difyQuery,
       response_mode: 'blocking',
       user: sessionId,
       conversation_id: conversationId,
@@ -580,13 +583,13 @@ try { PIMG = JSON.parse(fs.readFileSync(pathmod.join(PIMG_DIR, 'index.json'), 'u
 const PIMG_NAMES = Object.keys(PIMG).sort((a, b) => b.length - a.length);
 // โหลดหมวดและสถานะจาก Product master แบบ public แยกจาก DIFY_DATASET_KEY
 // เพื่อให้คำขอรูปทั้งหมดทำงานได้ แม้ระบบ sync KB จะยังไม่ได้ตั้ง API key
-const productMaster = { ok: false, products: 0, at: 0, error: '' };
+const productMaster = { ok: false, products: 0, at: 0, error: '', master: [], usage: [] };
 async function refreshProductMaster() {
   try {
     const sh = await kbSync.fetchSheets();
     const built = kbSync.buildText(sh.master, sh.usage, sh.packages);
     kbSync.setLevels(built.levels, built.moa, built.categories, built.status);
-    Object.assign(productMaster, { ok: true, products: built.products, at: Date.now(), error: '' });
+    Object.assign(productMaster, { ok: true, products: built.products, at: Date.now(), error: '', master: sh.master, usage: sh.usage });
     console.log(`[product-master] loaded ${built.products} products for image/category routing`);
   } catch (e) {
     Object.assign(productMaster, { ok: false, error: e.message });
@@ -3422,7 +3425,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.21', rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.22', sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
