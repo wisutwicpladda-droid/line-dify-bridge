@@ -516,7 +516,10 @@ const RATE_PHRASES = [
 ];
 // v3.15: ชีท QA 1 ต.ค. ทีมต้องการให้บอกอัตราเมื่อแนะนำสินค้า และตัวกรองนี้ทำให้เหลือเลขค้าง เช่น "ขวดละ 50+" จึงปิดเป็นค่าเริ่มต้น
 // เปิดคืนได้ด้วยตัวแปร RATE_ONLY_WHEN_ASKED=on
-const RATE_GUARD_ON = process.env.RATE_ONLY_WHEN_ASKED === 'on';
+// Safe default: do not expose application rates unless the customer asks for
+// rate/volume/mixing details. Set RATE_ONLY_WHEN_ASKED=off only for a QA
+// environment that intentionally wants the legacy always-show behavior.
+const RATE_GUARD_ON = process.env.RATE_ONLY_WHEN_ASKED !== 'off';
 function guardRate(answer, userText, sessionId) {
   if (!RATE_GUARD_ON) return answer;
   if (RATE_ASK_RX.test(String(userText || ''))) return answer;
