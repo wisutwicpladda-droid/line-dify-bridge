@@ -658,7 +658,9 @@ function pimgPlan(s, userText, answer) {
   // v3.14.1: ลูกค้าพิมพ์ชื่อสินค้ามาถามเอง (เช่น "ไบเตอร์" "โมเดิน" "กล่องม่วง") ส่งรูปตัวนั้นเลย 1 รูป
   const named = pimgNamedInText(userText, names).filter((n) => !s.pimgSent[PIMG[n]]);
   let send = [];
-  if (asked) send = names.slice(0, PIMG_MAX);
+  // Explicit product image requests must return only the named product, even when the answer mentions related products.
+  if (asked && named.length) send = [named[0]];
+  else if (asked) send = names.slice(0, PIMG_MAX);
   else if (named.length) send = [named[0]];
   else if (/(^|\n)\s*(\d+[.)]\s*)?ใช้กับ\s*[:：]/.test(answer) && !s.pimgSent[PIMG[names[0]]]) send = [names[0]];
   send.forEach((n) => { s.pimgSent[PIMG[n]] = now; });
