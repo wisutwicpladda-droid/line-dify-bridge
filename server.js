@@ -502,7 +502,11 @@ const RATE_PHRASES = [
   new RegExp(N + '\\s*' + U + '\\s*(ต่อ|\\/)\\s*(น้ำ\\s*' + N + '\\s*ลิตร|ไร่|ต้น)', 'g'),
   new RegExp('\\(?\\s*\\d+\\s*(ขวด|ถุง|กระสอบ|ชุด)[^\\n()]{0,30}?ใช้ได้(ประมาณ)?\\s*' + N + '\\s*ไร่\\s*\\)?', 'g')
 ];
+// v3.15: ชีท QA 1 ต.ค. ทีมต้องการให้บอกอัตราเมื่อแนะนำสินค้า และตัวกรองนี้ทำให้เหลือเลขค้าง เช่น "ขวดละ 50+" จึงปิดเป็นค่าเริ่มต้น
+// เปิดคืนได้ด้วยตัวแปร RATE_ONLY_WHEN_ASKED=on
+const RATE_GUARD_ON = process.env.RATE_ONLY_WHEN_ASKED === 'on';
 function guardRate(answer, userText, sessionId) {
+  if (!RATE_GUARD_ON) return answer;
   if (RATE_ASK_RX.test(String(userText || ''))) return answer;
   let n = 0;
   const out = [];
@@ -3344,7 +3348,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.14.1', productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.15', rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
