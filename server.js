@@ -674,13 +674,16 @@ function pimgAllCategoryNames(userText) {
   const sts = kbSync.levels.status || {};
   const lv = kbSync.levels.map || {};
   return Object.keys(cats)
-    .filter((n) => /^Insecticide$/i.test(String(cats[n] || '')) && /ขาย/.test(String(sts[n] || '')) && !/รอเปิด|ปิด|ไม่พร้อม/.test(String(sts[n] || '')) && PIMG[n])
+    .filter((n) => /^Insecticide$/i.test(String(cats[n] || '')) && /ขาย/.test(String(sts[n] || '')) && !/รอเปิด|ปิด|ไม่พร้อม/.test(String(sts[n] || '')))
     .sort((a, b) => (lv[a] || 99) - (lv[b] || 99) || a.localeCompare(b, 'th'));
 }
 async function sendAllProductImages(s, ev, pushTarget, names) {
   if (!names.length) return false;
-  const text = `รูปสินค้ากำจัดแมลงที่เปิดขายและมีรูปในระบบ (${names.length} รายการ)\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
-  const imgs = pimgBuild(names);
+  const withImages = names.filter((n) => PIMG[n]);
+  const missingImages = names.filter((n) => !PIMG[n]);
+  const suffix = missingImages.length ? `\nยังไม่มีรูปในระบบ: ${missingImages.join(', ')}` : '';
+  const text = `รูปสินค้ากำจัดแมลงที่เปิดขาย (${names.length} รายการ, มีรูป ${withImages.length} รายการ)\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}${suffix}`;
+  const imgs = pimgBuild(withImages);
   // LINE รับได้ไม่เกิน 5 ข้อความต่อ request: ใช้ reply แรกเป็นข้อความ + รูป 4 รูป
   await sendAnswer(s, ev, pushTarget, [text].concat(imgs.slice(0, 4)));
   for (let i = 4; i < imgs.length; i += 5) {
