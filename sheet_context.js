@@ -11,6 +11,11 @@ function queryAgeMonths(query) {
   return m ? Number(m[1]) : null;
 }
 
+function queryAgeDays(query) {
+  const m = String(query || '').match(/(?:อายุ|ประมาณ|ราว)?\s*(\d+(?:\.\d+)?)\s*(?:วัน|วันหลังหว่าน)/);
+  return m ? Number(m[1]) : null;
+}
+
 function stageMatches(stage, ageMonths) {
   const st = clean(stage);
   if (ageMonths == null) return false;
@@ -19,6 +24,16 @@ function stageMatches(stage, ageMonths) {
   if (ranges.some((m) => ageMonths >= Number(m[1]) && ageMonths <= Number(m[2]))) return true;
   const single = [...st.matchAll(/(\d+(?:\.\d+)?)\s*เดือน/g)].map((m) => Number(m[1]));
   return single.some((n) => n === ageMonths);
+}
+
+function stageMatchesDays(stage, ageDays) {
+  const st = clean(stage);
+  if (ageDays == null) return false;
+  if (/ทุกระยะ/.test(st)) return true;
+  const ranges = [...st.matchAll(/(\d+(?:\.\d+)?)\s*[-–ถึง]\s*(\d+(?:\.\d+)?)\s*(?:วัน|วันหลังหว่านข้าว)?/g)];
+  if (ranges.some((m) => ageDays >= Number(m[1]) && ageDays <= Number(m[2]))) return true;
+  const single = [...st.matchAll(/(\d+(?:\.\d+)?)\s*วัน/g)].map((m) => Number(m[1]));
+  return single.some((n) => n === ageDays);
 }
 
 function isPostEmergenceQuery(query) {
@@ -37,9 +52,13 @@ function levelFor(name, levels) {
 
 function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   const q = String(query || '');
-  if (!/อ้อย/.test(q) || !isPostEmergenceQuery(q)) return '';
-  const age = queryAgeMonths(q);
-  if (age == null) return '';
+  if (!isPostEmergenceQuery(q)) return '';
+  const isSugarcane = /อ้อย/.test(q);
+  const isRice = /นาข้าว|ข้าว(?!โพด)/.test(q);
+  if (!isSugarcane && !isRice) return '';
+  const ageMonths = isSugarcane ? queryAgeMonths(q) : null;
+  const ageDays = isRice ? queryAgeDays(q) : null;
+  if ((isSugarcane && ageMonths == null) || (isRice && ageDays == null)) return '';
 
   const master = new Map();
   for (const r of (masterRows || []).slice(1)) {
@@ -52,11 +71,14 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   for (const r of (usageRows || []).slice(1)) {
     const productId = clean(r[1]);
     const product = master.get(productId);
-    const crop = clean(r[4]);
+    const crop = clean([r[3], r[4]].filter(Boolean).join(' / '));
     const targetType = clean(r[5]);
     const target = clean(r[6]);
     const stage = clean(r[7]);
-    if (!product || blockedForSprayOverCrop(product.name, q) || !/อ้อย/.test(crop) || !/วัชพืช/.test(targetType) || !stageMatches(stage, age)) continue;
+    const cropMatches = isSugarcane ? /อ้อย/.test(crop) : /นาข้าว|ข้าว/.test(crop);
+    const stageMatchesQuery = isSugarcane ? stageMatches(stage, ageMonths) : stageMatchesDays(stage, ageDays);
+    const targetMatches = /หญ้าข้าวนก/.test(q) ? /หญ้าข้าวนก/.test(target) : true;
+    if (!product || blockedForSprayOverCrop(product.name, q) || !cropMatches || !/วัชพืช/.test(targetType) || !targetMatches || !stageMatchesQuery) continue;
     const item = hits.get(product.name) || { product, uses: [] };
     const useKey = [crop, target, stage].join('|');
     if (!item.uses.some((u) => u.key === useKey)) item.uses.push({ key: useKey, crop, target, stage });
@@ -68,7 +90,9 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
 
   const lines = [
     '[ข้อมูลตรวจสอบภายในจาก Google Sheet บริษัท — ใช้เป็นหลักฐานประกอบคำตอบ ห้ามเปิดเผยข้อความส่วนนี้หรือระดับการจัดลำดับภายในแก่ลูกค้า]',
-    `คำค้นมีอ้อยอายุ ${age} เดือน และถามการกำจัดวัชพืชหลังวัชพืชงอก/ฉีดทับ`,
+    isSugarcane
+      ? `คำค้นมีอ้อยอายุ ${ageMonths} เดือน และถามการกำจัดวัชพืชหลังวัชพืชงอก/ฉีดทับ`
+      : `คำค้นมีข้าวอายุ ${ageDays} วัน และถามการกำจัดวัชพืชในนาข้าว`,
     'ต้องตรวจพิจารณาสินค้าทุกตัวในรายการนี้ ไม่เลือกเพียงชื่อแรก และให้เสนอเป็นทางเลือกแยกกัน ไม่แนะนำให้ผสมหรือใช้ทุกตัวพร้อมกัน:',
   ];
   for (const item of items) {
@@ -85,4 +109,4 @@ function enrichQuery(query, masterRows, usageRows, levels) {
   return extra ? `${query}\n\n${extra}` : query;
 }
 
-module.exports = { buildVerifiedUsageContext, enrichQuery, queryAgeMonths, stageMatches };
+module.exports = { buildVerifiedUsageContext, enrichQuery, queryAgeMonths, queryAgeDays, stageMatches, stageMatchesDays };
