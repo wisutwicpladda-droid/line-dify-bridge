@@ -20,11 +20,14 @@ assert(prompt.includes('ผู้ช่วยแนะนำสินค้า�
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
 assert(prompt.includes('วิชาการอยู่เบื้องหลัง'), 'p88 ไม่มี science-background rule');
 assert(prompt.includes('ถ้าถามว่า “ตัวไหนดี”'), 'p88 ไม่มี choose-a-direction rule');
-assert(prompt.includes('ไม่ต้องใส่ citation ในคำถามทั่วไป'), 'p88 ไม่มี citation default rule');
+assert(prompt.includes('ไม่แสดงแหล่งอ้างอิง ลิงก์ หรือ citation'), 'p88 ไม่มี visible-citation rule');
 assert(prompt.includes('ดูแลเหมือนพี่สาวที่พร้อมช่วย'), 'p88 ไม่มี warm sister character');
 assert(prompt.includes('ไม่ hard sell ไม่โฆษณาเกินจริง'), 'p88 ไม่มี no-hard-sell rule');
 assert(prompt.includes('ถ้ายังไม่แน่ใจ ลองเช็กเพิ่มตรงนี้ก่อนนะคะ'), 'p88 ไม่มี caring customer language');
 assert(prompt.includes('ถ้าถามกว้าง ให้คุยเหมือนเพื่อนคู่คิด'), 'p88 ไม่มี friend-like broad-question rule');
+assert(prompt.includes('ไม่แสดงแหล่งอ้างอิง ลิงก์ หรือ citation'), 'p88 ยังไม่ได้ซ่อนแหล่งอ้างอิงจากลูกค้า');
+assert(prompt.includes('marker เช่น [cite: 1]'), 'p88 ไม่มี citation-marker guard');
+assert(!prompt.includes('ใส่แหล่งอ้างอิงท้ายคำตอบ'), 'p88 ยังสั่งให้แสดงแหล่งอ้างอิง');
 for (const phrase of ['ตามหลักวิชาการ', 'สารดังกล่าวจัดอยู่ใน', 'จากข้อมูลทางวิชาการ']) {
   assert(prompt.includes(phrase), 'p88 ไม่มี academic phrase suppression: ' + phrase);
 }

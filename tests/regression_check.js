@@ -42,9 +42,8 @@ assert(!prompt.includes('จนเหลือสาเหตุเดียว'
 assert(dsl.includes('intent_guidance'), 'DSL ไม่มี output intent_guidance');
 assert(dsl.includes('web_needed'), 'DSL ไม่มี web_needed routing');
 assert(dsl.includes('risk'), 'DSL ไม่มี risk intent');
-assert(bridge.includes('extractDifySources'), 'bridge ไม่มี source extraction');
-assert(bridge.includes('appendDifyCitations'), 'bridge ไม่มี citation forwarding');
+assert(bridge.includes('stripVisibleCitations'), 'bridge ไม่มี visible-citation guard');
+assert(bridge.includes('visibleCitations: false'), 'bridge ยังเปิดการแสดง citation');
 assert(bridge.includes('RATE_ONLY_WHEN_ASKED'), 'bridge ไม่มี rate guard');
-assert(bridge.includes('retriever_resources'), 'bridge ต้องระบุและกัน retriever_resources ไม่ให้ถูกเปิดเผย');
 
 console.log('PASS: regression contract ' + cases.length + ' cases; p86 prompt/DSL and bridge safeguards present');
