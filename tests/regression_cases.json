@@ -26,5 +26,8 @@
   {"id":25,"name":"P88 Product first ส้มโอ","input":"ใบส้มโอมีจุดสีน้ำตาลเหลือง ลามเป็นแผลแห้ง เกิดจากเชื้อราอะไร และมียาตัวไหนแนะนำบ้าง","checks":["product_first","bacterial_vs_fungal","no_latin_default","no_generic_list","company_product_check"],"expected":{"max_sentences":5,"max_chars":800,"forbid":["Xanthomonas citri","FRAC","แหล่งอ้างอิง"]}},
   {"id":26,"name":"P88 Product first เพลี้ยไฟทุเรียน","input":"เพลี้ยไฟทุเรียนใช้ตัวไหนดี","checks":["product_first","company_product_first","plain_reason","no_biology_lecture"],"expected":{"max_sentences":4,"max_chars":600}},
   {"id":27,"name":"P88 ตรงคำถามคลอแรน","input":"คลอแรนใช้ทำอะไร","checks":["short_definition","plain_language","technical_on_demand"],"expected":{"max_sentences":2,"max_chars":300}},
-  {"id":28,"name":"P88 ถามกลุ่ม IRAC","input":"สารนี้อยู่ IRAC อะไร","checks":["technical_detail_requested","answer_group_if_confirmed"],"expected":{"allow_technical":true}}
+  {"id":28,"name":"P88 ถามกลุ่ม IRAC","input":"สารนี้อยู่ IRAC อะไร","checks":["technical_detail_requested","answer_group_if_confirmed"],"expected":{"allow_technical":true}},
+  {"id":29,"name":"P88 Character อาการและทางเลือก","input":"ใบมะม่วงเป็นจุดดำ ๆ ใช้อะไรดี","checks":["warm_brand_assistant","plain_language","product_help","no_academic_opening"],"expected":{"max_sentences":5,"max_chars":600}},
+  {"id":30,"name":"P88 Character สินค้า","input":"โคเฟสต้าใช้ทำอะไร","checks":["brand_product_explanation","short_reason","no_hard_sell","no_catalog_tone"],"expected":{"max_sentences":3,"max_chars":400}},
+  {"id":31,"name":"P88 Character ช่วยต่อ","input":"ถ้ายังไม่แน่ใจควรทำยังไง","checks":["caring_next_step","one_question","natural_line"],"expected":{"max_sentences":4,"max_chars":500}}
 ]
