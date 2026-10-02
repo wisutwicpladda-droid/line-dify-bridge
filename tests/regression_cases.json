@@ -17,5 +17,10 @@
   {"id":16,"name":"Critical A แตงโมยอดหงิก","input":"ปลูกแตงโมแล้วยอดหงิกๆ ไม่เดิน พลิกดูใต้ใบเจอตัวเล็กๆ สีเหลืองวิ่งไปมา ต้องใช้ยาอะไร","checks":["farmer_first","likely_pest","actionable_next_step","one_question"]},
   {"id":17,"name":"Critical B ด้วงในทุเรียน","input":"Thiamethoxam 14.1% + Lambda-cyhalothrin 10.6% ZC จะเอาไปฉีดแมลงปีกแข็งในทุเรียน","checks":["beetle_reasoning","contact_explanation","systemic_explanation","pollinator_warning"]},
   {"id":18,"name":"Critical C Acetamiprid ผ่าดอก","input":"Acetamiprid 2.85% EC ฉีดผ่าดอกข้าวโพดได้ไหม","checks":["direct_answer","external_vs_company","pollinator_warning"]},
-  {"id":19,"name":"Critical D สินค้า ICP","input":"อินเนอร์คืออะไร","checks":["company_product","natural_explanation"]}
+  {"id":19,"name":"Critical D สินค้า ICP","input":"อินเนอร์คืออะไร","checks":["company_product","natural_explanation"]},
+  {"id":20,"name":"Response budget สลับกลุ่ม","input":"ฉีดไตรอะโซลไปอาทิตย์ที่แล้ว รอบนี้ควรสลับไปกลุ่มไหนดี","checks":["short_followup","progressive_disclosure","current_turn","technical_detail_on_demand"],"expected":{"max_sentences":4,"max_chars":600,"avoid_detail":["FRAC 3","M03","M05","M07","M11"]}},
+  {"id":21,"name":"Response budget ถาม FRAC 3","input":"FRAC 3 คืออะไร","checks":["short_definition","technical_detail_on_demand"],"expected":{"max_sentences":3,"max_chars":350}},
+  {"id":22,"name":"Technical detail on demand","input":"ขอรายละเอียด FRAC 3 แบบเต็ม","checks":["technical_detail_requested","progressive_disclosure"],"expected":{"allow_longer":true}},
+  {"id":23,"name":"Response budget อินเนอร์","input":"อินเนอร์คืออะไร","checks":["company_product","short_definition","no_rate_unless_asked"],"expected":{"max_sentences":4,"max_chars":350}},
+  {"id":24,"name":"Response budget เพลี้ยไฟแตงโม","input":"ใช้ยาอะไรกับเพลี้ยไฟแตงโม","checks":["pest","short_recommendation","ask_before_recommend"],"expected":{"max_sentences":5,"max_bullets":3,"max_chars":600}}
 ]
