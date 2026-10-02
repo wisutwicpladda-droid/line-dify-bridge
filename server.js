@@ -409,20 +409,102 @@ async function findConversation(sessionId) {
   return '';
 }
 
-async function askDify(sessionId, text) {
+// ดึงไฟล์ไบนารีจาก LINE โดยไม่พยายาม parse เป็น JSON
+function requestBuffer(method, url, headers, maxBytes) {
+  const limit = maxBytes || 12 * 1024 * 1024;
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const isHttp = u.protocol === 'http:';
+    const opts = {
+      hostname: u.hostname,
+      port: u.port || (isHttp ? 80 : 443),
+      path: u.pathname + (u.search || ''),
+      method,
+      headers: Object.assign({}, headers || {}),
+      timeout: 180000
+    };
+    const req = (isHttp ? http : https).request(opts, (res) => {
+      const chunks = [];
+      let total = 0;
+      let tooLarge = false;
+      res.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > limit) {
+          tooLarge = true;
+          res.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => {
+        if (tooLarge) return reject(new Error(`binary response exceeds ${limit} bytes`));
+        resolve({ status: res.statusCode, headers: res.headers || {}, body: Buffer.concat(chunks) });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.end();
+  });
+}
+
+function multipartImageBody(buffer, filename, contentType, user) {
+  const boundary = '----NongLaddaImage' + crypto.randomBytes(12).toString('hex');
+  const safeName = String(filename || 'line-image.jpg').replace(/[\r\n"\\]/g, '_');
+  const type = String(contentType || 'image/jpeg').split(';')[0].trim() || 'image/jpeg';
+  const head = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="user"\r\n\r\n${String(user || 'line-user')}\r\n` +
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+    `Content-Type: ${type}\r\n\r\n`,
+    'utf8'
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+  return { body: Buffer.concat([head, buffer, tail]), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+function imageExtension(contentType) {
+  const t = String(contentType || '').toLowerCase().split(';')[0].trim();
+  return t === 'image/png' ? 'png' : t === 'image/webp' ? 'webp' : t === 'image/gif' ? 'gif' : 'jpg';
+}
+
+async function uploadLineImageToDify(messageId, sessionId) {
+  if (!CH_TOKEN || !DIFY_KEY) throw new Error('missing LINE/Dify credentials');
+  const raw = await requestBuffer(
+    'GET',
+    `${LINE_DATA_API}/v2/bot/message/${encodeURIComponent(messageId)}/content`,
+    { Authorization: 'Bearer ' + CH_TOKEN },
+    10 * 1024 * 1024
+  );
+  if (raw.status !== 200 || !raw.body.length) throw new Error(`LINE image download failed (${raw.status})`);
+  const contentType = String(raw.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
+  if (!contentType.startsWith('image/')) throw new Error(`LINE content is not an image (${contentType})`);
+  const form = multipartImageBody(raw.body, `line-${messageId}.${imageExtension(contentType)}`, contentType, sessionId);
+  const uploaded = await request('POST', `${DIFY_BASE}/files/upload`, {
+    Authorization: `Bearer ${DIFY_KEY}`,
+    'Content-Type': form.contentType
+  }, form.body);
+  const id = uploaded.data && (uploaded.data.id || uploaded.data.file_id);
+  if (![200, 201].includes(uploaded.status) || !id) {
+    throw new Error(`Dify image upload failed (${uploaded.status})`);
+  }
+  return { type: 'image', transfer_method: 'local_file', upload_file_id: String(id) };
+}
+
+async function askDify(sessionId, text, files) {
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const conversationId = await findConversation(sessionId);
   const difyQuery = sheetContext.enrichQuery(text, productMaster.master, productMaster.usage, kbSync.levels);
   if (difyQuery !== text) console.log(`[sheet-context] ${String(sessionId).slice(0, 8)} attached verified sugarcane herbicide matches`);
   try {
-    const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, {
+    const payload = {
       inputs: {},
       query: difyQuery,
       response_mode: 'blocking',
       user: sessionId,
       conversation_id: conversationId,
       auto_generate_name: true
-    });
+    };
+    if (Array.isArray(files) && files.length) payload.files = files;
+    const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
     if (r.status === 200 && r.data && typeof r.data.answer === 'string') {
       const guarded = guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
       return stripVisibleCitations(guarded);
@@ -2117,10 +2199,11 @@ async function handleEvent(ev) {
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
+  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่ม ห้ามเดา';
   else if (ev.message.type === 'sticker') text = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
   else return;
 
-  const shown = ev.message.type === 'text' ? text : '(สติกเกอร์)';
+  const shown = ev.message.type === 'text' ? text : (ev.message.type === 'image' ? '(รูปภาพจากลูกค้า)' : '(สติกเกอร์)');
   const s = touchSession(sessionId, stype, shown);
   const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
@@ -2267,7 +2350,18 @@ async function handleEvent(ev) {
 
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
 
-  let answer = await askDify(sessionId, text);
+  let answer = '';
+  if (ev.message.type === 'image') {
+    try {
+      const imageFile = await uploadLineImageToDify(ev.message.id, sessionId);
+      answer = await askDify(sessionId, text, [imageFile]);
+    } catch (e) {
+      console.log(`[image] ${sessionId.slice(0, 8)} failed:`, e.message);
+      answer = 'น้องลัดดารับรูปแล้วค่ะ แต่ตอนนี้ระบบยังเปิดดูรูปนี้ไม่ได้ รบกวนพิมพ์อาการหรือสิ่งที่พบในแปลงเป็นข้อความก่อนนะคะ';
+    }
+  } else {
+    answer = await askDify(sessionId, text);
+  }
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
   const pplan = pimgPlan(s, text, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
