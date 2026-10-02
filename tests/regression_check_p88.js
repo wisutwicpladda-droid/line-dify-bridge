@@ -12,9 +12,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(cases.length >= 31, 'p88 ต้องมี regression อย่างน้อย 31 เคส แต่พบ ' + cases.length);
+assert(cases.length >= 32, 'p100 ต้องมี regression อย่างน้อย 32 เคส แต่พบ ' + cases.length);
 const byId = new Map(cases.map((c) => [c.id, c]));
-for (const id of [25, 26, 27, 28, 29, 30, 31]) assert(byId.has(id), 'ขาด p88 case ' + id);
+for (const id of [25, 26, 27, 28, 29, 30, 31, 32]) assert(byId.has(id), 'ขาด p88 case ' + id);
 
 assert(prompt.includes('ผู้ช่วยแนะนำสินค้าและช่วยแก้ปัญหา'), 'p88 ไม่มี Product Assistant persona');
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
@@ -27,6 +27,10 @@ assert(prompt.includes('ตอบเป็นภาษาไทยเท่า�
 assert(prompt.includes('Emoji ได้ไม่เกิน 1–2 ตัวต่อย่อหน้า'), 'p88 ยังไม่จำกัด emoji ต่อย่อหน้า');
 assert(prompt.includes('สรรพนามหรือคำเรียกเชิงโรแมนติกทุกประเภท'), 'p88 ยังไม่กันสรรพนามโรแมนติก');
 assert(prompt.includes('ห้ามขอตัวอย่างภาพหรือวิดีโอ'), 'p88 ยังไม่กันการขอภาพหรือตัวอย่างวิดีโอ');
+assert(prompt.includes('ห้ามใช้เงื่อนไขนี้ปฏิเสธทันที'), 'p100 ยังใช้การไม่มีชื่อพืชในชีทเป็นเหตุผลปฏิเสธได้');
+assert(prompt.includes('ให้แนะนำสินค้านั้นแบบมีเงื่อนไขได้ แม้ชีทจะยังไม่ระบุพืชนั้นโดยตรง'), 'p100 ยังไม่มี active-ingredient fallback');
+assert(prompt.includes('คำว่า “ยังไม่มีสินค้า ICP ที่ตรง” ใช้ได้เฉพาะเมื่อ'), 'p100 ยังไม่มีเงื่อนไขการปฏิเสธที่ชัดเจน');
+assert(dsl.includes('สินค้า ICP Ladda สารสำคัญ'), 'p100 retrieval query ยังไม่ดึงสินค้าโดยสารสำคัญ');
 assert(prompt.includes('ไม่ hard sell ไม่โฆษณาเกินจริง'), 'p88 ไม่มี no-hard-sell rule');
 assert(prompt.includes('ถ้ายังไม่แน่ใจ ลองเช็กเพิ่มตรงนี้ก่อนนะคะ'), 'p88 ไม่มี caring customer language');
 assert(prompt.includes('ถ้าถามกว้าง ให้คุยเหมือนเพื่อนคู่คิด'), 'p88 ไม่มี friend-like broad-question rule');

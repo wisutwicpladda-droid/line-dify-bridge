@@ -29,5 +29,6 @@
   {"id":28,"name":"P88 ถามกลุ่ม IRAC","input":"สารนี้อยู่ IRAC อะไร","checks":["technical_detail_requested","answer_group_if_confirmed"],"expected":{"allow_technical":true}},
   {"id":29,"name":"P88 Character อาการและทางเลือก","input":"ใบมะม่วงเป็นจุดดำ ๆ ใช้อะไรดี","checks":["warm_brand_assistant","plain_language","product_help","no_academic_opening"],"expected":{"max_sentences":5,"max_chars":600}},
   {"id":30,"name":"P88 Character สินค้า","input":"โคเฟสต้าใช้ทำอะไร","checks":["brand_product_explanation","short_reason","no_hard_sell","no_catalog_tone"],"expected":{"max_sentences":3,"max_chars":400}},
-  {"id":31,"name":"P88 Character ช่วยต่อ","input":"ถ้ายังไม่แน่ใจควรทำยังไง","checks":["caring_next_step","one_question","natural_line"],"expected":{"max_sentences":4,"max_chars":500}}
+  {"id":31,"name":"P88 Character ช่วยต่อ","input":"ถ้ายังไม่แน่ใจควรทำยังไง","checks":["caring_next_step","one_question","natural_line"],"expected":{"max_sentences":4,"max_chars":500}},
+  {"id":32,"name":"P100 สารตรงแม้ชีทไม่ระบุพืช","input":"ข้าวโพดมีเพลี้ยไฟ ของลัดดามีสารที่ใช้ได้ไหม","checks":["ingredient_match","company_product_candidate","crop_not_a_gate","conditional_recommendation","no_rate_unless_asked"],"expected":{"max_sentences":5,"max_chars":700}}
 ]
