@@ -22,6 +22,11 @@ assert(prompt.includes('วิชาการอยู่เบื้องห�
 assert(prompt.includes('ถ้าถามว่า “ตัวไหนดี”'), 'p88 ไม่มี choose-a-direction rule');
 assert(prompt.includes('ไม่แสดงแหล่งอ้างอิง ลิงก์ หรือ citation'), 'p88 ไม่มี visible-citation rule');
 assert(prompt.includes('ดูแลเหมือนพี่สาวที่พร้อมช่วย'), 'p88 ไม่มี warm sister character');
+assert(prompt.includes('แทนตัวเองว่า “น้องลัดดา” เสมอ'), 'p88 ยังไม่บังคับชื่อตัวเอง');
+assert(prompt.includes('ตอบเป็นภาษาไทยเท่านั้น'), 'p88 ยังไม่บังคับภาษาไทย');
+assert(prompt.includes('Emoji ได้ไม่เกิน 1–2 ตัวต่อย่อหน้า'), 'p88 ยังไม่จำกัด emoji ต่อย่อหน้า');
+assert(prompt.includes('สรรพนามหรือคำเรียกเชิงโรแมนติกทุกประเภท'), 'p88 ยังไม่กันสรรพนามโรแมนติก');
+assert(prompt.includes('ห้ามขอตัวอย่างภาพหรือวิดีโอ'), 'p88 ยังไม่กันการขอภาพหรือตัวอย่างวิดีโอ');
 assert(prompt.includes('ไม่ hard sell ไม่โฆษณาเกินจริง'), 'p88 ไม่มี no-hard-sell rule');
 assert(prompt.includes('ถ้ายังไม่แน่ใจ ลองเช็กเพิ่มตรงนี้ก่อนนะคะ'), 'p88 ไม่มี caring customer language');
 assert(prompt.includes('ถ้าถามกว้าง ให้คุยเหมือนเพื่อนคู่คิด'), 'p88 ไม่มี friend-like broad-question rule');
