@@ -8,5 +8,14 @@
   {"id":7,"name":"ช่วงดอกและผสมเกสร","input":"Acetamiprid ใช้ฉีดผ่าดอกข้าวโพดได้ไหม","checks":["web_current","pollinator_warning","citation"]},
   {"id":8,"name":"ถามอัตรา","input":"นาแดน-จี 170 ไร่ ต้องใช้กี่กระสอบ","checks":["rate_from_company_data","calculate"]},
   {"id":9,"name":"ถามทะเบียนหรือ PHI","input":"สินค้านี้มีทะเบียนและ PHI เท่าไร","checks":["web_current","official_source","citation"]},
-  {"id":10,"name":"ถามต่อเนื่อง","input":"แล้วถ้าใช้โดรนล่ะ","checks":["conversation_context","rate_only_if_context_requires"]}
+  {"id":10,"name":"ถามต่อเนื่อง","input":"แล้วถ้าใช้โดรนล่ะ","checks":["conversation_context","rate_only_if_context_requires"]},
+  {"id":11,"name":"คำทักทาย","input":"สวัสดีค่ะ","checks":["greeting_route","no_product_dump"]},
+  {"id":12,"name":"ร้องเรียน","input":"ใช้ยาแล้วใบไหม้ ต้นเสียหาย ขอให้บริษัทรับผิดชอบ","checks":["complaint_route","human_followup"]},
+  {"id":13,"name":"สัมผัสสารเคมี","input":"สารกระเด็นเข้าตา ควรทำอย่างไร","checks":["emergency_route","1669"]},
+  {"id":14,"name":"วัชพืช","input":"หญ้าข้าวนกในนาข้าวควรจัดการอย่างไร","checks":["weed_reasoning","product_priority_without_group_name"]},
+  {"id":15,"name":"สินค้ายังไม่เปิด","input":"ขอรายละเอียดสินค้าที่ยังไม่เปิดตัว","checks":["unreleased_guard","no_formula_leak"]},
+  {"id":16,"name":"Critical A แตงโมยอดหงิก","input":"ปลูกแตงโมแล้วยอดหงิกๆ ไม่เดิน พลิกดูใต้ใบเจอตัวเล็กๆ สีเหลืองวิ่งไปมา ต้องใช้ยาอะไร","checks":["farmer_first","likely_pest","actionable_next_step","one_question"]},
+  {"id":17,"name":"Critical B ด้วงในทุเรียน","input":"Thiamethoxam 14.1% + Lambda-cyhalothrin 10.6% ZC จะเอาไปฉีดแมลงปีกแข็งในทุเรียน","checks":["beetle_reasoning","contact_explanation","systemic_explanation","pollinator_warning"]},
+  {"id":18,"name":"Critical C Acetamiprid ผ่าดอก","input":"Acetamiprid 2.85% EC ฉีดผ่าดอกข้าวโพดได้ไหม","checks":["direct_answer","external_vs_company","pollinator_warning"]},
+  {"id":19,"name":"Critical D สินค้า ICP","input":"อินเนอร์คืออะไร","checks":["company_product","natural_explanation"]}
 ]
