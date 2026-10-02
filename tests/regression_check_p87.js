@@ -17,6 +17,7 @@ const byId = new Map(cases.map((c) => [c.id, c]));
 for (const id of [20, 21, 22, 23, 24]) assert(byId.has(id), 'ขาด response-budget case ' + id);
 
 assert(prompt.includes('งบความยาวของคำตอบ'), 'p87 ไม่มี response budget');
+assert(prompt.includes('คำถามความหมายตรง ๆ'), 'p87 ไม่มี short direct-definition rule');
 assert(prompt.includes('Progressive') || prompt.includes('ข้อมูลรอง'), 'p87 ไม่มี progressive disclosure');
 assert(prompt.includes('ตอบเฉพาะงานของข้อความล่าสุด'), 'p87 ยังไม่บังคับ current-turn focus');
 assert(prompt.includes('หนึ่งข้อความควรมีงานหลักเพียงหนึ่งอย่าง'), 'p87 ไม่มี one-turn-one-job');
