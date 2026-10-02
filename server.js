@@ -408,6 +408,56 @@ async function findConversation(sessionId) {
   return '';
 }
 
+// p77: Dify/Gemini อาจคืนแหล่งอ้างอิงจาก Google Grounding ใน metadata
+// ส่งต่อเฉพาะ URL ภายนอกที่มีอยู่จริง สูงสุด 3 รายการ และไม่เปิดเผย retriever_resources
+function citationUrl(value) {
+  const u = String(value || '').trim();
+  if (!/^https?:\/\//i.test(u)) return '';
+  if (/docs\.google\.com\/spreadsheets\/d\/(1V8urwZfZyAAMF8bMdKHhlWGqBPNAp5MDScKDPtRrBOk|155mB2y8vpDYITc49ZbsAWKdjaJXz31EMGBHKUiO4_pU)/i.test(u)) return '';
+  return u;
+}
+
+function extractDifySources(data) {
+  const meta = data && data.metadata;
+  if (!meta || typeof meta !== 'object') return [];
+  const raw = [];
+  for (const key of ['citations', 'references', 'sources', 'grounding_metadata', 'groundingMetadata']) {
+    const value = meta[key];
+    if (Array.isArray(value)) raw.push(...value);
+    else if (value && typeof value === 'object') raw.push(value);
+  }
+  const out = [];
+  const seen = new Set();
+  const visit = (item) => {
+    if (out.length >= 3 || item == null) return;
+    if (typeof item === 'string') {
+      const url = citationUrl(item);
+      if (url && !seen.has(url)) { seen.add(url); out.push({ title: url, url }); }
+      return;
+    }
+    if (Array.isArray(item)) { item.forEach(visit); return; }
+    if (typeof item !== 'object') return;
+    const url = citationUrl(item.url || item.uri || item.link || item.source_url || item.sourceUrl);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      const title = String(item.title || item.name || item.document_name || item.documentName || url).trim();
+      out.push({ title: title || url, url });
+      return;
+    }
+    Object.values(item).forEach(visit);
+  };
+  raw.forEach(visit);
+  return out;
+}
+
+function appendDifyCitations(answer, data) {
+  const text = String(answer || '').trim();
+  if (!text || /แหล่งอ้างอิง|อ้างอิงจาก|https?:\/\//i.test(text)) return text;
+  const sources = extractDifySources(data);
+  if (!sources.length) return text;
+  return `${text}\n\nแหล่งอ้างอิง:\n${sources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`;
+}
+
 async function askDify(sessionId, text) {
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const conversationId = await findConversation(sessionId);
@@ -422,7 +472,10 @@ async function askDify(sessionId, text) {
       conversation_id: conversationId,
       auto_generate_name: true
     });
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') return guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
+    if (r.status === 200 && r.data && typeof r.data.answer === 'string') {
+      const guarded = guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
+      return appendDifyCitations(guarded, r.data);
+    }
     console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
   } catch (e) { console.log('dify fetch error:', e.message); }
   return '';
@@ -3427,7 +3480,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.24', sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.25', citations: true, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
