@@ -13,6 +13,10 @@ function stripVisibleCitations(answer) {
   text = text.replace(/\s*\[(?:cite|citation|source|ref(?:erence)?)\s*:?\s*\d+(?:\s*[,;]\s*\d+)*\]/gi, '');
   text = text.replace(/\s*【\s*(?:cite|citation|source|ref(?:erence)?)?\s*\d+(?:\s*[,;]\s*\d+)*\s*】/gi, '');
   text = text.replace(/\s*\((?:cite|citation|source|ref(?:erence)?)\s*:?\s*\d+(?:\s*[,;]\s*\d+)*\)/gi, '');
+  // LINE should show product names as plain quoted text. The model can still
+  // occasionally emit Markdown bold despite the prompt rule, so normalize it
+  // here as a deterministic final guard before the message leaves the bridge.
+  text = text.replace(/\*\*([^*\n]+?)\*\*/g, '"$1"');
   return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 

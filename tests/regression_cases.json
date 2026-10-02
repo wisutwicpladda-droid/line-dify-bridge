@@ -32,5 +32,6 @@
   {"id":31,"name":"P88 Character ช่วยต่อ","input":"ถ้ายังไม่แน่ใจควรทำยังไง","checks":["caring_next_step","one_question","natural_line"],"expected":{"max_sentences":4,"max_chars":500}},
   {"id":32,"name":"P100 สารตรงแม้ชีทไม่ระบุพืช","input":"ข้าวโพดมีเพลี้ยไฟ ของลัดดามีสารที่ใช้ได้ไหม","checks":["ingredient_match","company_product_candidate","crop_not_a_gate","conditional_recommendation","no_rate_unless_asked"],"expected":{"max_sentences":5,"max_chars":700}},
   {"id":33,"name":"P101 ตอบสั้นแบบแอดมินและใช้ชื่อสินค้าในเครื่องหมายคำพูด","input":"ทูโฟฟอสใช้ทำอะไร","checks":["short_definition","no_markdown_bold","no_forced_emoji","admin_style"],"expected":{"max_sentences":2,"max_chars":220}},
-  {"id":34,"name":"P102 สินค้าบำรุงจากองค์ประกอบแม้ชีทไม่ระบุพืช","input":"บอมส์ ไวท์ใช้บำรุงมะม่วงได้ไหม","checks":["nutrient_composition","general_agriculture_reasoning","conditional_recommendation","no_rate_unless_asked"],"expected":{"max_sentences":3,"max_chars":350}}
+  {"id":34,"name":"P102 สินค้าบำรุงจากองค์ประกอบแม้ชีทไม่ระบุพืช","input":"บอมส์ ไวท์ใช้บำรุงมะม่วงได้ไหม","checks":["nutrient_composition","general_agriculture_reasoning","conditional_recommendation","no_rate_unless_asked"],"expected":{"max_sentences":3,"max_chars":350}},
+  {"id":35,"name":"P103 เปลี่ยน Markdown bold เป็นเครื่องหมายคำพูด","input":"บอมส์ ไวท์ใช้บำรุงมะม่วงได้ไหม","checks":["no_markdown_bold","quoted_product_name","bridge_format_guard"],"expected":{"max_sentences":3,"max_chars":350,"forbid":["**"]}}
 ]

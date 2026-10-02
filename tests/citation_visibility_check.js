@@ -22,6 +22,10 @@ const cases = [
   {
     input: 'คำตอบปกติ ไม่มี citation และไม่มีลิงก์ค่ะ',
     expected: 'คำตอบปกติ ไม่มี citation และไม่มีลิงก์ค่ะ'
+  },
+  {
+    input: '**บอมส์ ไวท์** มี **แคลเซียม (Ca) 9%** และโบรอน (B) 1%',
+    expected: '"บอมส์ ไวท์" มี "แคลเซียม (Ca) 9%" และโบรอน (B) 1%'
   }
 ];
 
@@ -31,4 +35,4 @@ for (const c of cases) {
   assert(!/\[\s*(?:cite|citation)\b|แหล่งอ้างอิง|https?:\/\//i.test(output), `ยังมี citation หลุด: ${output}`);
 }
 
-console.log(`PASS: citation visibility guard ${cases.length} cases`);
+console.log(`PASS: citation/format visibility guard ${cases.length} cases`);
