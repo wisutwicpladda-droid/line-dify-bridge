@@ -12,9 +12,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(cases.length >= 33, 'p101 ต้องมี regression อย่างน้อย 33 เคส แต่พบ ' + cases.length);
+assert(cases.length >= 34, 'p102 ต้องมี regression อย่างน้อย 34 เคส แต่พบ ' + cases.length);
 const byId = new Map(cases.map((c) => [c.id, c]));
-for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33]) assert(byId.has(id), 'ขาด p88 case ' + id);
+for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34]) assert(byId.has(id), 'ขาด p88 case ' + id);
 
 assert(prompt.includes('ผู้ช่วยแนะนำสินค้าและช่วยแก้ปัญหา'), 'p88 ไม่มี Product Assistant persona');
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
@@ -31,6 +31,8 @@ assert(prompt.includes('สรรพนามหรือคำเรียก�
 assert(prompt.includes('ห้ามขอตัวอย่างภาพหรือวิดีโอ'), 'p88 ยังไม่กันการขอภาพหรือตัวอย่างวิดีโอ');
 assert(prompt.includes('ห้ามใช้เงื่อนไขนี้ปฏิเสธทันที'), 'p100 ยังใช้การไม่มีชื่อพืชในชีทเป็นเหตุผลปฏิเสธได้');
 assert(prompt.includes('ให้แนะนำสินค้านั้นแบบมีเงื่อนไขได้ แม้ชีทจะยังไม่ระบุพืชนั้นโดยตรง'), 'p100 ยังไม่มี active-ingredient fallback');
+assert(prompt.includes('กติกานี้ใช้กับคำถามบำรุง ฟื้นต้น ทำใบ และธาตุอาหารด้วย'), 'p102 ยังไม่รองรับ nutrient fallback');
+assert(dsl.includes('สินค้า ICP Ladda บำรุง ธาตุอาหาร สารเสริม'), 'p102 retrieval query ยังไม่ดึงสินค้าบำรุง');
 assert(prompt.includes('คำว่า “ยังไม่มีสินค้า ICP ที่ตรง” ใช้ได้เฉพาะเมื่อ'), 'p100 ยังไม่มีเงื่อนไขการปฏิเสธที่ชัดเจน');
 assert(dsl.includes('สินค้า ICP Ladda สารสำคัญ'), 'p100 retrieval query ยังไม่ดึงสินค้าโดยสารสำคัญ');
 assert(prompt.includes('ไม่ hard sell ไม่โฆษณาเกินจริง'), 'p88 ไม่มี no-hard-sell rule');
@@ -68,5 +70,7 @@ for (const id of [29, 30, 31]) {
 }
 assert(byId.get(33).expected.max_sentences === 2, 'case 33 ต้องตอบไม่เกิน 2 ประโยค');
 assert(byId.get(33).expected.max_chars === 220, 'case 33 ต้องมีงบ 220 ตัวอักษร');
+assert(byId.get(34).expected.max_sentences === 3, 'case 34 ต้องตอบไม่เกิน 3 ประโยค');
+assert(byId.get(34).expected.max_chars === 350, 'case 34 ต้องมีงบ 350 ตัวอักษร');
 
 console.log('PASS: p88 character/product-first contract ' + cases.length + ' cases; persona, tone, response strategy and settings verified');
