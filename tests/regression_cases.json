@@ -22,5 +22,9 @@
   {"id":21,"name":"Response budget ถาม FRAC 3","input":"FRAC 3 คืออะไร","checks":["short_definition","technical_detail_on_demand"],"expected":{"max_sentences":3,"max_chars":350}},
   {"id":22,"name":"Technical detail on demand","input":"ขอรายละเอียด FRAC 3 แบบเต็ม","checks":["technical_detail_requested","progressive_disclosure"],"expected":{"allow_longer":true}},
   {"id":23,"name":"Response budget อินเนอร์","input":"อินเนอร์คืออะไร","checks":["company_product","short_definition","no_rate_unless_asked"],"expected":{"max_sentences":4,"max_chars":350}},
-  {"id":24,"name":"Response budget เพลี้ยไฟแตงโม","input":"ใช้ยาอะไรกับเพลี้ยไฟแตงโม","checks":["pest","short_recommendation","ask_before_recommend"],"expected":{"max_sentences":5,"max_bullets":3,"max_chars":600}}
+  {"id":24,"name":"Response budget เพลี้ยไฟแตงโม","input":"ใช้ยาอะไรกับเพลี้ยไฟแตงโม","checks":["pest","short_recommendation","ask_before_recommend"],"expected":{"max_sentences":5,"max_bullets":3,"max_chars":600}},
+  {"id":25,"name":"P88 Product first ส้มโอ","input":"ใบส้มโอมีจุดสีน้ำตาลเหลือง ลามเป็นแผลแห้ง เกิดจากเชื้อราอะไร และมียาตัวไหนแนะนำบ้าง","checks":["product_first","bacterial_vs_fungal","no_latin_default","no_generic_list","company_product_check"],"expected":{"max_sentences":5,"max_chars":800,"forbid":["Xanthomonas citri","FRAC","แหล่งอ้างอิง"]}},
+  {"id":26,"name":"P88 Product first เพลี้ยไฟทุเรียน","input":"เพลี้ยไฟทุเรียนใช้ตัวไหนดี","checks":["product_first","company_product_first","plain_reason","no_biology_lecture"],"expected":{"max_sentences":4,"max_chars":600}},
+  {"id":27,"name":"P88 ตรงคำถามคลอแรน","input":"คลอแรนใช้ทำอะไร","checks":["short_definition","plain_language","technical_on_demand"],"expected":{"max_sentences":2,"max_chars":300}},
+  {"id":28,"name":"P88 ถามกลุ่ม IRAC","input":"สารนี้อยู่ IRAC อะไร","checks":["technical_detail_requested","answer_group_if_confirmed"],"expected":{"allow_technical":true}}
 ]
