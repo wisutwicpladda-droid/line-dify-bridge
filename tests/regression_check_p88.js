@@ -12,9 +12,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(cases.length >= 32, 'p100 ต้องมี regression อย่างน้อย 32 เคส แต่พบ ' + cases.length);
+assert(cases.length >= 33, 'p101 ต้องมี regression อย่างน้อย 33 เคส แต่พบ ' + cases.length);
 const byId = new Map(cases.map((c) => [c.id, c]));
-for (const id of [25, 26, 27, 28, 29, 30, 31, 32]) assert(byId.has(id), 'ขาด p88 case ' + id);
+for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33]) assert(byId.has(id), 'ขาด p88 case ' + id);
 
 assert(prompt.includes('ผู้ช่วยแนะนำสินค้าและช่วยแก้ปัญหา'), 'p88 ไม่มี Product Assistant persona');
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
@@ -24,7 +24,9 @@ assert(prompt.includes('ไม่แสดงแหล่งอ้างอิ�
 assert(prompt.includes('ดูแลเหมือนพี่สาวที่พร้อมช่วย'), 'p88 ไม่มี warm sister character');
 assert(prompt.includes('แทนตัวเองว่า “น้องลัดดา” เสมอ'), 'p88 ยังไม่บังคับชื่อตัวเอง');
 assert(prompt.includes('ตอบเป็นภาษาไทยเท่านั้น'), 'p88 ยังไม่บังคับภาษาไทย');
-assert(prompt.includes('Emoji ได้ไม่เกิน 1–2 ตัวต่อย่อหน้า'), 'p88 ยังไม่จำกัด emoji ต่อย่อหน้า');
+assert(prompt.includes('ไม่ต้องใส่ Emoji เป็นค่าเริ่มต้นและไม่ต้องใส่ทุกคำตอบ'), 'p88 ยังบังคับ emoji เป็นค่าเริ่มต้น');
+assert(prompt.includes('ไม่ใช้ Markdown ตัวหนาและไม่ใช้เครื่องหมาย ** เด็ดขาด'), 'p88 ยังไม่กัน Markdown ตัวหนา');
+assert(prompt.includes('คิดเหมือนแอดมิน LINE ที่ตอบลูกค้าจริง'), 'p88 ยังไม่มีโหมดตอบแบบแอดมิน');
 assert(prompt.includes('สรรพนามหรือคำเรียกเชิงโรแมนติกทุกประเภท'), 'p88 ยังไม่กันสรรพนามโรแมนติก');
 assert(prompt.includes('ห้ามขอตัวอย่างภาพหรือวิดีโอ'), 'p88 ยังไม่กันการขอภาพหรือตัวอย่างวิดีโอ');
 assert(prompt.includes('ห้ามใช้เงื่อนไขนี้ปฏิเสธทันที'), 'p100 ยังใช้การไม่มีชื่อพืชในชีทเป็นเหตุผลปฏิเสธได้');
@@ -64,5 +66,7 @@ for (const id of [29, 30, 31]) {
   assert(Number.isInteger(expected.max_sentences), 'case ' + id + ' ไม่มี max_sentences');
   assert(Number.isInteger(expected.max_chars), 'case ' + id + ' ไม่มี max_chars');
 }
+assert(byId.get(33).expected.max_sentences === 2, 'case 33 ต้องตอบไม่เกิน 2 ประโยค');
+assert(byId.get(33).expected.max_chars === 220, 'case 33 ต้องมีงบ 220 ตัวอักษร');
 
 console.log('PASS: p88 character/product-first contract ' + cases.length + ' cases; persona, tone, response strategy and settings verified');
