@@ -19,6 +19,9 @@ assert(concise.length < long.length, 'ordinary reply should be compacted');
 assert(concise.includes('แกนเตอร์'), 'product line must survive compaction');
 assert(concise.length <= ORDINARY_MAX * 1.45, 'compacted reply should remain short');
 
+const structured = 'อาการนี้น่าจะเป็นโรคค่ะ\nแนวทางแก้ไขเบื้องต้น:\n1. ตัดส่วนที่เป็นโรคออก\n2. ลดความชื้นในแปลง';
+assert.strictEqual(compactResponse(structured, 'มีปัญหาในแปลงไหม'), structured, 'structured treatment steps must not be truncated');
+
 const rate = compactResponse(long, 'มี 20 ไร่ ใช้อัตราเท่าไร', ['แกนเตอร์']);
 assert.strictEqual(rate, long, 'rate requests must keep full details');
 

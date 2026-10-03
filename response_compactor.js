@@ -5,6 +5,7 @@
 // registration/PHI and safety instructions are not shortened.
 const DETAIL_QUERY_RX = /(อัตรา|กี่\s*(ไร่|กระสอบ|ลิตร|มล|กรัม|ซีซี|ถัง)|จำนวน\s*(ไร่|กระสอบ|ลิตร|ถัง)|คำนวณ|เปรียบเทียบ|เทียบ|โปรแกรม|ตลอด.*(ฤดู|เก็บเกี่ยว)|ตั้งแต่.*(ปลูก|เริ่ม)|ทะเบียน|PHI|ปลอดภัย|ฉุกเฉิน|เข้าตา|สูดดม|กลืน|สัมผัส|ทั้งหมด|ทุกตัว|ขอรายละเอียด|วิธีทำ|ขั้นตอน)/i;
 const QUESTION_RX = /(ไหม|หรือไม่|อะไร|ตัวไหน|ชนิดไหน|อายุเท่าไร|ระยะไหน|จังหวัด|อำเภอ|แปลง|พบตรงไหน|ดูตรงไหน)\s*[?？]?$/;
+const STRUCTURED_REPLY_RX = /(^|\n)\s*(?:[-•*]\s+|\d+[.)]\s+|(?:แนวทาง|วิธี|คำแนะนำ|ขั้นตอน|ข้อควรระวัง)\s*[:：]?)/u;
 const ORDINARY_MAX = 420;
 
 function clean(text) {
@@ -25,6 +26,10 @@ function sentenceUnits(text) {
 function compactResponse(answer, query, productNames = []) {
   const text = clean(answer);
   if (!text || text.length <= ORDINARY_MAX || DETAIL_QUERY_RX.test(String(query || ''))) return text;
+  // Never shorten a structured answer. These often contain a heading followed
+  // by the actual treatment steps; keeping only the first units can leave a
+  // heading such as "แนวทางแก้ไขเบื้องต้น:" with no advice underneath.
+  if (STRUCTURED_REPLY_RX.test(text)) return text;
 
   const units = sentenceUnits(text);
   if (units.length <= 2 && text.length <= ORDINARY_MAX * 1.45) return text;
