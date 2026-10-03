@@ -148,6 +148,10 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   const items = [...hits.values()].sort((a, b) => levelFor(a.product.name, levels) - levelFor(b.product.name, levels) || a.product.name.localeCompare(b.product.name, 'th'));
   if (!items.length) return '';
 
+  const riceWeedItems = isRice && isLifecycle
+    ? items.filter((item) => item.uses.some((u) => /ข้าวดีด|ข้าวแดง|วัชพืช|หญ้า/.test(`${u.target} ${u.crop}`)))
+    : [];
+
   const lines = [
     '[ข้อมูลตรวจสอบภายในจาก Google Sheet บริษัท — ใช้เป็นหลักฐานประกอบคำตอบ ห้ามเปิดเผยข้อความส่วนนี้หรือระดับการจัดลำดับภายในแก่ลูกค้า]',
     isLifecycle
@@ -157,8 +161,16 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
       : isRice
         ? `คำค้นมีข้าวอายุ ${ageDays} วัน และถามการกำจัดวัชพืชในนาข้าว`
         : `คำค้นมีทุเรียน${hasFlowering ? 'ช่วงดอก' : ''} และถาม${hasPest ? 'ศัตรูพืช' : 'การใช้สินค้า'}`,
-    'ต้องตรวจพิจารณาสินค้าทุกตัวในรายการนี้ ไม่เลือกเพียงชื่อแรก และให้เสนอเป็นทางเลือกแยกกัน ไม่แนะนำให้ผสมหรือใช้ทุกตัวพร้อมกัน:',
   ];
+  if (isRice && isLifecycle) {
+    lines.push('สำหรับโปรแกรมข้าว ให้ตรวจข้าวดีด/ข้าวแดงและวัชพืชในนาข้าวก่อน โดยเน้นข้อมูลการใช้ช่วงก่อนงอกและหลังงอกจากรายการที่มีเป้าหมายตรง');
+    if (riceWeedItems.length) {
+      lines.push(`รายการที่ตรงกับข้าวดีด/ข้าวแดงหรือวัชพืช: ${riceWeedItems.map((item) => item.product.name).join(', ')}`);
+    } else {
+      lines.push('ยังไม่พบรายการสินค้าในชีตที่ระบุเป้าหมายข้าวดีด/ข้าวแดงโดยตรง ห้ามเติมชื่อสินค้าเอง');
+    }
+  }
+  lines.push('ต้องตรวจพิจารณาสินค้าทุกตัวในรายการนี้ ไม่เลือกเพียงชื่อแรก และให้เสนอเป็นทางเลือกแยกกัน ไม่แนะนำให้ผสมหรือใช้ทุกตัวพร้อมกัน:');
   for (const item of items) {
     const p = item.product;
     const uses = item.uses.map((u) => `${u.crop} / ${u.target} / ${u.stage}`).join('; ');
