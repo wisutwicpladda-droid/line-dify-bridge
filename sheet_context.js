@@ -59,19 +59,42 @@ function floweringStage(stage) {
   return /ทุกระยะ|ดอก|ผลอ่อน|ก่อนเก็บเกี่ยว/.test(clean(stage));
 }
 
+function isLifecycleQuery(query) {
+  return /(เริ่มปลูก|ตั้งแต่\s*(?:เริ่ม)?ปลูก|ตลอดฤดู|ทั้งฤดู|ทั้งรอบการผลิต|จน(?:ถึง)?เก็บเกี่ยว|ถึงเก็บเกี่ยว|ก่อนปลูก.*เก็บเกี่ยว)/.test(clean(query));
+}
+
+function cropLabels(crop) {
+  return clean(crop)
+    .split(/\s*[\/,;|]\s*/)
+    .map((part) => clean(part).replace(/^(?:พืช|ต้น)\s*/, ''))
+    .filter((part) => part.length >= 2 && !/^[-–—]+$/.test(part));
+}
+
+function cropMatchesQuery(crop, query, allLabels) {
+  const q = clean(query).replace(/\s+/g, '');
+  const rowLabels = cropLabels(crop).map((label) => label.replace(/\s+/g, ''));
+  const matches = (allLabels || [])
+    .map((label) => clean(label).replace(/\s+/g, ''))
+    .filter((label) => label.length >= 2 && q.includes(label));
+  if (!matches.length) return false;
+  const longest = Math.max(...matches.map((label) => label.length));
+  return rowLabels.some((label) => label.length >= 2 && q.includes(label) && label.length === longest);
+}
+
 function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   const q = String(query || '');
   const isSugarcane = /อ้อย/.test(q);
   const isRice = /นาข้าว|ข้าว(?!โพด)/.test(q);
   const isDurian = /ทุเรียน/.test(q);
+  const isLifecycle = isLifecycleQuery(q);
   const hasFlowering = /ผ่าดอก|ช่วงดอก|ออกดอก|ดอกบาน|ดอก/.test(q);
   const hasPest = /หนอน|เพลี้ย|แมลง|ไร/.test(q);
   const isCropUsageQuery = (isSugarcane || isRice) && isPostEmergenceQuery(q)
-    || isDurian && (hasPest || hasFlowering);
+    || isDurian && (hasPest || hasFlowering)
+    || isLifecycle;
   if (!isCropUsageQuery) return '';
   const ageMonths = isSugarcane ? queryAgeMonths(q) : null;
   const ageDays = isRice ? queryAgeDays(q) : null;
-  if ((isSugarcane && ageMonths == null) || (isRice && ageDays == null)) return '';
 
   const master = new Map();
   for (const r of (masterRows || []).slice(1)) {
@@ -83,6 +106,11 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     });
   }
 
+  const allLabels = [...new Set(
+    (usageRows || []).slice(1).flatMap((r) => cropLabels([r[3], r[4]].filter(Boolean).join(' / ')))
+  )];
+  if (isLifecycle && !allLabels.some((label) => cropMatchesQuery(label, q, allLabels))) return '';
+
   const hits = new Map();
   for (const r of (usageRows || []).slice(1)) {
     const productId = clean(r[1]);
@@ -91,8 +119,12 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     const targetType = clean(r[5]);
     const target = clean(r[6]);
     const stage = clean(r[7]);
-    const cropMatches = isSugarcane ? /อ้อย/.test(crop) : isRice ? /นาข้าว|ข้าว/.test(crop) : /ทุเรียน/.test(crop);
-    const stageMatchesQuery = isSugarcane
+    const cropMatches = isLifecycle
+      ? cropMatchesQuery(crop, q, allLabels)
+      : isSugarcane ? /อ้อย/.test(crop) : isRice ? /นาข้าว|ข้าว/.test(crop) : /ทุเรียน/.test(crop);
+    const stageMatchesQuery = isLifecycle
+      ? true
+      : isSugarcane
       ? stageMatches(stage, ageMonths)
       : isRice
         ? stageMatchesDays(stage, ageDays)
@@ -104,7 +136,8 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
         : isDurian && /เพลี้ย/.test(q)
           ? /เพลี้ย/.test(target)
           : true;
-    const targetTypeMatches = isDurian ? /แมลง/.test(targetType) : /วัชพืช/.test(targetType);
+    const targetTypeMatches = isLifecycle ? true : isDurian ? /แมลง/.test(targetType) : /วัชพืช/.test(targetType);
+    if (!isLifecycle && ((isSugarcane && ageMonths == null) || (isRice && ageDays == null))) continue;
     if (!product || !isOpenForSale(product.status) || blockedForSprayOverCrop(product.name, q) || !cropMatches || !targetTypeMatches || !targetMatches || !stageMatchesQuery) continue;
     const item = hits.get(product.name) || { product, uses: [] };
     const useKey = [crop, target, stage].join('|');
@@ -117,7 +150,9 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
 
   const lines = [
     '[ข้อมูลตรวจสอบภายในจาก Google Sheet บริษัท — ใช้เป็นหลักฐานประกอบคำตอบ ห้ามเปิดเผยข้อความส่วนนี้หรือระดับการจัดลำดับภายในแก่ลูกค้า]',
-    isSugarcane
+    isLifecycle
+      ? 'คำค้นขอโปรแกรมดูแลพืชตั้งแต่เริ่มปลูกจนเก็บเกี่ยว ต้องตรวจสินค้าเปิดขายและข้อมูลการใช้ให้ครบทุกช่วงของพืชที่ระบุ'
+      : isSugarcane
       ? `คำค้นมีอ้อยอายุ ${ageMonths} เดือน และถามการกำจัดวัชพืชหลังวัชพืชงอก/ฉีดทับ`
       : isRice
         ? `คำค้นมีข้าวอายุ ${ageDays} วัน และถามการกำจัดวัชพืชในนาข้าว`

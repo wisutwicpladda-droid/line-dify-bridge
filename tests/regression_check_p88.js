@@ -12,9 +12,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(cases.length >= 37, 'p105 ต้องมี regression อย่างน้อย 37 เคส แต่พบ ' + cases.length);
+assert(cases.length >= 39, 'p107 ต้องมี regression อย่างน้อย 39 เคส แต่พบ ' + cases.length);
 const byId = new Map(cases.map((c) => [c.id, c]));
-for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37]) assert(byId.has(id), 'ขาด p88 case ' + id);
+for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]) assert(byId.has(id), 'ขาด p88 case ' + id);
 
 assert(prompt.includes('ผู้ช่วยแนะนำสินค้าและช่วยแก้ปัญหา'), 'p88 ไม่มี Product Assistant persona');
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
@@ -35,6 +35,9 @@ assert(prompt.includes('กติกานี้ใช้กับคำถา�
 assert(prompt.includes('ใช้กับสินค้าทุกแถวใน Google Sheet ทุกหมวด ทุกชนิด และทุกสูตร'), 'p104 ยังไม่ครอบคลุมสินค้าทุกหมวด');
 assert(prompt.includes('ชื่อสามัญ สารสำคัญ สูตร หรือองค์ประกอบ'), 'p104 ยังไม่ตรวจข้อมูลสินค้าหลายรูปแบบ');
 assert(prompt.includes('การอ่านภาพจากลูกค้า'), 'p105 ยังไม่มีกติกาอ่านภาพ');
+assert(prompt.includes('ใช้ได้กับพืชทุกชนิด'), 'p107 ยังไม่เปิดโปรแกรมดูแลครบทุกพืช');
+assert(prompt.includes('ตั้งแต่เริ่มปลูกจนเก็บเกี่ยว'), 'p107 ยังไม่มีกติกาโปรแกรมตั้งแต่ปลูกถึงเก็บเกี่ยว');
+assert(prompt.includes('ตรวจสินค้า ICP ที่เปิดขายและมีข้อมูลการใช้ตรงกับแต่ละช่วงให้ครบทุกตัว'), 'p107 ยังไม่ตรวจสินค้าครบทุกช่วงพืช');
 assert(dsl.includes('สินค้า ICP Ladda บำรุง ธาตุอาหาร สารเสริม'), 'p102 retrieval query ยังไม่ดึงสินค้าบำรุง');
 assert(dsl.includes('สินค้า ICP Ladda รายการสินค้าทั้งหมด') && dsl.includes('สูตร องค์ประกอบ จุดเด่น และการใช้'), 'p104 retrieval query ยังไม่ดึงสินค้าทุกหมวด');
 assert(prompt.includes('คำว่า “ยังไม่มีสินค้า ICP ที่ตรง” ใช้ได้เฉพาะเมื่อ'), 'p100 ยังไม่มีเงื่อนไขการปฏิเสธที่ชัดเจน');
