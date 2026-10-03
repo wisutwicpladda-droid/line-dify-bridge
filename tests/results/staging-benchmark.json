@@ -1,0 +1,363 @@
+{
+  "measured_at": "2026-10-03T11:52:27.989Z",
+  "scope": "Real Bridge handlers, in-process; mocked LINE network; zero live customers. NOT real network p95.",
+  "routes": {
+    "greeting": {
+      "samples": 60,
+      "mean_ms": 1.4018149999999991,
+      "p95_ms": 2.072800000000001,
+      "input_tokens": 0,
+      "final_LINE_payload": [
+        {
+          "type": "text",
+          "text": "สวัสดีค่ะ น้องลัดดาช่วยเรื่องพืชและสินค้าเกษตรได้ วันนี้อยากปรึกษาเรื่องไหนคะ"
+        }
+      ]
+    },
+    "lookup": {
+      "samples": 60,
+      "mean_ms": 1.0887333333333307,
+      "p95_ms": 1.4934000000000083,
+      "input_tokens": 0,
+      "final_LINE_payload": [
+        {
+          "type": "text",
+          "text": "\"ไบเตอร์\" มีสารสำคัญ ไบเฟนทริน 5% + อิมิดาคลอพริด 25% SC ค่ะ"
+        }
+      ]
+    },
+    "package": {
+      "samples": 60,
+      "mean_ms": 1.029036666666672,
+      "p95_ms": 1.450999999999965,
+      "input_tokens": 0,
+      "final_LINE_payload": [
+        {
+          "type": "text",
+          "text": "\"นาแดน-จี\" มีขนาด 15 กิโลกรัม ค่ะ"
+        }
+      ]
+    }
+  },
+  "strategy": [
+    {
+      "id": "rice-barnyard-10d",
+      "context": {
+        "crop": "ข้าว",
+        "target": "หญ้าข้าวนก",
+        "age_days": 10
+      },
+      "primary": "P0034",
+      "order": [
+        "P0034",
+        "P0081",
+        "P0008",
+        "P0009",
+        "P0041"
+      ],
+      "actual": [
+        "P0034",
+        "P0081",
+        "P0008",
+        "P0009",
+        "P0041"
+      ],
+      "pass": true
+    },
+    {
+      "id": "rice-weedy-9d",
+      "context": {
+        "crop": "ข้าว",
+        "target": "ข้าวดีด",
+        "age_days": 9
+      },
+      "primary": "P0046",
+      "order": [
+        "P0046"
+      ],
+      "actual": [
+        "P0046"
+      ],
+      "pass": true
+    },
+    {
+      "id": "durian-thrips",
+      "context": {
+        "crop": "ทุเรียน",
+        "target": "เพลี้ยไฟ",
+        "stage": "ทุกระยะ"
+      },
+      "primary": "P0075",
+      "order": [
+        "P0075",
+        "P0062",
+        "P0087",
+        "P0017",
+        "P0029",
+        "P0031"
+      ],
+      "actual": [
+        "P0075",
+        "P0062",
+        "P0087",
+        "P0017",
+        "P0029",
+        "P0031"
+      ],
+      "pass": true
+    }
+  ],
+  "catalog": {
+    "products": 89,
+    "usage": 276,
+    "packages": 110,
+    "open": 88,
+    "version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+    "issues": [
+      {
+        "kind": "unmapped_image",
+        "name": "เลกาซี 20"
+      },
+      {
+        "kind": "unmapped_image",
+        "name": "เลกาซี20"
+      },
+      {
+        "product_id": "P0002",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0003",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0004",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0005",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0006",
+        "kind": "missing_image"
+      },
+      {
+        "product_id": "P0007",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0011",
+        "kind": "missing_image"
+      },
+      {
+        "product_id": "P0011",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0014",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0016",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0017",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0022",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0023",
+        "kind": "missing_image"
+      },
+      {
+        "product_id": "P0024",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0025",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0026",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0027",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0028",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0029",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0031",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0032",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0033",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0036",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0037",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0038",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0040",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0042",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0047",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0050",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0051",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0052",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0053",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0054",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0055",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0056",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0057",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0059",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0060",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0061",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0062",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0063",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0064",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0065",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0067",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0068",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0069",
+        "kind": "missing_usage"
+      },
+      {
+        "product_id": "P0071",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0072",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0073",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0075",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0078",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0079",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0079",
+        "kind": "missing_stage"
+      },
+      {
+        "product_id": "P0083",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0084",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0085",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0086",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0087",
+        "kind": "incomplete_rate"
+      },
+      {
+        "product_id": "P0089",
+        "kind": "missing_image"
+      }
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "exit_code": 0,
+    "test": "citation_visibility_check",
+    "output": "PASS: citation/format visibility guard 5 cases"
+  },
+  {
+    "exit_code": 0,
+    "test": "unreleased_guard_check",
+    "output": "PASS: canonical closed status and unavailable catalog fail closed"
+  },
+  {
+    "exit_code": 0,
+    "test": "response_compactor_check",
+    "output": "PASS: no semantic content removed"
+  },
+  {
+    "exit_code": 0,
+    "test": "kb_status_check",
+    "output": "PASS: KB build excludes products without explicit open-sale status"
+  },
+  {
+    "exit_code": 0,
+    "test": "product_validation_check",
+    "output": "PASS: product master validation checks identity, Strategy, status and usage completeness"
+  },
+  {
+    "exit_code": 0,
+    "test": "sheet_context_check",
+    "output": "PASS: lifecycle sheet context includes all verified crop stages and open products"
+  }
+]

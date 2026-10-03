@@ -13,6 +13,9 @@ function validateResponse(r,{catalog,context,candidates,requiredWarnings=[],requ
   if(!r||typeof r.answer_text!=='string'||!r.answer_text.trim())return ['missing_answer'];
   for(const key of ['product_ids_recommended','warnings_required','question_required','rate_refs','evidence_refs','image_product_ids'])if(!Array.isArray(r[key]))failures.push('invalid_'+key);
   if(failures.length)return failures;
+  if(typeof r.intent!=='string'||typeof r.uncertainty!=='string'||typeof r.handoff_action!=='string')failures.push('invalid_scalar_contract');
+  if(catalog)for(const match of r.answer_text.matchAll(/(?:สินค้า|แนะนำ)\s*["“]([^"”]+)["”]/g))
+    if(!catalog.index.resolve(match[1]))failures.push('unknown_named_product');
   if(/\*\*|\[cite[: ]|Expand|Skyrocket|Natural|Cosmic[- ]?star|Standard/i.test(r.answer_text))failures.push('internal_or_format_leak');
   const ids=[...new Set([...r.product_ids_recommended,...r.image_product_ids,...(r.primary_product_id?[r.primary_product_id]:[])])];
   if(ids.length&&!catalog)failures.push('catalog_unavailable');
@@ -42,12 +45,18 @@ function validateResponse(r,{catalog,context,candidates,requiredWarnings=[],requ
   // Reject a generated dose without provenance, including numeric ranges / water bases.
   if(/\d+(?:\s*[-–]\s*\d+)?\s*(?:ซีซี|มล\.?|กรัม|กิโลกรัม)\s*(?:ต่อ|\/|ผสม|กับ)/.test(r.answer_text)&&!r.rate_refs.length)failures.push('unproven_dose');
   for(const ref of r.evidence_refs)if(!evidence.some(e=>e.id===ref&&e.verified))failures.push('unverified_evidence');
+  if(['regulatory','competitor'].includes(context.intent) && r.intent!=='unavailable' && !r.evidence_refs.length)
+    failures.push('current_fact_requires_verified_evidence');
   return [...new Set(failures)];
 }
 function finalPayload(raw,prepared) {
   let r;try{r=parseResponse(raw);}catch{return {response:result(FALLBACK,prepared.context.intent),failures:['invalid_json'],messages:renderMessages(FALLBACK)};}
   const failures=validateResponse(r,prepared);
-  if(failures.length)return {response:result(FALLBACK,prepared.context.intent),failures,messages:renderMessages(FALLBACK)};
+  if(failures.length) {
+    const fallback=failures.includes('current_fact_requires_verified_evidence')?
+      'น้องลัดดายังตรวจยืนยันข้อมูลล่าสุดส่วนนี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจจากแหล่งข้อมูลทางการก่อนสรุป':FALLBACK;
+    return {response:result(fallback,prepared.context.intent),failures,messages:renderMessages(fallback)};
+  }
   return {response:r,failures:[],messages:renderMessages(r.answer_text)};
 }
 module.exports={parseResponse,validateResponse,finalPayload,FALLBACK};

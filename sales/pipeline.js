@@ -37,6 +37,13 @@ async function run(query,options) {
   let raw=picture?result(picture.answer,'image',{image_product_ids:picture.ids}):
     fastAnswer(work.context,options.catalog)|| (options.catalog?rateAnswer(work.context,options.catalog):null),route=raw?'fast':'deep',usage=null;
   if(!raw){
+    if(options.strictKnowledgeVersion && (options.knowledgeRelease?.status!=='ready' ||
+       options.knowledgeRelease?.catalogVersion!==options.catalog?.version)) {
+      raw=result('น้องลัดดากำลังตรวจข้อมูลสินค้ารุ่นล่าสุดค่ะ ยังยืนยันคำแนะนำนี้ไม่ได้ ขอให้ทีมงานช่วยตรวจต่อ','unavailable');
+      route='knowledge_not_ready';
+    }
+  }
+  if(!raw){
     at=performance.now();
     try{const generation=await options.generate({query,prepared_context:JSON.stringify(work.prepared),trace_id,needs_web:work.context.needs_web});
       raw=generation.answer||generation;usage=generation.usage||null;
@@ -47,7 +54,8 @@ async function run(query,options) {
   const metrics={trace_id,intent:work.context.intent,route,catalog_version:options.catalog?.version||null,ownership_version:options.ownership?.version,
     candidate_ids:work.candidates?.eligible.map(p=>p.product_id)||[],filtered:work.candidates?.excluded||[],
     primary_product_id:work.candidates?.primary_product_id||null,external_evidence_used:output.response.evidence_refs,
-    jev_status:'disabled',dify_version:options.difyVersion||null,timings,total_ms:performance.now()-started,usage,failures:output.failures};
+    jev_status:'disabled',dify_version:options.difyVersion||null,kb_version:options.knowledgeRelease?.catalogVersion||null,
+    model:route==='deep'?'gemini-3.8-flash':null,timings,total_ms:performance.now()-started,usage,failures:output.failures};
   options.observe?.(metrics);
   return {...output,metrics,context:work.context,prepared:work.prepared};
 }

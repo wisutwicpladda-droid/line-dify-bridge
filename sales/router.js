@@ -7,13 +7,20 @@ function isExposure(text) {
 }
 const SAFETY='หยุดสัมผัสสารและขอความช่วยเหลือทันทีค่ะ หากหายใจลำบาก ชัก หรือหมดสติ โทร 1669 และติดต่อศูนย์พิษวิทยา 1367 พร้อมชื่อสารหรือฉลาก ห้ามทำให้อาเจียนเอง';
 function extract(text,catalog,previous={}) {
+  if(previous.updated_at && Date.now()-previous.updated_at>1800000)previous={};
   const t=String(text||'').trim(), hits=catalog?catalog.index.mentions(t):[];
   const ctx={...previous,product_ids:hits.length?hits.map(p=>p.product_id):(previous.product_ids||[]),query:t};
   const crops=[...new Set(['ข้าวโพด','ทุเรียน','มะม่วง','อ้อย','ข้าว','ลำไย','มันสำปะหลัง',
     ...(catalog?[...catalog.products.values()].flatMap(p=>p.usage.flatMap(u=>(u.crop_name||u.crop_group).split(/[,、/]/).map(x=>x.trim()).filter(Boolean))):[])])].sort((a,b)=>b.length-a.length);
-  ctx.crop=crops.find(c=>t.includes(c))||previous.crop||null;
+  const explicitCrop=crops.find(c=>t.includes(c));
+  if(explicitCrop && previous.crop && explicitCrop!==previous.crop) {
+    delete ctx.age_days;delete ctx.age_months;delete ctx.stage;delete ctx.target;ctx.product_ids=hits.map(p=>p.product_id);
+    previous={};
+  }
+  ctx.crop=explicitCrop||previous.crop||null;
   const age=t.match(/(?:อายุ|ข้าว|อ้อย|ปลูก|หว่าน)?\s*(\d+)\s*(วัน|เดือน)/);
-  if(age)ctx.age_days=Number(age[1])*(age[2]==='เดือน'?30:1);
+  if(age){ctx.age_days=Number(age[1])*(age[2]==='เดือน'?30:1);ctx.age_months=age[2]==='เดือน'?+age[1]:null;ctx.age_unit=age[2];}
+  if(/ก่อนปลูก|เตรียมดิน/.test(t))ctx.stage='ก่อนปลูก';
   if(/ช่วงดอก|ดอกบาน|ออกดอก/.test(t))ctx.stage='ดอก';
   if(catalog){
     const targets=[...new Set([...catalog.products.values()].flatMap(p=>p.usage.flatMap(u=>u.target_name.split(/[,\n:：]/).map(x=>x.trim()).filter(x=>x.length>=4))))].sort((a,b)=>b.length-a.length);
@@ -37,7 +44,7 @@ function extract(text,catalog,previous={}) {
   else if(/เหลือง|เหี่ยว|เน่า|จุด|หงิก|ไหม้|แห้ง|ไม่ออกผล|ไม่ติดผล/.test(t))intent='symptom';
   ctx.intent=intent;ctx.rate_requested=intent==='rate';ctx.diagnosis_uncertain=intent==='symptom';
   ctx.needs_web=['regulatory','competitor'].includes(intent)||/IRAC|FRAC|HRAC|ผ่าดอก|ผสมเกสร|แมลงปีกแข็ง/i.test(t);
-  return ctx;
+  ctx.updated_at=Date.now();return ctx;
 }
 function fastAnswer(ctx,catalog) {
   const t=ctx.query||'';

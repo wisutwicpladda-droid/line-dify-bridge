@@ -113,6 +113,26 @@ const { renderMessages, batches } = require('./line_renderer');
 const { deliver } = require('./delivery');
 const ownership = require('./conversation_ownership');
 const OWNERSHIP_V2 = process.env.OWNERSHIP_V2 === 'on';
+const salesPipeline = require('./sales/pipeline');
+const {CatalogStore} = require('./sales/catalog');
+const salesRouter = require('./sales/router');
+const salesImages = require('./sales/images');
+const {EventLedger} = require('./sales/event_ledger');
+let salesEvents = new EventLedger();
+const SALES_V2 = process.env.AI_SALES_PIPELINE === 'on';
+const salesCatalog = new CatalogStore();
+const {StagingKnowledgeSync} = require('./sales/knowledge_sync');
+const {learningEvent} = require('./sales/foundation');
+const salesTraceLog=[],salesLearningEvents=[];
+const salesKnowledge = new StagingKnowledgeSync({enabled:SALES_V2 && process.env.AI_SALES_KB_SYNC==='on' && !!process.env.DIFY_DATASET_KEY,
+  api:(method,path,body)=>request(method,'https://api.dify.ai/v1'+path,{Authorization:'Bearer '+process.env.DIFY_DATASET_KEY},body)});
+if(SALES_V2 && process.env.AI_SALES_KB_VERSION)
+  salesKnowledge.state={status:'ready',catalogVersion:process.env.AI_SALES_KB_VERSION,source:'reviewed_release_manifest'};
+if (SALES_V2 && (process.env.AI_SALES_ENVIRONMENT !== 'staging' || process.env.AI_SALES_DIFY_APP_ID !== 'ed28c981-1c94-4547-9003-aefa5e98aaf4')) {
+  throw new Error('AI Sales refactor is staging-only; isolated Dify app must be configured');
+}
+if(SALES_V2 && !OWNERSHIP_V2)throw new Error('AI Sales requires versioned conversation ownership');
+
 
 
 const PORT = process.env.PORT || 3000;
@@ -186,6 +206,7 @@ function initPersist() {
   try {
     if (fs.existsSync(STATE_FILE)) {
       const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      if(SALES_V2 && Array.isArray(raw.salesEvents))salesEvents=new EventLedger(raw.salesEvents);
       if (raw && Array.isArray(raw.sessions)) {
         for (const [id, s] of raw.sessions) {
           if (!id || !s) continue;
@@ -195,7 +216,7 @@ function initPersist() {
             name: s.name || '', pic: s.pic || '', type: s.type || 'user',
             lastText: s.lastText || '', lastAt: s.lastAt || 0,
             mutedUntil: s.mutedUntil || 0, handoff: !!s.handoff,
-            ownership: s.ownership || null, communication_preference: s.communication_preference || null,
+            ownership: s.ownership || null, communication_preference: s.communication_preference || null, salesContext:s.salesContext||null,salesImagesSent:s.salesImagesSent||{},
             history: s.history.slice(-HIST_MAX), bf: !!s.bf,
             cb: (s.cb && typeof s.cb === 'object') ? s.cb : null,
             cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
@@ -218,7 +239,7 @@ function initPersist() {
 }
 
 function stateJson() {
-  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()] });
+  return JSON.stringify({ v: 2, savedAt: Date.now(), salesEvents:salesEvents.snapshot(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()] });
 }
 
 function saveNow() {
@@ -500,6 +521,30 @@ async function uploadLineImageToDify(messageId, sessionId) {
 }
 
 async function askDify(sessionId, text, files) {
+  if (SALES_V2) {
+    const session=sessions.get(sessionId)||{};
+    const result=await salesPipeline.run(text,{catalog:salesCatalog.get(),previous:session.salesContext||{},history:session.history,
+      ownership:ownership.ensure(session),preference:session.communication_preference,
+      strictKnowledgeVersion:true,knowledgeRelease:salesKnowledge.state,
+      difyVersion:process.env.AI_SALES_DIFY_VERSION||'staging-draft',
+      generate:async input=>{
+        const payload={inputs:{prepared_context:input.prepared_context,trace_id:input.trace_id},query:input.query,response_mode:'blocking',
+          user:sessionId,conversation_id:'',auto_generate_name:false};
+        if(files?.length)payload.files=files;
+        const r=await request('POST',DIFY_BASE+'/chat-messages',{Authorization:'Bearer '+DIFY_KEY},payload);
+        if(r.status!==200||!r.data?.answer)throw new Error('staging_generation_failed');
+        return {answer:r.data.answer,usage:r.data.metadata?.usage||null};
+      },observe:metric=>{
+        salesTraceLog.push(metric);if(salesTraceLog.length>200)salesTraceLog.shift();
+        for(const type of ['customer_input','bot_output','latency','recommendation'])
+          salesLearningEvents.push(learningEvent(type,{trace_id:metric.trace_id,product_ids:metric.primary_product_id?[metric.primary_product_id]:[]}));
+        if(salesLearningEvents.length>1000)salesLearningEvents.splice(0,salesLearningEvents.length-1000);
+        console.log('[sales-trace]',JSON.stringify(metric));
+      }});
+    session.salesContext=result.context;session.salesLastResult=result.response;session.salesTrace=result.metrics.trace_id;markDirty();
+    return result.response.answer_text;
+  }
+
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const conversationId = await findConversation(sessionId);
   const difyQuery = sheetContext.enrichQuery(text, productMaster.master, productMaster.usage, kbSync.levels);
@@ -689,7 +734,10 @@ async function refreshProductMaster() {
   productMasterRefreshing = true;
   try {
     const sh = await kbSync.fetchSheets();
+    const nextCatalog = salesCatalog.promote(sh, PIMG);
     const built = kbSync.buildText(sh.master, sh.usage, sh.packages);
+    if(SALES_V2)await salesKnowledge.sync({catalogVersion:nextCatalog.version,text:built.text,
+      isCurrent:()=>salesCatalog.current?.version===nextCatalog.version});
     kbSync.setLevels(built.levels, built.moa, built.categories, built.status);
     Object.assign(productMaster, { ok: true, products: built.products, at: Date.now(), error: '', master: sh.master, usage: sh.usage });
     const checked = validateProductData(sh.master, sh.usage, PIMG);
@@ -2158,18 +2206,29 @@ function notifyAdmins(id, s, isNew) {
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const token = ev._ownershipTicket;
   // Revalidate selling status on the current catalog at final delivery, including images.
-  const identity = identities(productMaster.master);
+  const currentCatalog=SALES_V2?salesCatalog.get():null;
+  const identity = currentCatalog?.index || identities(productMaster.master);
   const raw = Array.isArray(text) ? text : [text];
   const leak = raw.some(m => {
     if (typeof m === 'string' || m?.type === 'text') return identity.mentions(typeof m === 'string' ? m : m.text).some(p => !p.open);
     if (m?.type === 'image') {
       const file = String(m.originalContentUrl || '').split('/').pop();
-      return !Object.keys(PIMG).some(name => PIMG[name] === file && identity.resolve(name)?.open);
+      return SALES_V2 ? !currentCatalog || ![...currentCatalog.products.values()].some(p=>p.open&&p.images.includes(file)) :
+        !Object.keys(PIMG).some(name => PIMG[name] === file && identity.resolve(name)?.open);
     }
     return false;
   });
   if (leak) text = 'น้องลัดดายังยืนยันข้อมูลสินค้านี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจสอบก่อนแนะนำ';
-  const canSend = () => !OWNERSHIP_V2 || ownership.canSend(s, token, { handoffAcknowledgement: !!opts?.handoffAcknowledgement });
+  const canSend = () => {
+    if(OWNERSHIP_V2 && !ownership.canSend(s, token, { handoffAcknowledgement: !!opts?.handoffAcknowledgement }))return false;
+    if(SALES_V2 && !opts?.system) {
+      const latest=salesCatalog.get(),response=s.salesLastResult;
+      const ids=[...(response?.product_ids_recommended||[]),...(response?.image_product_ids||[])];
+      if(ids.some(id=>!latest?.products.get(id)?.open))return false;
+      if(latest && raw.some(m=>latest.index.mentions(typeof m==='string'?m:m.text||'').some(p=>!p.open)))return false;
+    }
+    return true;
+  };
   const result = await deliver({ content: text, canSend,
     reply: group => lineReply(ev.replyToken, group),
     push: group => fallbackTo && fallbackTo !== 'unknown' ? linePush(fallbackTo, group, canSend) : false,
@@ -2179,7 +2238,7 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
       if (!opts?.system) detectBotPromise(fallbackTo || 'unknown', s, ht);
     })
   });
-  console.log('[send]', JSON.stringify(result));
+  console.log('[send]', JSON.stringify({...result,trace_id:s.salesTrace||null,state_version:s.ownership?.version}));
   return result;
 }
 
@@ -2198,7 +2257,7 @@ function wantsBot(t) {
 
 // ---------- Event processing ----------
 async function handleEvent(ev) {
-  if (ev.deliveryContext && ev.deliveryContext.isRedelivery) return;
+  if (!SALES_V2 && ev.deliveryContext && ev.deliveryContext.isRedelivery) return;
 
   const src = ev.source || {};
   const userId = src.userId || 'unknown';
@@ -2233,7 +2292,7 @@ async function handleEvent(ev) {
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
-  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
+  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มตามที่จำเป็นเพื่อแยกสาเหตุ ห้ามเดา';
   else if (ev.message.type === 'sticker') text = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
   else return;
 
@@ -2248,9 +2307,15 @@ async function handleEvent(ev) {
   if (ev.message.type === 'text' && !inReg) detectPhone(sessionId, s, text);
   if (stype === 'user') crmTouch(sessionId, s, ev.message.type === 'text' ? text : ''); // CRM: อัปเดตโปรไฟล์อัตโนมัติ
   // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
-  if (isNewChat) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
+  if (isNewChat && !SALES_V2) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
 
   const now = Date.now();
+
+  // Critical safety takes precedence over registration and optional providers.
+  if (SALES_V2 && salesRouter.isExposure(text)) {
+    await sendAnswer(s, ev, pushTarget, salesRouter.SAFETY, {system:true});
+    return;
+  }
 
   if (!OWNERSHIP_V2 && s.mutedUntil && s.mutedUntil <= now) { s.mutedUntil = 0; s.handoff = false; markDirty(); broadcast(); }
 
@@ -2285,6 +2350,15 @@ async function handleEvent(ev) {
   if ((OWNERSHIP_V2 && !ownership.canSend(s, ev._ownershipTicket)) || s.mutedUntil > now) {
     console.log(`[muted] ${sessionId.slice(0, 8)} skip: ${String(text).slice(0, 40)}`);
     return;
+  }
+
+  if (SALES_V2 && ev.message.type === 'text') {
+    const context=salesRouter.extract(text,salesCatalog.get(),s.salesContext||{});
+    const fast=salesRouter.fastAnswer(context,salesCatalog.get());
+    if (fast && fast.intent !== 'admin') {
+      const answer=await askDify(sessionId,text);
+      await sendAnswer(s,ev,pushTarget,answer);return;
+    }
   }
 
   // ลงทะเบียนก่อนใช้งาน (REGISTER=on): ยังไม่ลงทะเบียน -> ถาม ชื่อ/เบอร์/จังหวัด ก่อน แล้วค่อยตอบคำถามที่ค้างไว้
@@ -2391,7 +2465,7 @@ async function handleEvent(ev) {
     return;
   }
 
-  console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
+  if(!SALES_V2)console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
 
   let answer = '';
   if (ev.message.type === 'image') {
@@ -2407,7 +2481,8 @@ async function handleEvent(ev) {
   }
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer];
-  const pplan = pimgPlan(s, text, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
+  const pplan = SALES_V2 ? {...salesImages.imagePlan({catalog:salesCatalog.get(),response:s.salesLastResult||{},
+    query:text,publicUrl:PUBLIC_URL,sent:s.salesImagesSent||{}}),buttons:[]} : pimgPlan(s, text, answer);
   if (pplan.images.length) msgs.push(...pplan.images);
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
   if (stype === 'user' && REG_MODE === 'soft') {
@@ -2421,7 +2496,10 @@ async function handleEvent(ev) {
     }
   }
   pimgAttachButtons(msgs, pplan.buttons);
-  await sendAnswer(s, ev, pushTarget, msgs);
+  const delivery=await sendAnswer(s, ev, pushTarget, msgs);
+  if(SALES_V2 && delivery.status==='sent') {
+    s.salesImagesSent=s.salesImagesSent||{};for(const id of pplan.marks||[])s.salesImagesSent[id]=Date.now();markDirty();
+  }
 }
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
@@ -3303,8 +3381,34 @@ function handleAdmin(req, res, path, body) {
   if (authed === null) return sendJson(res, 503, { ok: false, error: 'ADMIN_KEY not set' });
   if (!authed) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
 
+  if(path==='/admin/api/sales/health' && req.method==='GET')return sendJson(res,200,{
+    enabled:SALES_V2,environment:process.env.AI_SALES_ENVIRONMENT||'legacy',
+    catalog_version:salesCatalog.current?.version||null,catalog_fresh:!!salesCatalog.get(),
+    catalog_loaded_at:salesCatalog.current?.loaded_at||null,catalog_issues:salesCatalog.current?.issues||[],
+    ownership:OWNERSHIP_V2?'versioned_single_replica':'legacy',dify_app:SALES_V2?process.env.AI_SALES_DIFY_APP_ID:null,
+    jev:'disabled',knowledge:salesKnowledge.state
+  });
+  if(path==='/admin/api/sales/traces' && req.method==='GET')return sendJson(res,200,{traces:salesTraceLog,events:salesLearningEvents});
+  if(path==='/admin/api/sales/copilot' && req.method==='GET') {
+    const id=new URL(req.url,'http://x').searchParams.get('id'),s=sessions.get(id);
+    if(!s)return sendJson(res,404,{error:'chat not found'});
+    return sendJson(res,200,{ownership:ownership.ensure(s),context:s.salesContext||{},last_response:s.salesLastResult||null,
+      delivery_allowed:false,note:'Read-only admin context; never sends to customer'});
+  }
+  if(path==='/admin/api/sales/ownership' && req.method==='POST') {
+    let data;try{data=JSON.parse(body.toString('utf8'));}catch{return sendJson(res,400,{error:'invalid JSON'});}
+    const s=sessions.get(data.id);if(!s)return sendJson(res,404,{error:'chat not found'});
+    if(!OWNERSHIP_V2 || !Number.isInteger(data.version))return sendJson(res,409,{error:'version required; feature must be enabled'});
+    try {
+      const state=ownership.transition(s,data.state,{actor:'admin',expectedVersion:data.version,summary:data.summary});
+      s.handoff=!['BOT_ACTIVE','BOT_RESUME'].includes(state.state);s.mutedUntil=s.handoff?Date.now()+MUTE_MINUTES*60000:0;
+      markDirty();saveNow();return sendJson(res,200,{ownership:state});
+    } catch(e){return sendJson(res,409,{error:e.message});}
+  }
+
   // v3.8: สั่ง sync สินค้าจาก Google Sheet เข้า KB ทันที
   if (path === '/admin/api/kb-sync' && req.method === 'POST') {
+    if(SALES_V2)return sendJson(res,409,{ok:false,error:'staging uses isolated versioned knowledge release; legacy shared sync disabled'});
     kbSync.syncOnce(true).then((st) => sendJson(res, st.ok ? 200 : 502, Object.assign({}, st))).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
     return;
   }
@@ -3595,7 +3699,10 @@ const server = http.createServer((req, res) => {
     let data = {};
     try { data = JSON.parse(body.toString('utf8')); } catch (_) { return; }
     (data.events || []).forEach((ev) => {
-      handleEvent(ev).catch((e) => console.log('event error:', e.message));
+      if(SALES_V2 && !salesEvents.claim(ev.webhookEventId))return;
+      if(SALES_V2){markDirty();saveNow();}
+      handleEvent(ev).then(()=>{if(SALES_V2){salesEvents.finish(ev.webhookEventId,'handled');markDirty();}})
+        .catch((e)=>{if(SALES_V2){salesEvents.finish(ev.webhookEventId,'needs_review');markDirty();}console.log('event error:',e.message);});
     });
   });
 });
@@ -3616,6 +3723,5 @@ if (SB_ON) {
   console.log('[crm] Supabase OFF — CRM เก็บใน state file (ตั้ง SUPABASE_URL + SUPABASE_SERVICE_KEY เพื่อซิงก์)');
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
-setTimeout(bootBackfill, 3000);
-kbSync.start();
+if(!SALES_V2) { setTimeout(bootBackfill, 3000); kbSync.start(); }
 server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));

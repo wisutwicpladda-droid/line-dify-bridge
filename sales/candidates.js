@@ -10,8 +10,13 @@ function stageMatch(stage,ctx) {
   if(!stage)return 'unknown';
   if(/ทุกระยะ|ทุกช่วง/.test(stage))return 'match';
   if(ctx.age_days!=null) {
-    const ranges=[...stage.matchAll(/(\d+)\s*[-–]\s*(\d+)/g)];
-    if(ranges.length)return ranges.some(m=>ctx.age_days>=+m[1]&&ctx.age_days<=+m[2])?'match':'mismatch';
+    const months=stage.match(/(\d+)\s*[-–]\s*(\d+)\s*เดือน/);
+    if(months)return ctx.age_months==null?'unknown':ctx.age_months>=+months[1]&&ctx.age_months<=+months[2]?'match':'mismatch';
+    const month=stage.match(/^(\d+)\s*เดือน/);
+    if(month)return ctx.age_months==null?'unknown':ctx.age_months===+month[1]?'match':'mismatch';
+    // First crop-age interval only; later "hold water 10 days" is not crop age.
+    const range=stage.match(/^(\d+)\s*[-–]\s*(\d+)\s*(?:วัน|หลังหว่าน)/);
+    if(range)return ctx.age_days>=+range[1]&&ctx.age_days<=+range[2]?'match':'mismatch';
     return ctx.stage&&stage.includes(ctx.stage)?'match':'unknown';
   }
   return ctx.stage&&stage.includes(ctx.stage)?'match':'missing';
@@ -30,7 +35,10 @@ function selectCandidates(catalog,ctx,evidence=[]) {
     if(!direct.length&&!ext.length) {excluded.push({product_id:p.product_id,reason:'no_suitability_evidence'});continue;}
     const stageRows=direct.map(u=>({u,state:stageMatch(u.crop_stage,ctx)}));
     if(direct.length && stageRows.every(s=>s.state==='mismatch')) {excluded.push({product_id:p.product_id,reason:'stage_mismatch'});continue;}
-    if(ctx.safety_blocked_ids?.includes(p.product_id)){excluded.push({product_id:p.product_id,reason:'safety_exclusion'});continue;}
+    if(ctx.safety_blocked_ids?.includes(p.product_id) ||
+      ctx.stage==='ดอก' && /(?:ห้าม|ไม่แนะนำ).*ดอกบาน/.test(p.additional_precautions||'')){
+      excluded.push({product_id:p.product_id,reason:'safety_exclusion'});continue;
+    }
     if(!p.open){excluded.push({product_id:p.product_id,reason:'closed_or_unknown_status'});continue;}
     if(p.issues.includes('missing_formula')||p.rank===99){excluded.push({product_id:p.product_id,reason:'incomplete_product_truth'});continue;}
     const item={product_id:p.product_id,rank:p.rank,usage_refs:stageRows.filter(s=>s.state!=='mismatch').map(s=>s.u.ref),
