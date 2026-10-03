@@ -108,6 +108,12 @@ const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไ�
 const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
+const { identities } = require('./product_identity');
+const { renderMessages, batches } = require('./line_renderer');
+const { deliver } = require('./delivery');
+const ownership = require('./conversation_ownership');
+const OWNERSHIP_V2 = process.env.OWNERSHIP_V2 === 'on';
+
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -189,6 +195,7 @@ function initPersist() {
             name: s.name || '', pic: s.pic || '', type: s.type || 'user',
             lastText: s.lastText || '', lastAt: s.lastAt || 0,
             mutedUntil: s.mutedUntil || 0, handoff: !!s.handoff,
+            ownership: s.ownership || null, communication_preference: s.communication_preference || null,
             history: s.history.slice(-HIST_MAX), bf: !!s.bf,
             cb: (s.cb && typeof s.cb === 'object') ? s.cb : null,
             cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
@@ -746,6 +753,8 @@ function productImageMsg(answer) {
 const PIMG_DEDUP_MS = (parseFloat(process.env.PRODUCT_IMG_DEDUP_H || '24') || 24) * 3600000;
 const PIMG_ASK_RX = /(ขอ|ส่ง|มี|ดู|อยากเห็น|โชว์|เห็น).{0,8}(รูป|ภาพ)|(รูป|ภาพ)\s*(สินค้า|ขวด|ยา|หน่อย|ของ|ไหม)|หน้าตา(เป็น)?\s*(ยัง|อย่าง)ไง|แพ็คเกจ|ฉลาก/;
 function pimgBuild(names) {
+  const index = identities(productMaster.master);
+  names = names.filter(n => index.resolve(n)?.open);
   if (!names.length) return [];
   if (PIMG_MODE === 'image') return names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
   const m = productImageMsg(names.join('\n'));
@@ -756,7 +765,7 @@ function pimgPlan(s, userText, answer) {
   if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return none;
   if (/1669|โรงพยาบาล/.test(answer)) return none; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
   const seenFile = new Set();
-  const names = productsInAnswer(answer).filter((n) => !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
+  const names = productsInAnswer(answer).filter((n) => identities(productMaster.master).resolve(n)?.open && !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
   if (!names.length) return none;
   const now = Date.now();
   s.pimgSent = s.pimgSent || {};
@@ -800,21 +809,14 @@ async function sendAllProductImages(s, ev, pushTarget, names) {
   const suffix = missingImages.length ? `\nยังไม่มีรูปในระบบ: ${missingImages.join(', ')}` : '';
   const text = `รูปสินค้ากำจัดแมลงที่เปิดขาย (${names.length} รายการ, มีรูป ${withImages.length} รายการ)\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}${suffix}`;
   const imgs = pimgBuild(withImages);
-  // LINE รับได้ไม่เกิน 5 ข้อความต่อ request: ใช้ reply แรกเป็นข้อความ + รูป 4 รูป
-  await sendAnswer(s, ev, pushTarget, [text].concat(imgs.slice(0, 4)));
-  for (let i = 4; i < imgs.length; i += 5) {
-    const batch = imgs.slice(i, i + 5);
-    const ok = await linePush(pushTarget, batch);
-    batch.forEach(() => pushHist(s, 'b', '(รูปสินค้า)'));
-    console.log(`[pimg] all-category push ${i + 1}-${Math.min(i + batch.length, imgs.length)} ok=${ok}`);
-  }
+  await sendAnswer(s, ev, pushTarget, [text].concat(imgs));
   return true;
 }
 function pimgAttachButtons(msgs, names) {
   if (!names || !names.length || !msgs.length) return;
   const items = names.map((n) => ({ type: 'action', action: { type: 'message', label: ('📷 ' + n).slice(0, 20), text: 'ขอรูป ' + n } }));
   const i = msgs.length - 1;
-  if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i].slice(0, 4900), quickReply: { items } };
+  if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i], quickReply: { items } };
   else if (msgs[i] && typeof msgs[i] === 'object') msgs[i].quickReply = { items };
 }
 // ข้อความจากปุ่ม "ขอรูป ชื่อสินค้า" (ชื่อตรงกับรายการรูป) -> ตอบเป็นรูปทันที
@@ -822,7 +824,7 @@ function pimgTap(s, userText) {
   const m = String(userText || '').trim().match(/^ขอรูป\s*(.+)$/);
   if (!m || !PIMG_ON || !PUBLIC_URL) return null;
   const n = m[1].trim();
-  if (!PIMG[n]) return null;
+  if (!PIMG[n] || !identities(productMaster.master).resolve(n)?.open) return null;
   s.pimgSent = s.pimgSent || {};
   s.pimgSent[PIMG[n]] = Date.now();
   console.log('[pimg] tap ' + n);
@@ -855,15 +857,11 @@ function guardInternal(answer, sessionId) {
   return out || INTERNAL_REPLY;
 }
 
-function lineMsgs(text) {
-  return (Array.isArray(text) ? text : [text])
-    .filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()))
-    .slice(0, 5)
-    .map((t) => (typeof t === 'object' ? t : { type: 'text', text: String(t).slice(0, 4900) }));
-}
+function lineMsgs(text) { return renderMessages(text); }
 async function lineReply(replyToken, text) {
   if (!replyToken) return false;
   const messages = lineMsgs(text);
+  if (messages.length > 5) return false;
   if (!messages.length) return false;
   try {
     const r = await request('POST', LINE_API + '/v2/bot/message/reply',
@@ -874,16 +872,18 @@ async function lineReply(replyToken, text) {
   } catch (e) { console.log('reply fetch error:', e.message); return false; }
 }
 
-async function linePush(to, text) {
-  const messages = lineMsgs(text);
-  if (!messages.length) return false;
-  try {
-    const r = await request('POST', LINE_API + '/v2/bot/message/push',
-      { Authorization: `Bearer ${CH_TOKEN}` },
-      { to, messages });
-    if (r.status !== 200) console.log('push error:', r.status, JSON.stringify(r.data).slice(0, 300));
-    return r.status === 200;
-  } catch (e) { console.log('push fetch error:', e.message); return false; }
+async function linePush(to, text, canSend = () => true) {
+  const groups = batches(lineMsgs(text));
+  if (!groups.length) return false;
+  for (const messages of groups) {
+    if (!canSend()) return false;
+    try {
+      const r = await request('POST', LINE_API + '/v2/bot/message/push',
+        { Authorization: 'Bearer ' + CH_TOKEN }, { to, messages });
+      if (r.status !== 200) { console.log('push error:', r.status); return false; }
+    } catch (e) { console.log('push fetch error:', e.message); return false; }
+  }
+  return true;
 }
 
 // ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
@@ -1690,7 +1690,8 @@ async function regInvite(id) {
   let msg;
   if (REG_UI === 'liff' && LIFF_URL) { msg = liffButtonMsg('invite'); }
   else { regStart(s, '', { invited: true }); s.reg.invitedAt = Date.now(); msg = regInviteMsg(s); }
-  const ok = await linePush(id, msg);
+  const sendTicket = OWNERSHIP_V2 ? ownership.ticket(s) : null;
+  const ok = await linePush(id, msg, () => !OWNERSHIP_V2 || ownership.canSend(s, sendTicket));
   if (ok) { const ht = Array.isArray(msg) ? msg[0] : msg; pushHist(s, 'b', ht); s.lastText = String(ht).slice(0, 120); }
   markDirty(); broadcast();
   console.log(`[reg] invite ${id.slice(0, 8)} -> ${ok ? 'sent' : 'FAILED'}`);
@@ -1959,9 +1960,10 @@ async function liffConfirmPush(id) {
   const s = sessions.get(id);
   if (!c || !c.auto || !c.auto.reg || !c.auto.reg.msg) return { ok: false, err: 'ยังไม่ได้ลงทะเบียน' };
   if (c.auto.reg.confirmed) return { ok: true, already: true };
+  const sendTicket = OWNERSHIP_V2 && s ? ownership.ticket(s) : null;
   const msgs = [c.auto.reg.msg];
-  if (s && s.regPending) { const ans = await askDify(id, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
-  const ok = await linePush(id, msgs);
+  if (s && s.regPending) { const ans = await askDify(id, s.regPending); if (ans) msgs.push(ans); s.regPending = ''; }
+  const ok = await linePush(id, msgs, () => !OWNERSHIP_V2 || (s && ownership.canSend(s, sendTicket)));
   if (ok) { c.auto.reg.confirmed = true; if (s) { for (const m of msgs) pushHist(s, 'b', m); s.lastText = String(msgs[0]).slice(0, 120); s.lastAt = Date.now(); } markDirty(); broadcast(); }
   return { ok };
 }
@@ -2154,21 +2156,31 @@ function notifyAdmins(id, s, isNew) {
 
 // opts.system = ข้อความระบบของ bridge เอง (เช่น แบบฟอร์มลงทะเบียน) -> ไม่ต้องตรวจ "บอทรับปากติดต่อกลับ" (ตรวจเฉพาะคำตอบจาก Dify)
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
-  const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
-  const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)')) : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
-  let ok = await lineReply(ev.replyToken, arr);
-  if (!ok && arr.some((m) => pimgMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ
-    console.log('[pimg] reply with images failed, retry text only');
-    text = arr.filter((m) => !pimgMsgs.has(m)).map((m) => (m && typeof m === 'object' && m.quickReply ? Object.assign({}, m, { quickReply: undefined }) : m));
-    ok = await lineReply(ev.replyToken, text);
-  }
-  if (!ok && fallbackTo && fallbackTo !== 'unknown') {
-    const pushed = await linePush(fallbackTo, text);
-    console.log(`[send] reply=failed push=${pushed}`);
-  } else {
-    console.log(`[send] reply=${ok}`);
-  }
+  const token = ev._ownershipTicket;
+  // Revalidate selling status on the current catalog at final delivery, including images.
+  const identity = identities(productMaster.master);
+  const raw = Array.isArray(text) ? text : [text];
+  const leak = raw.some(m => {
+    if (typeof m === 'string' || m?.type === 'text') return identity.mentions(typeof m === 'string' ? m : m.text).some(p => !p.open);
+    if (m?.type === 'image') {
+      const file = String(m.originalContentUrl || '').split('/').pop();
+      return !Object.keys(PIMG).some(name => PIMG[name] === file && identity.resolve(name)?.open);
+    }
+    return false;
+  });
+  if (leak) text = 'น้องลัดดายังยืนยันข้อมูลสินค้านี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจสอบก่อนแนะนำ';
+  const canSend = () => !OWNERSHIP_V2 || ownership.canSend(s, token, { handoffAcknowledgement: !!opts?.handoffAcknowledgement });
+  const result = await deliver({ content: text, canSend,
+    reply: group => lineReply(ev.replyToken, group),
+    push: group => fallbackTo && fallbackTo !== 'unknown' ? linePush(fallbackTo, group, canSend) : false,
+    onSent: group => group.forEach(m => {
+      const ht = m.text || m.altText || (m.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)');
+      pushHist(s, 'b', ht);
+      if (!opts?.system) detectBotPromise(fallbackTo || 'unknown', s, ht);
+    })
+  });
+  console.log('[send]', JSON.stringify(result));
+  return result;
 }
 
 // ---------- คีย์เวิร์ดปิด/เปิดเสียง ----------
@@ -2198,6 +2210,7 @@ async function handleEvent(ev) {
   if (ev.type === 'follow') {
     if (stype !== 'user' || userId === 'unknown') return;
     const s = touchSession(sessionId, stype, '(เพิ่มเพื่อน)');
+    if (OWNERSHIP_V2) ev._ownershipTicket = ownership.beginTurn(s);
     fetchProfile(s, userId);
     const c = crmGet(sessionId);
     crmTouch(sessionId, s, '');
@@ -2226,6 +2239,7 @@ async function handleEvent(ev) {
 
   const shown = ev.message.type === 'text' ? text : (ev.message.type === 'image' ? '(รูปภาพจากลูกค้า)' : '(สติกเกอร์)');
   const s = touchSession(sessionId, stype, shown);
+  if (OWNERSHIP_V2) ev._ownershipTicket = ownership.beginTurn(s);
   const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
   fetchProfile(s, userId);
@@ -2238,10 +2252,11 @@ async function handleEvent(ev) {
 
   const now = Date.now();
 
-  if (s.mutedUntil && s.mutedUntil <= now) { s.mutedUntil = 0; s.handoff = false; markDirty(); broadcast(); }
+  if (!OWNERSHIP_V2 && s.mutedUntil && s.mutedUntil <= now) { s.mutedUntil = 0; s.handoff = false; markDirty(); broadcast(); }
 
   if (ev.message.type === 'text') {
     if (wantsBot(text)) {
+      if (OWNERSHIP_V2 && !ownership.canSend(s, ev._ownershipTicket)) return; // explicit admin resume only
       s.mutedUntil = 0;
       s.handoff = false;
       if (s.cb && s.cb.src === 'kw') clearCallback(s); // ลูกค้ากลับมาคุยกับบอทเอง = ไม่รอแอดมินแล้ว
@@ -2250,6 +2265,13 @@ async function handleEvent(ev) {
       return;
     }
     if (wantsAdmin(text)) {
+      if (OWNERSHIP_V2) {
+        ownership.transition(s, 'HUMAN_REQUESTED'); ev._ownershipTicket = ownership.ticket(s);
+        s.handoff = true; markDirty();
+        flagCallback(sessionId, s, 'kw', { note: 'ลูกค้าขอคุยกับแอดมิน' });
+        await sendAnswer(s, ev, pushTarget, 'รับเรื่องให้แอดมินแล้วค่ะ น้องลัดดาจะพักการตอบระหว่างทีมงานดูแล', {system:true, handoffAcknowledgement:true});
+        return;
+      }
       s.mutedUntil = now + MUTE_MINUTES * 60000;
       s.handoff = true;
       flagCallback(sessionId, s, 'kw', { note: 'ลูกค้าพิมพ์ขอคุยกับแอดมิน', topic: text });
@@ -2260,7 +2282,7 @@ async function handleEvent(ev) {
     }
   }
 
-  if (s.mutedUntil > now) {
+  if ((OWNERSHIP_V2 && !ownership.canSend(s, ev._ownershipTicket)) || s.mutedUntil > now) {
     console.log(`[muted] ${sessionId.slice(0, 8)} skip: ${String(text).slice(0, 40)}`);
     return;
   }
@@ -2275,7 +2297,7 @@ async function handleEvent(ev) {
     if (ev.message.type === 'text' && /^ลงทะเบียนเรียบร้อยแล้ว/.test(text.trim()) && regDone(c)) {
       c.auto = c.auto || {};
       const msgs = [(c.auto.reg && c.auto.reg.msg) || `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณค่ะ 🙏 (${regSummaryText(c)})\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾`];
-      if (s.regPending) { const ans = await askDify(sessionId, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
+      if (s.regPending) { const ans = await askDify(sessionId, s.regPending); if (ans) msgs.push(ans); s.regPending = ''; }
       if (c.auto.reg) c.auto.reg.confirmed = true;
       markDirty();
       await sendAnswer(s, ev, pushTarget, msgs, { system: 1 });
@@ -2348,7 +2370,7 @@ async function handleEvent(ev) {
           const msgs = [fin.doneMsg];
           if (fin.pending) {
             const ans = await askDify(sessionId, fin.pending);
-            if (ans) msgs.push(ans.slice(0, 4900));
+            if (ans) msgs.push(ans);
           }
           await sendAnswer(s, ev, pushTarget, msgs, { system: 1 }); // ข้อความแรก = ระบบ, ข้อความถัดไป = คำตอบ Dify
           return;
@@ -2384,7 +2406,7 @@ async function handleEvent(ev) {
     answer = await askDify(sessionId, text);
   }
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
-  const msgs = [answer.slice(0, 4900)];
+  const msgs = [answer];
   const pplan = pimgPlan(s, text, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
   if (pplan.images.length) msgs.push(...pplan.images);
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
@@ -3480,6 +3502,11 @@ function handleAdmin(req, res, path, body) {
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     const s = sessions.get(id);
     const m = data.minutes;
+    if (OWNERSHIP_V2) {
+      try {
+        ownership.transition(s, m === 0 ? 'BOT_RESUME' : 'HUMAN_ACTIVE', {actor:'admin', expectedVersion:data.version, summary:data.summary});
+      } catch(e) { return sendJson(res, 409, {ok:false,error:e.message}); }
+    }
     if (m === 0) { s.mutedUntil = 0; s.handoff = false; }
     else if (m === -1) s.mutedUntil = FOREVER;
     else if (typeof m === 'number' && m > 0) s.mutedUntil = Date.now() + m * 60000;
@@ -3495,10 +3522,11 @@ function handleAdmin(req, res, path, body) {
     let data = {};
     try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
     const id = data.id;
-    const text = String(data.text || '').trim().slice(0, 4900);
+    const text = String(data.text || '').trim();
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     if (!text) return sendJson(res, 400, { ok: false, error: 'empty text' });
     const s = sessions.get(id);
+    if (OWNERSHIP_V2) { ownership.transition(s, 'HUMAN_ACTIVE', {actor:'admin'}); s.handoff=true; markDirty(); saveNow(); broadcast(); }
     linePush(id, text).then((ok) => {
       if (ok) {
         pushHist(s, 'a', text);
