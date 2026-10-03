@@ -529,10 +529,9 @@ async function askDify(sessionId, text, files) {
     const session=sessions.get(sessionId)||{};
     const generationTicket=ownership.ticket(session);
     let difyRequestAt=null,difyResponseAt=null;
-    // TEMPORARY STAGING RELEASE-GATE FIXTURE: reverted after network fault rehearsal.
-    const result=await salesPipeline.run(text,{catalog:text.includes('RC-CATALOG-STALE-20261003')?null:salesCatalog.get(),previous:session.salesContext||{},history:session.history,
+    const result=await salesPipeline.run(text,{catalog:salesCatalog.get(),previous:session.salesContext||{},history:session.history,
       ownership:ownership.ensure(session),preference:session.communication_preference,
-      strictKnowledgeVersion:true,knowledgeRelease:text.includes('RC-KB-UNAVAILABLE-20261003')?{status:'failed',catalogVersion:'rc-unavailable'}:salesKnowledge.state,
+      strictKnowledgeVersion:true,knowledgeRelease:salesKnowledge.state,
       difyVersion:process.env.AI_SALES_DIFY_VERSION||'staging-draft',
       releaseId:process.env.AI_SALES_RELEASE_ID||'unversioned-staging',evidenceProvider:salesEvidence,
       generate:async input=>{
