@@ -5,18 +5,21 @@ const {createRequire}=require('node:module'),crypto=require('node:crypto');
 const root=path.resolve(__dirname,'../..'),localRequire=createRequire(path.join(root,'server.js'));
 const fixture=require('../fixtures/company-snapshot.json');
 // Execute the real handlers with all external transport and background jobs replaced.
-function harness({answer,register='off',knowledgeVersion,appName='น้องลัดดา AI Sales STAGING 20261003'}={}) {
+function harness({answer,register='off',knowledgeVersion,appName='น้องลัดดา AI Sales STAGING 20261003',onGenerate}={}) {
   const sent=[],calls=[],logs=[];let httpHandler;
   const network={request(options,callback){
     const req=new EventEmitter();let bytes='';
     req.write=b=>bytes+=b;req.setTimeout=()=>req;req.destroy=e=>req.emit('error',e);
-    req.end=()=>queueMicrotask(()=>{
+    req.end=()=>queueMicrotask(async()=>{
       const host=options.hostname||options.host;calls.push({host,path:options.path});
       let data={};const payload=bytes?JSON.parse(bytes):{};
       if(host==='api.line.me' && /message\/(reply|push)/.test(options.path))sent.push(payload.messages);
       else if(host==='api.line.me' && /profile/.test(options.path))data={displayName:'staging-test'};
       else if(host==='api.dify.ai' && options.path==='/v1/info')data={name:appName};
-      else if(host==='api.dify.ai' && /chat-messages/.test(options.path))data={answer:JSON.stringify(answer||localRequire('./sales/router').result('ยังต้องแยกสาเหตุค่ะ น้ำขังหรือเริ่มเป็นตรงไหนคะ','symptom'))};
+      else if(host==='api.dify.ai' && /chat-messages/.test(options.path)){
+        if(onGenerate)await onGenerate();
+        data={answer:JSON.stringify(answer||localRequire('./sales/router').result('ยังต้องแยกสาเหตุค่ะ น้ำขังหรือเริ่มเป็นตรงไหนคะ','symptom'))};
+      }
       else throw Error('Network not permitted in test: '+host+options.path);
       const res=new EventEmitter();res.statusCode=200;res.headers={};callback(res);
       res.emit('data',Buffer.from(JSON.stringify(data)));res.emit('end');

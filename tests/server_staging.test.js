@@ -39,4 +39,17 @@ test('staging refuses an API key bound to the production application',async()=>{
   assert.equal(h.calls.filter(x=>x.path.includes('chat-messages')).length,0);
   assert.ok(h.sent.flat().some(m=>m.text?.includes('ยังตรวจข้อมูล')));
 });
+test('real handler drops pending model output after takeover in three independent runs',async()=>{
+ const version=require('../sales/catalog').buildCatalog(require('./fixtures/company-snapshot.json')).version;
+ for(let i=0;i<3;i++) {
+  let started,release;
+  const entered=new Promise(r=>started=r),hold=new Promise(r=>release=r);
+  const h=harness({knowledgeVersion:version,onGenerate:async()=>{started();await hold;}});
+  await h.api.refreshProductMaster();
+  const pending=h.api.handleEvent(h.event('ทุเรียนใบเหลือง'));
+  await entered;const s=h.api.sessions.get('staging-only-user');
+  require('../conversation_ownership').transition(s,'HUMAN_ACTIVE',{actor:'admin'});
+  release();await pending;assert.equal(h.sent.length,0);
+ }
+});
 

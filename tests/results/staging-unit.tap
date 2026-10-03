@@ -2,345 +2,351 @@ TAP version 13
 # Subtest: all 89 catalog identities follow the same open/status/formula rules in final LINE payload
 ok 1 - all 89 catalog identities follow the same open/status/formula rules in final LINE payload
   ---
-  duration_ms: 68.0313
+  duration_ms: 64.0281
   type: 'test'
   ...
 # Subtest: every product changes to closed safely without editing any name-based guard
 ok 2 - every product changes to closed safely without editing any name-based guard
   ---
-  duration_ms: 543.678
+  duration_ms: 552.3991
   type: 'test'
   ...
 # Subtest: closed alias and missing status fail closed
 ok 3 - closed alias and missing status fail closed
   ---
-  duration_ms: 4.9535
+  duration_ms: 4.3797
   type: 'test'
   ...
 # Subtest: final LINE payload preserves all content through multiple batches
 ok 4 - final LINE payload preserves all content through multiple batches
   ---
-  duration_ms: 1.2366
+  duration_ms: 1.2894
   type: 'test'
   ...
 # Subtest: concentration variants not merged
 ok 5 - concentration variants not merged
   ---
-  duration_ms: 1.5957
+  duration_ms: 1.5804
   type: 'test'
   ...
 # Subtest: admin takeover while model pending drops final LINE payload
 ok 6 - admin takeover while model pending drops final LINE payload
   ---
-  duration_ms: 2.2923
+  duration_ms: 1.4099
   type: 'test'
   ...
 # Subtest: takeover between batches prevents remaining messages
 ok 7 - takeover between batches prevents remaining messages
   ---
-  duration_ms: 0.6483
+  duration_ms: 0.3947
   type: 'test'
   ...
 # Subtest: human ownership does not expire and explicit admin summary is required
 ok 8 - human ownership does not expire and explicit admin summary is required
   ---
-  duration_ms: 0.6404
+  duration_ms: 0.3975
   type: 'test'
   ...
 # Subtest: 01 symptom uncertainty survives final payload and forbids chemical recommendation
 ok 9 - 01 symptom uncertainty survives final payload and forbids chemical recommendation
   ---
-  duration_ms: 6.3689
+  duration_ms: 5.6049
   type: 'test'
   ...
 # Subtest: 02 beetle ambiguity requests external analysis, no automatic insecticide choice
 ok 10 - 02 beetle ambiguity requests external analysis, no automatic insecticide choice
   ---
-  duration_ms: 3.6568
+  duration_ms: 3.0734
   type: 'test'
   ...
 # Subtest: 03 insufficient symptoms permit multiple discriminating questions
 ok 11 - 03 insufficient symptoms permit multiple discriminating questions
   ---
-  duration_ms: 0.9825
+  duration_ms: 1.2902
   type: 'test'
   ...
 # Subtest: 04 known pest does not fabricate symptoms or restart diagnosis
 ok 12 - 04 known pest does not fabricate symptoms or restart diagnosis
   ---
-  duration_ms: 0.9811
+  duration_ms: 0.818
   type: 'test'
   ...
 # Subtest: 05 missing age considers all intervals and blocks final choice
 ok 13 - 05 missing age considers all intervals and blocks final choice
   ---
-  duration_ms: 13.1424
+  duration_ms: 13.1331
   type: 'test'
   ...
 # Subtest: 06 unknown inventory is never claimed available
 ok 14 - 06 unknown inventory is never claimed available
   ---
-  duration_ms: 0.1912
+  duration_ms: 0.2492
   type: 'test'
   ...
 # Subtest: 07 closed product leakage blocked in final LINE payload for aliases and images
 ok 15 - 07 closed product leakage blocked in final LINE payload for aliases and images
   ---
-  duration_ms: 1.4671
+  duration_ms: 1.9617
   type: 'test'
   ...
 # Subtest: 08 suitable candidates sorted by business priority independent of prose
 ok 16 - 08 suitable candidates sorted by business priority independent of prose
   ---
-  duration_ms: 3.457
+  duration_ms: 3.2574
   type: 'test'
   ...
 # Subtest: 09 missing crop can produce evidence-based conditional candidates for nutrition too
 ok 17 - 09 missing crop can produce evidence-based conditional candidates for nutrition too
   ---
-  duration_ms: 2.2145
+  duration_ms: 2.272
   type: 'test'
   ...
 # Subtest: 10 evidence formula/target mismatch cannot become candidate
 ok 18 - 10 evidence formula/target mismatch cannot become candidate
   ---
-  duration_ms: 0.8842
+  duration_ms: 0.8822
   type: 'test'
   ...
 # Subtest: 11 fabricated company rate blocked even with real usage reference
 ok 19 - 11 fabricated company rate blocked even with real usage reference
   ---
-  duration_ms: 0.795
+  duration_ms: 0.8138
   type: 'test'
   ...
 # Subtest: 12 conflicting or stale sources cannot replace current status
 ok 20 - 12 conflicting or stale sources cannot replace current status
   ---
-  duration_ms: 0.3902
+  duration_ms: 0.3743
   type: 'test'
   ...
 # Subtest: 13 competitor uses web route without invented product identity
 ok 21 - 13 competitor uses web route without invented product identity
   ---
-  duration_ms: 0.665
+  duration_ms: 0.6578
   type: 'test'
   ...
 # Subtest: 14 ambiguous/unknown brand is not fuzzy-replaced
 ok 22 - 14 ambiguous/unknown brand is not fuzzy-replaced
   ---
-  duration_ms: 0.1138
+  duration_ms: 0.1338
   type: 'test'
   ...
 # Subtest: 15 comparison is separate from symptom diagnosis
 ok 23 - 15 comparison is separate from symptom diagnosis
   ---
-  duration_ms: 0.6091
+  duration_ms: 0.6086
   type: 'test'
   ...
 # Subtest: 16 handoff request has explicit action and no sales content
 ok 24 - 16 handoff request has explicit action and no sales content
   ---
-  duration_ms: 0.9556
+  duration_ms: 0.8741
   type: 'test'
   ...
 # Subtest: 18 greeting avoids all remote calls
 ok 25 - 18 greeting avoids all remote calls
   ---
-  duration_ms: 2.2943
+  duration_ms: 2.294
   type: 'test'
   ...
 # Subtest: 19 followup retains product and rate intent
 ok 26 - 19 followup retains product and rate intent
   ---
-  duration_ms: 1.7941
+  duration_ms: 2.0757
   type: 'test'
   ...
 # Subtest: 20 required warnings and questions cannot disappear
 ok 27 - 20 required warnings and questions cannot disappear
   ---
-  duration_ms: 0.2931
+  duration_ms: 0.4281
   type: 'test'
   ...
 # Subtest: 21 dealer contract requires active verified record, separate stock
 ok 28 - 21 dealer contract requires active verified record, separate stock
   ---
-  duration_ms: 0.0915
+  duration_ms: 0.0928
   type: 'test'
   ...
 # Subtest: 22 Jev 401 is not retried and opens circuit until config changed
 ok 29 - 22 Jev 401 is not retried and opens circuit until config changed
   ---
-  duration_ms: 0.2695
+  duration_ms: 0.2907
   type: 'test'
   ...
 # Subtest: 23 unavailable KB/company catalog does not invent product facts
 ok 30 - 23 unavailable KB/company catalog does not invent product facts
   ---
-  duration_ms: 0.5075
+  duration_ms: 0.3913
   type: 'test'
   ...
 # Subtest: 24 unavailable grounding falls back without registration/PHI claims
 ok 31 - 24 unavailable grounding falls back without registration/PHI claims
   ---
-  duration_ms: 1.1734
+  duration_ms: 1.0154
   type: 'test'
   ...
 # Subtest: 25 failed refresh retains last good until explicit max age
 ok 32 - 25 failed refresh retains last good until explicit max age
   ---
-  duration_ms: 5.5474
+  duration_ms: 5.2995
   type: 'test'
   ...
 # Subtest: 26 bounded history excludes injected catalog blobs
 ok 33 - 26 bounded history excludes injected catalog blobs
   ---
-  duration_ms: 0.9926
+  duration_ms: 0.8067
   type: 'test'
   ...
 # Subtest: 27 rate basis preserved, no plus sign or guessed unit
 ok 34 - 27 rate basis preserved, no plus sign or guessed unit
   ---
-  duration_ms: 2.2204
+  duration_ms: 2.582
   type: 'test'
   ...
 # Subtest: 28 canonical image files are tied to same product ID
 ok 35 - 28 canonical image files are tied to same product ID
   ---
-  duration_ms: 0.6339
+  duration_ms: 0.9888
   type: 'test'
   ...
 # Subtest: 29 exposure bypasses remote generation and all product recommendations
 ok 36 - 29 exposure bypasses remote generation and all product recommendations
   ---
-  duration_ms: 0.2176
+  duration_ms: 0.2713
   type: 'test'
   ...
 # Subtest: 30 current registration routes search
 ok 37 - 30 current registration routes search
   ---
-  duration_ms: 0.6948
+  duration_ms: 0.7297
   type: 'test'
   ...
 # Subtest: 31 indexing must complete before promotion; shared live KB rejected
 ok 38 - 31 indexing must complete before promotion; shared live KB rejected
   ---
-  duration_ms: 0.4817
+  duration_ms: 0.7104
   type: 'test'
   ...
 # Subtest: 32 internal groups and injected rates do not reach final LINE
 ok 39 - 32 internal groups and injected rates do not reach final LINE
   ---
-  duration_ms: 0.2392
+  duration_ms: 0.4799
   type: 'test'
   ...
 # Subtest: communication preference never infers age/generation; learning is not approved ground truth
 ok 40 - communication preference never infers age/generation; learning is not approved ground truth
   ---
-  duration_ms: 1.074
+  duration_ms: 1.3005
   type: 'test'
   ...
 # Subtest: real Bridge handlers: greeting and lookup bypass remote LLM and preserve rate through final LINE transport
 ok 41 - real Bridge handlers: greeting and lookup bypass remote LLM and preserve rate through final LINE transport
   ---
-  duration_ms: 63.4894
+  duration_ms: 65.3192
   type: 'test'
   ...
 # Subtest: real Bridge image request Legacy maps only to yellow box product ID
 ok 42 - real Bridge image request Legacy maps only to yellow box product ID
   ---
-  duration_ms: 20.9707
+  duration_ms: 20.0792
   type: 'test'
   ...
 # Subtest: real Bridge exposure works before registration and never calls model
 ok 43 - real Bridge exposure works before registration and never calls model
   ---
-  duration_ms: 15.0736
+  duration_ms: 16.3521
   type: 'test'
   ...
 # Subtest: real Bridge ownership blocks all customer sends while admin active
 ok 44 - real Bridge ownership blocks all customer sends while admin active
   ---
-  duration_ms: 17.6039
+  duration_ms: 17.1764
   type: 'test'
   ...
 # Subtest: real webhook HMAC rejects invalid signature without side effects
 ok 45 - real webhook HMAC rejects invalid signature without side effects
   ---
-  duration_ms: 4.3167
+  duration_ms: 4.6673
   type: 'test'
   ...
 # Subtest: staging refuses an API key bound to the production application
 ok 46 - staging refuses an API key bound to the production application
   ---
-  duration_ms: 23.5463
+  duration_ms: 23.7033
+  type: 'test'
+  ...
+# Subtest: real handler drops pending model output after takeover in three independent runs
+ok 47 - real handler drops pending model output after takeover in three independent runs
+  ---
+  duration_ms: 58.0712
   type: 'test'
   ...
 # Subtest: new crop does not inherit previous age/product/target
-ok 47 - new crop does not inherit previous age/product/target
+ok 48 - new crop does not inherit previous age/product/target
   ---
-  duration_ms: 4.9795
+  duration_ms: 5.3111
   type: 'test'
   ...
 # Subtest: direct formula followup is not forced to repeat previous weed recommendation warnings
-ok 48 - direct formula followup is not forced to repeat previous weed recommendation warnings
+ok 49 - direct formula followup is not forced to repeat previous weed recommendation warnings
   ---
-  duration_ms: 18.9366
+  duration_ms: 19.2537
   type: 'test'
   ...
 # Subtest: duplicate event is suppressed; redelivery of an unseen event can be processed
-ok 49 - duplicate event is suppressed; redelivery of an unseen event can be processed
+ok 50 - duplicate event is suppressed; redelivery of an unseen event can be processed
   ---
-  duration_ms: 0.2226
+  duration_ms: 0.2269
   type: 'test'
   ...
 # Subtest: a stale KB never calls generation, but exact latest catalog fact remains fast
-ok 50 - a stale KB never calls generation, but exact latest catalog fact remains fast
+ok 51 - a stale KB never calls generation, but exact latest catalog fact remains fast
   ---
-  duration_ms: 3.1466
+  duration_ms: 3.0354
   type: 'test'
   ...
 # Subtest: current registration without trusted provenance cannot reach LINE
-ok 51 - current registration without trusted provenance cannot reach LINE
+ok 52 - current registration without trusted provenance cannot reach LINE
   ---
-  duration_ms: 1.3509
+  duration_ms: 1.3735
   type: 'test'
   ...
 # Subtest: month-based usage is never compared as if its number meant days
-ok 52 - month-based usage is never compared as if its number meant days
+ok 53 - month-based usage is never compared as if its number meant days
   ---
-  duration_ms: 0.4695
+  duration_ms: 0.4717
   type: 'test'
   ...
 # Subtest: unknown product named as a recommendation cannot escape metadata checks
-ok 53 - unknown product named as a recommendation cannot escape metadata checks
+ok 54 - unknown product named as a recommendation cannot escape metadata checks
   ---
-  duration_ms: 1.4153
+  duration_ms: 1.3686
   type: 'test'
   ...
 # Subtest: image dedup uses product ID and explicit requests can resend
-ok 54 - image dedup uses product ID and explicit requests can resend
+ok 55 - image dedup uses product ID and explicit requests can resend
   ---
-  duration_ms: 0.9193
+  duration_ms: 1.0373
   type: 'test'
   ...
 # Subtest: isolated KB sync waits for indexing completion, versions release, preserves model settings
-ok 55 - isolated KB sync waits for indexing completion, versions release, preserves model settings
+ok 56 - isolated KB sync waits for indexing completion, versions release, preserves model settings
   ---
-  duration_ms: 2.1266
+  duration_ms: 1.9099
   type: 'test'
   ...
 # Subtest: failed indexing or stale index job cannot be promoted
-ok 56 - failed indexing or stale index job cannot be promoted
+ok 57 - failed indexing or stale index job cannot be promoted
   ---
-  duration_ms: 0.7745
+  duration_ms: 0.6816
   type: 'test'
   ...
-1..56
-# tests 56
+1..57
+# tests 57
 # suites 0
-# pass 56
+# pass 57
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 738.5472
+# duration_ms 740.3199
