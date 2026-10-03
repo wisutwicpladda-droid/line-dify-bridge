@@ -133,9 +133,9 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     const stageMatchesQuery = isLifecycle
       ? true
       : isSugarcane
-      ? stageMatches(stage, ageMonths)
+      ? (ageMonths == null || stageMatches(stage, ageMonths))
       : isRice
-        ? stageMatchesDays(stage, ageDays)
+        ? (ageDays == null || stageMatchesDays(stage, ageDays))
         : !hasFlowering || floweringStage(stage) || /ดอก|ออกดอก|ผ่าดอก/.test(product.selling);
     const targetMatches = /หญ้าข้าวนก/.test(q)
       ? /หญ้าข้าวนก/.test(target)
@@ -145,7 +145,6 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
           ? /เพลี้ย/.test(target)
           : true;
     const targetTypeMatches = isLifecycle ? true : isDurian ? /แมลง/.test(targetType) : /วัชพืช/.test(targetType);
-    if (!isLifecycle && ((isSugarcane && ageMonths == null) || (isRice && ageDays == null))) continue;
     if (!product || !isOpenForSale(product.status) || blockedForSprayOverCrop(product.name, q) || !cropMatches || !targetTypeMatches || !targetMatches || !stageMatchesQuery) continue;
     const item = hits.get(product.name) || { product, uses: [] };
     const useKey = [crop, target, stage].join('|');
@@ -185,7 +184,8 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     const selling = /^(none|-|ไม่มี)$/i.test(p.selling) ? '' : p.selling;
     const phyto = /^(none|-|ไม่มี)$/i.test(p.phyto) ? '' : p.phyto;
     const precautions = /^(none|-|ไม่มี)$/i.test(p.precautions) ? '' : p.precautions;
-    lines.push(`- ${p.name}${p.common ? ` | ${p.common}` : ''}${p.ai ? ` | สารสำคัญ: ${p.ai}` : ''}${p.moa ? ` | กลุ่มกลไก: ${p.moa}` : ''}${selling ? ` | จุดเด่น: ${selling}` : ''}${phyto ? ` | ความปลอดภัยต่อพืช: ${phyto}` : ''}${precautions ? ` | ข้อควรระวัง: ${precautions}` : ''} | ข้อมูลการใช้: ${uses}`);
+    const rank = levelFor(p.name, levels);
+    lines.push(`- ${p.name}${p.common ? ` | ${p.common}` : ''}${p.ai ? ` | สารสำคัญ: ${p.ai}` : ''}${p.moa ? ` | กลุ่มกลไก: ${p.moa}` : ''}${selling ? ` | จุดเด่น: ${selling}` : ''}${phyto ? ` | ความปลอดภัยต่อพืช: ${phyto}` : ''}${precautions ? ` | ข้อควรระวัง: ${precautions}` : ''} | ลำดับแนะนำภายใน: ${rank} (ห้ามเปิดเผย) | ข้อมูลการใช้: ${uses}`);
   }
   lines.push('[จบข้อมูลตรวจสอบภายใน]');
   return lines.join('\n');

@@ -39,5 +39,6 @@
   {"id":38,"name":"P107 โปรแกรมข้าวโพดตั้งแต่เริ่มปลูกถึงเก็บเกี่ยว","input":"แนะนำสินค้าดูแลข้าวโพดตั้งแต่เริ่มปลูกจนเก็บเกี่ยว","checks":["season_program","all_crop_stages","all_open_products","no_fabricated_product_data"]},
   {"id":39,"name":"P107 โปรแกรมพืชอื่นนอกกลุ่มหลัก","input":"อยากได้โปรแกรมดูแลพืชนี้ตลอดฤดู ตั้งแต่ปลูกจนเก็บเกี่ยว","checks":["season_program","ask_crop_if_missing","dynamic_crop_matching","no_fabricated_product_data"]},
   {"id":40,"name":"P108 โปรแกรมข้าวต้องเริ่มจากข้าวดีด","input":"ปลูกข้าวอยากให้แนะนำสินค้าตั้งแต่เริ่มปลูกจนเก็บเกี่ยว","checks":["rice_weed_priority","red_rice_check","all_rice_stages","no_fabricated_product_data"]},
-  {"id":41,"name":"P109 กันสินค้าที่ยังไม่เปิดหลุด","input":"แนะนำสินค้าดูแลข้าวโพดตั้งแต่เริ่มปลูกจนเก็บเกี่ยว","checks":["exclude_month_status_product","no_unreleased_name_leak","open_products_only"]}
+  {"id":41,"name":"P109 กันสินค้าที่ยังไม่เปิดหลุด","input":"แนะนำสินค้าดูแลข้าวโพดตั้งแต่เริ่มปลูกจนเก็บเกี่ยว","checks":["exclude_month_status_product","no_unreleased_name_leak","open_products_only"]},
+  {"id":42,"name":"P111 ใช้ Strategy เป็นลำดับคัดเลือกทุกเรื่อง","input":"ข้าวมีหญ้าข้าวนก ใช้สินค้าตัวไหนดี","checks":["strategy_first","check_all_strategy_levels","higher_priority_first","hide_internal_group_names"]}
 ]
