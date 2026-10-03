@@ -12,9 +12,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(cases.length >= 40, 'p108 ต้องมี regression อย่างน้อย 40 เคส แต่พบ ' + cases.length);
+assert(cases.length >= 41, 'p109 ต้องมี regression อย่างน้อย 41 เคส แต่พบ ' + cases.length);
 const byId = new Map(cases.map((c) => [c.id, c]));
-for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]) assert(byId.has(id), 'ขาด p88 case ' + id);
+for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]) assert(byId.has(id), 'ขาด p88 case ' + id);
 
 assert(prompt.includes('ผู้ช่วยแนะนำสินค้าและช่วยแก้ปัญหา'), 'p88 ไม่มี Product Assistant persona');
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
@@ -39,6 +39,7 @@ assert(prompt.includes('ใช้ได้กับพืชทุกชนิ�
 assert(prompt.includes('ตั้งแต่เริ่มปลูกจนเก็บเกี่ยว'), 'p107 ยังไม่มีกติกาโปรแกรมตั้งแต่ปลูกถึงเก็บเกี่ยว');
 assert(prompt.includes('ตรวจสินค้า ICP ที่เปิดขายและมีข้อมูลการใช้ตรงกับแต่ละช่วงให้ครบทุกตัว'), 'p107 ยังไม่ตรวจสินค้าครบทุกช่วงพืช');
 assert(prompt.includes('ตรวจ “ข้าวดีด/ข้าวแดง” และวัชพืชในนาข้าวเป็นประเด็นแรก'), 'p108 ยังไม่กำหนดข้าวดีดเป็นประเด็นแรกของโปรแกรมข้าว');
+assert(prompt.includes('ถ้าสถานะไม่ระบุชัดว่า “ขายได้แล้ว” “ขายแล้ว” “เปิดขายแล้ว” หรือ “พร้อมจำหน่าย” ให้ถือว่ายังไม่เปิด'), 'p109 ยังไม่กันสินค้าที่มีสถานะเดือนเปิดตัว');
 assert(dsl.includes('ข้าวดีด ข้าวแดง วัชพืชในนาข้าว ก่อนงอก หลังงอก ระยะพืช'), 'p108 retrieval ยังไม่ค้นข้าวดีดและข้าวแดง');
 assert(dsl.includes('สินค้า ICP Ladda บำรุง ธาตุอาหาร สารเสริม'), 'p102 retrieval query ยังไม่ดึงสินค้าบำรุง');
 assert(dsl.includes('สินค้า ICP Ladda รายการสินค้าทั้งหมด') && dsl.includes('สูตร องค์ประกอบ จุดเด่น และการใช้'), 'p104 retrieval query ยังไม่ดึงสินค้าทุกหมวด');

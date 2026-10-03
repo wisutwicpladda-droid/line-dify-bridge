@@ -52,7 +52,8 @@ function levelFor(name, levels) {
 
 function isOpenForSale(status) {
   const st = clean(status);
-  return /ขาย/.test(st) && !/รอเปิด|ปิด|ไม่พร้อม/.test(st);
+  return /ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย/.test(st)
+    && !/รอเปิด|ยังไม่เปิด|ปิด|ไม่พร้อม|เดือน|เปิดตัว/.test(st);
 }
 
 function floweringStage(stage) {

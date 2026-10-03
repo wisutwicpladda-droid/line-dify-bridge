@@ -6,6 +6,14 @@ const crypto = require('crypto');
 
 const SHEET_ID = process.env.PRODUCT_SHEET_ID || '155mB2y8vpDYITc49ZbsAWKdjaJXz31EMGBHKUiO4_pU';
 const GIDS = { master: process.env.PRODUCT_GID_MASTER || '1517893127', usage: process.env.PRODUCT_GID_USAGE || '212188772', packages: process.env.PRODUCT_GID_PACKAGES || '994912510' };
+
+// สถานะที่อนุญาตให้ลูกค้าเห็นและให้ Dify ค้นเจอได้ต้องเป็นสถานะเปิดขาย
+// สถานะเดือนเปิดตัว เช่น "เดือนธันวาคม" ยังไม่ถือว่าเปิดขาย
+function isOpenForSale(status) {
+  const st = s(status);
+  return /ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย/.test(st)
+    && !/รอเปิด|ยังไม่เปิด|ปิด|ไม่พร้อม|เดือน|เปิดตัว/.test(st);
+}
 const DATASET_ID = process.env.KB_DATASET_ID || 'af225749-33cc-4f0a-ae49-934ada9af79f';
 const DOC_NAME = process.env.KB_DOC_NAME || 'สินค้า_จาก_GoogleSheet.md';
 const KEY = process.env.DIFY_DATASET_KEY || '';
@@ -80,10 +88,12 @@ function buildText(master, usage, packages) {
     const withTarget = uses.filter((u) => u.target);
     const crops = [...new Set(withTarget.map((u) => u.crop || u.group))];
     const targets = [...new Set(withTarget.flatMap((u) => u.target.split(/\s*,\s*/)).filter(Boolean))];
-    if (/ขาย/.test(sellStatus) && !/รอเปิด|ปิด|ไม่พร้อม/.test(sellStatus) && withTarget.length) {
+    if (isOpenForSale(sellStatus) && withTarget.length) {
       const useSummary = withTarget.map((u) => [u.crop || u.group, u.target, u.stage, u.method].filter(Boolean).join(' / '));
       usageIndex.push(name + ' | ' + [...new Set(useSummary)].join(' ; '));
     }
+    // เก็บสถานะไว้สำหรับ routing/ตรวจสอบภายใน แต่ห้ามใส่รายละเอียดสินค้าที่รอเปิดลง KB
+    if (!isOpenForSale(sellStatus)) continue;
     const L = [];
     if (STRAT_LEVEL[strat.toLowerCase()]) lv[name] = STRAT_LEVEL[strat.toLowerCase()];
     if (moa) mo[name] = moa;
@@ -164,7 +174,7 @@ function buildText(master, usage, packages) {
     const id = s(r[0]); let name = s(r[1]).replace(/\s*\(ไม่มีรูป\)\s*/g, '').trim();
     if (OVERRIDES[name]) name = OVERRIDES[name];
     const sellStatus = statuses[name] || '';
-    if (!/ขาย/.test(sellStatus) || /รอเปิด|ปิด|ไม่พร้อม/.test(sellStatus)) continue;
+    if (!isOpenForSale(sellStatus)) continue;
     indexLines.push([name, CAT[s(r[2])] || s(r[2]), s(r[3]), s(r[8])].join(' | '));
   }
   const indexBlock = indexLines.join('\n');
@@ -228,4 +238,4 @@ function setLevels(lv, mo, categories, status) {
   levels.at = Date.now();
 }
 
-module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels };
+module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels, isOpenForSale };

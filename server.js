@@ -105,6 +105,7 @@ const kbSync = require('./kb_sync'); // v3.8: sync ข้อมูลสิน�
 const orderFix = require('./order_fix'); // v3.16: แก้ประโยค "เริ่มจาก..." ให้ตรงกับลำดับที่ guardOrder จัดใหม่
 const sheetContext = require('./sheet_context'); // v3.24: แนบข้อมูลจากชีตตามพืช-ศัตรูพืช-ระยะใช้ รวมถึงทุเรียนช่วงดอก
 const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไม่แสดงแหล่งอ้างอิงให้ลูกค้า
+const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -507,7 +508,8 @@ async function askDify(sessionId, text, files) {
     const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
     if (r.status === 200 && r.data && typeof r.data.answer === 'string') {
       const guarded = guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
-      return stripVisibleCitations(guarded);
+      const visible = stripVisibleCitations(guarded);
+      return guardUnreleasedProducts(visible, productMaster.master, sessionId, (msg) => console.log(msg));
     }
     console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
   } catch (e) { console.log('dify fetch error:', e.message); }
