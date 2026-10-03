@@ -12,11 +12,14 @@ function transition(s,state,{expectedVersion,summary,actor='system'}={}) {
   s.ownership={...o,state,version:o.version+1,updated_at:Date.now(),summary:summary==null?o.summary:summary};
   return s.ownership;
 }
-function beginTurn(s) { const o=ensure(s); o.turn++; return {version:o.version,turn:o.turn}; }
+function beginTurn(s) {
+  let o=ensure(s);
+  if(o.state==='BOT_RESUME')o=transition(s,'BOT_ACTIVE',{expectedVersion:o.version});
+  o.turn++; return {version:o.version,turn:o.turn};
+}
 function ticket(s) { const o=ensure(s);return {version:o.version,turn:o.turn}; }
 function canSend(s,t,{handoffAcknowledgement=false}={}) {
   const o=ensure(s);
   return !!t && t.version===o.version && t.turn===o.turn && (['BOT_ACTIVE','BOT_RESUME'].includes(o.state) || (handoffAcknowledgement && o.state==='HUMAN_REQUESTED'));
 }
 module.exports={STATES,ensure,transition,beginTurn,ticket,canSend};
-

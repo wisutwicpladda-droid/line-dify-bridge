@@ -2261,7 +2261,9 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
   console.log('[send]', JSON.stringify({...result,trace_id:s.salesTrace||null,state_version:s.ownership?.version}));
   if(SALES_V2&&!opts?.system){
     const metric=salesTraceLog.find(m=>m.trace_id===s.salesTrace);
-    if(metric){metric.network={webhook_received_at:ev._receivedAt||null,line_send_start_at:lineSendStart,line_send_end_at:lineSendEnd,line_api_ms:lineApiMs,delivery_render_ms:Date.now()-sendStarted-lineApiMs,total_ms:ev._receivedAt?Date.now()-ev._receivedAt:null,status:result.status,state_version:s.ownership?.version};metric.final_line_payload=renderedPayload;}
+    if(metric){metric.network={webhook_received_at:ev._receivedAt||null,line_send_start_at:lineSendStart,line_send_end_at:lineSendEnd,line_api_ms:lineApiMs,delivery_render_ms:Date.now()-sendStarted-lineApiMs,total_ms:ev._receivedAt?Date.now()-ev._receivedAt:null,status:result.status,state_version:s.ownership?.version};metric.final_line_payload=renderedPayload;
+      console.log('[sales-delivery]',JSON.stringify({trace_id:metric.trace_id,route:metric.route,network:metric.network}));
+    }
   }
   return result;
 }
@@ -2804,7 +2806,12 @@ function api(path, opts) {
   return fetch(path, opts).then(function(r) {
     if (r.status === 401) throw new Error('รหัสไม่ถูกต้อง');
     if (r.status === 503) throw new Error('ยังไม่ได้ตั้งค่า ADMIN_KEY ใน Railway');
-    if (!r.ok) throw new Error('ผิดพลาด (' + r.status + ')');
+    if (!r.ok) return r.json().catch(function() { return {}; }).then(function(d) {
+      var messages = { ownership_conflict: 'สถานะแชทเปลี่ยนแล้ว กรุณาตรวจสถานะล่าสุดแล้วลองอีกครั้ง',
+        resume_summary_required: 'กรุณาสรุปข้อมูลที่ยืนยันแล้วก่อนเปิดบอทตอบต่อ',
+        ownership_version_required: 'กรุณาโหลดหน้าแอดมินใหม่ก่อนเปลี่ยนสถานะบอท' };
+      throw new Error(messages[d.error] || 'ผิดพลาด (' + r.status + ')');
+    });
     return r.json();
   });
 }
@@ -3297,13 +3304,28 @@ document.getElementById('items').addEventListener('click', function(e) {
   if (it) selectChat(it.getAttribute('data-id'));
 });
 
-document.getElementById('tglbtn').addEventListener('click', function() {
+function toggleBot() {
   if (!sel) return;
+  var chat = findSel();
   var m = parseInt(this.dataset.m, 10);
-  api('/admin/api/mute', { method: 'POST', body: JSON.stringify({ id: sel, minutes: m }) })
+  var data = { id: sel, minutes: m };
+  if (chat && chat.ownership) {
+    data.version = chat.ownership.version;
+    if (m === 0) {
+      var summary = prompt('สรุปข้อมูลที่ยืนยันแล้วและเรื่องที่บอทต้องตอบต่อ (ไม่ทราบข้อมูลใดให้ระบุว่ายังไม่ทราบ)', chat.ownership.summary || '');
+      if (summary === null) return;
+      if (!summary.trim()) { alert('กรุณาสรุปก่อนเปิดบอทตอบต่อ'); return; }
+      data.summary = summary.trim();
+    }
+  }
+  var button = this;
+  button.disabled = true;
+  return api('/admin/api/mute', { method: 'POST', body: JSON.stringify(data) })
     .then(function() { load(); })
-    .catch(function(e) { alert(e.message); });
-});
+    .catch(function(e) { load(); alert(e.message); })
+    .finally(function() { button.disabled = false; });
+}
+document.getElementById('tglbtn').addEventListener('click', toggleBot);
 
 document.getElementById('cbbtn').addEventListener('click', function() {
   if (!sel) return;
@@ -3458,7 +3480,7 @@ function handleAdmin(req, res, path, body) {
     const now = Date.now();
     const rank = (x) => (x.cb ? 2 : 0) + ((x.handoff && x.mutedUntil > now) ? 1 : 0);
     const list = [...sessions.entries()]
-      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none') }))
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, ownership: OWNERSHIP_V2 ? {...ownership.ensure(s)} : null, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none') }))
       // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
       .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
@@ -3638,6 +3660,7 @@ function handleAdmin(req, res, path, body) {
     const s = sessions.get(id);
     const m = data.minutes;
     if (OWNERSHIP_V2) {
+      if (!Number.isInteger(data.version)) return sendJson(res, 409, {ok:false,error:'ownership_version_required'});
       try {
         ownership.transition(s, m === 0 ? 'BOT_RESUME' : 'HUMAN_ACTIVE', {actor:'admin', expectedVersion:data.version, summary:data.summary});
       } catch(e) { return sendJson(res, 409, {ok:false,error:e.message}); }
@@ -3647,7 +3670,9 @@ function handleAdmin(req, res, path, body) {
     else if (typeof m === 'number' && m > 0) s.mutedUntil = Date.now() + m * 60000;
     else s.mutedUntil = Date.now() + MUTE_MINUTES * 60000;
     markDirty();
+    if (OWNERSHIP_V2) saveNow();
     broadcast();
+    if (OWNERSHIP_V2) console.log('[ownership]', JSON.stringify({state:s.ownership.state,version:s.ownership.version,turn:s.ownership.turn,actor:'admin',summary_present:!!s.ownership.summary}));
     console.log(`[admin] ${id.slice(0, 8)} mutedUntil=${s.mutedUntil}`);
     return sendJson(res, 200, { ok: true, id, mutedUntil: s.mutedUntil, handoff: !!s.handoff });
   }
