@@ -3304,26 +3304,51 @@ document.getElementById('items').addEventListener('click', function(e) {
   if (it) selectChat(it.getAttribute('data-id'));
 });
 
-function toggleBot() {
+function askResumeSummary(initial) {
+  return new Promise(function(resolve) {
+    var panel = document.createElement('div');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-label', 'สรุปก่อนคืนแชทให้บอท');
+    panel.style.cssText = 'position:fixed;inset:0;background:#0006;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+    panel.innerHTML = '<form style="background:white;border-radius:14px;padding:24px;width:520px;max-width:100%;box-shadow:0 12px 40px #0003"><h2 style="margin-top:0">สรุปก่อนคืนแชทให้บอท</h2><label for="resume-summary">ข้อมูลที่ยืนยันแล้วและเรื่องที่บอทต้องตอบต่อ</label><p>ส่วนที่ยังไม่ทราบให้ระบุว่ายังไม่ทราบ</p><textarea id="resume-summary" rows="5" maxlength="2000" style="width:100%;box-sizing:border-box;font:inherit;padding:10px"></textarea><p role="alert" style="color:#b91c1c"></p><div style="display:flex;justify-content:flex-end;gap:12px"><button type="button">ยกเลิก</button><button type="submit">บันทึกและเปิดบอทตอบต่อ</button></div></form>';
+    var input = panel.querySelector('textarea');
+    input.value = initial || '';
+    function finish(value) { panel.remove(); resolve(value); }
+    panel.querySelector('form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (!input.value.trim()) { panel.querySelector('[role="alert"]').textContent = 'กรุณาสรุปก่อนเปิดบอทตอบต่อ'; input.focus(); return; }
+      finish(input.value.trim());
+    });
+    panel.querySelector('button[type="button"]').addEventListener('click', function() { finish(null); });
+    panel.addEventListener('keydown', function(e) { if (e.key === 'Escape') { e.preventDefault(); finish(null); } });
+    document.body.appendChild(panel);
+    input.focus();
+  });
+}
+
+async function toggleBot() {
   if (!sel) return;
   var chat = findSel();
   var m = parseInt(this.dataset.m, 10);
   var data = { id: sel, minutes: m };
+  var button = this;
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
   if (chat && chat.ownership) {
     data.version = chat.ownership.version;
     if (m === 0) {
-      var summary = prompt('สรุปข้อมูลที่ยืนยันแล้วและเรื่องที่บอทต้องตอบต่อ (ไม่ทราบข้อมูลใดให้ระบุว่ายังไม่ทราบ)', chat.ownership.summary || '');
+      var summary = await askResumeSummary(chat.ownership.summary || '');
       if (summary === null) return;
       if (!summary.trim()) { alert('กรุณาสรุปก่อนเปิดบอทตอบต่อ'); return; }
       data.summary = summary.trim();
     }
   }
-  var button = this;
-  button.disabled = true;
-  return api('/admin/api/mute', { method: 'POST', body: JSON.stringify(data) })
-    .then(function() { load(); })
-    .catch(function(e) { load(); alert(e.message); })
-    .finally(function() { button.disabled = false; });
+    await api('/admin/api/mute', { method: 'POST', body: JSON.stringify(data) });
+    load();
+  } catch (e) { load(); alert(e.message); }
+  finally { button.disabled = false; }
 }
 document.getElementById('tglbtn').addEventListener('click', toggleBot);
 

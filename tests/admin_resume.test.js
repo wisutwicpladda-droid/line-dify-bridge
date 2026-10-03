@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),vm=require(
 const {harness}=require('./helpers/bridge_harness');
 const ownership=require('../conversation_ownership');
 const source=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
-const ui=source.slice(source.indexOf('function toggleBot()'),source.indexOf("document.getElementById('tglbtn').addEventListener"));
+const ui=source.slice(source.indexOf('async function toggleBot()'),source.indexOf("document.getElementById('tglbtn').addEventListener"));
 function request(h,method,url,data){
  let status,body;
  h.api.handleAdmin({method,url,headers:{'x-admin-key':'test-fixture-only'}},{writeHead:s=>status=s,end:b=>body=JSON.parse(b)},url,Buffer.from(JSON.stringify(data||{})));
@@ -11,7 +11,7 @@ function request(h,method,url,data){
 }
 function click(h,chat,summary,minutes=0){
  const sent=[],errors=[];let loads=0,prompts=0;
- const sandbox={sel:chat.id,findSel:()=>chat,prompt:()=>{prompts++;return summary;},alert:e=>errors.push(e),load:()=>loads++,api:(url,opts)=>{
+ const sandbox={sel:chat.id,findSel:()=>chat,askResumeSummary:async()=>{prompts++;return summary;},alert:e=>errors.push(e),load:()=>loads++,api:(url,opts)=>{
   const data=JSON.parse(opts.body);sent.push(data);const r=request(h,'POST',url,data);
   return r.status===200?Promise.resolve(r.body):Promise.reject(Error(r.body.error));
  }};
@@ -53,7 +53,7 @@ test('mute API requires version and resume summary rather than bypassing ownersh
  assert.equal(s.ownership.state,'HUMAN_ACTIVE');
 });
 test('legacy UI retains original payload and never asks for staging summary',async()=>{
- const calls=[];const sandbox={sel:'legacy',findSel:()=>({id:'legacy',ownership:null}),prompt:()=>{throw Error('legacy prompt');},alert:()=>{},load:()=>{},api:(p,o)=>{calls.push(JSON.parse(o.body));return Promise.resolve();}};
+ const calls=[];const sandbox={sel:'legacy',findSel:()=>({id:'legacy',ownership:null}),askResumeSummary:()=>{throw Error('legacy prompt');},alert:()=>{},load:()=>{},api:(p,o)=>{calls.push(JSON.parse(o.body));return Promise.resolve();}};
  vm.runInNewContext(ui,sandbox);await sandbox.toggleBot.call({dataset:{m:'0'}});
  assert.deepEqual(calls,[{id:'legacy',minutes:0}]);
 });
