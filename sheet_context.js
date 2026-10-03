@@ -64,6 +64,25 @@ function isLifecycleQuery(query) {
   return /(เริ่มปลูก|ตั้งแต่\s*(?:เริ่ม)?ปลูก|ตลอดฤดู|ทั้งฤดู|ทั้งรอบการผลิต|จน(?:ถึง)?เก็บเกี่ยว|ถึงเก็บเกี่ยว|ก่อนปลูก.*เก็บเกี่ยว)/.test(clean(query));
 }
 
+function queryHasPlantAgeOrStage(query) {
+  const q = clean(query);
+  return /(?:อายุ|ประมาณ|ราว)\s*\d+(?:\.\d+)?\s*(?:วัน|เดือน)/.test(q)
+    || /\d+(?:\.\d+)?\s*(?:วัน|เดือน)\b/.test(q)
+    || /ระยะ(?:พืช|ข้าว|ต้น)?|ก่อนงอก|หลังงอก|เริ่มงอก|แตกกอ|ออกดอก|ดอกบาน|ผลอ่อน|ก่อนเก็บเกี่ยว|หลังเก็บเกี่ยว/.test(q);
+}
+
+function needsPlantAgeBeforeFinalSelection(query, items, lifecycle) {
+  if (lifecycle || queryHasPlantAgeOrStage(query)) return false;
+  const stages = new Set();
+  for (const item of items || []) {
+    for (const use of item.uses || []) {
+      const stage = clean(use.stage);
+      if (stage && !/ทุกระยะ|ทุกช่วง|ทุกอายุ|ไม่จำกัด/.test(stage)) stages.add(stage);
+    }
+  }
+  return stages.size > 1;
+}
+
 function cropLabels(crop) {
   return clean(crop)
     .split(/\s*[\/,;|]\s*/)
@@ -177,6 +196,9 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
       lines.push('ยังไม่พบรายการสินค้าในชีตที่ระบุเป้าหมายข้าวดีด/ข้าวแดงโดยตรง ห้ามเติมชื่อสินค้าเอง');
     }
   }
+  if (needsPlantAgeBeforeFinalSelection(q, items, isLifecycle)) {
+    lines.push('ข้อมูลการใช้ที่ตรงมีหลายช่วงพืชต่างกัน ลูกค้ายังไม่ระบุอายุหรือระยะ: ต้องถามอายุ/ระยะพืชก่อนเลือกสินค้าตัวสุดท้าย และห้ามบอกอัตราเฉพาะช่วงใดจนกว่าจะทราบระยะ ห้ามเดาอายุ');
+  }
   lines.push('ต้องตรวจพิจารณาสินค้าทุกตัวในรายการนี้ ไม่เลือกเพียงชื่อแรก และให้เสนอเป็นทางเลือกแยกกัน ไม่แนะนำให้ผสมหรือใช้ทุกตัวพร้อมกัน:');
   for (const item of items) {
     const p = item.product;
@@ -196,4 +218,4 @@ function enrichQuery(query, masterRows, usageRows, levels) {
   return extra ? `${query}\n\n${extra}` : query;
 }
 
-module.exports = { buildVerifiedUsageContext, enrichQuery, queryAgeMonths, queryAgeDays, stageMatches, stageMatchesDays };
+module.exports = { buildVerifiedUsageContext, enrichQuery, queryAgeMonths, queryAgeDays, stageMatches, stageMatchesDays, queryHasPlantAgeOrStage, needsPlantAgeBeforeFinalSelection };

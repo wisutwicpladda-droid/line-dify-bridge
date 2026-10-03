@@ -7,14 +7,15 @@ const root = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__di
 const prompt = fs.readFileSync(path.join(root, 'work', 'main_prompt_p88.txt'), 'utf8');
 const dsl = fs.readFileSync(path.join(root, 'dify', 'app_b_hybrid_p88.yml'), 'utf8');
 const cases = JSON.parse(fs.readFileSync(path.join(__dirname, 'regression_cases.json'), 'utf8'));
+const validator = fs.readFileSync(path.join(__dirname, '..', 'product_validator.js'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(cases.length >= 42, 'p111 ต้องมี regression อย่างน้อย 42 เคส แต่พบ ' + cases.length);
+assert(cases.length >= 47, 'p112 ต้องมี regression อย่างน้อย 47 เคส แต่พบ ' + cases.length);
 const byId = new Map(cases.map((c) => [c.id, c]));
-for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42]) assert(byId.has(id), 'ขาด p88 case ' + id);
+for (const id of [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]) assert(byId.has(id), 'ขาด p112 case ' + id);
 
 assert(prompt.includes('ผู้ช่วยแนะนำสินค้าและช่วยแก้ปัญหา'), 'p88 ไม่มี Product Assistant persona');
 assert(prompt.includes('PRODUCT HELP'), 'p88 ไม่มี Product Help routing');
@@ -42,6 +43,9 @@ assert(prompt.includes('ตรวจ “ข้าวดีด/ข้าวแด
 assert(prompt.includes('ถ้าสถานะไม่ระบุชัดว่า “ขาย” “ขายได้แล้ว” “ขายแล้ว” “เปิดขายแล้ว” หรือ “พร้อมจำหน่าย” ให้ถือว่ายังไม่เปิด'), 'p109 ยังไม่กันสินค้าที่มีสถานะเดือนเปิดตัวและไม่รองรับสถานะขาย');
 assert(prompt.includes('ก่อนแนะนำสินค้าทุกครั้ง ให้ตรวจตัวเลือกที่ตรงกับปัญหาจากลำดับ Strategy ภายในทีละลำดับ'), 'p111 ยังไม่กำหนด Strategy-first selection');
 assert(prompt.includes('ห้ามข้ามสินค้าที่ตรงในลำดับสูงกว่าไปเลือกสินค้าลำดับต่ำกว่า'), 'p111 ยังไม่กันการข้ามลำดับ Strategy');
+assert(prompt.includes('ถ้าตัวเลือกที่ตรงมีช่วงใช้ต่างกัน เช่น 7–12 วันกับ 20–25 วัน'), 'p112 ยังไม่กำหนดถามอายุเมื่อช่วงใช้ต่างกัน');
+assert(prompt.includes('ถ้าภาพเป็นรูปสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไป'), 'p112 ยังไม่กำหนดแยกภาพสวัสดี');
+assert(validator.includes('validateProductData') && validator.includes('Strategy'), 'p112 ยังไม่มีตัวตรวจข้อมูลสินค้าใหม่');
 assert(dsl.includes('ข้าวดีด ข้าวแดง วัชพืชในนาข้าว ก่อนงอก หลังงอก ระยะพืช'), 'p108 retrieval ยังไม่ค้นข้าวดีดและข้าวแดง');
 assert(dsl.includes('สินค้า ICP Ladda บำรุง ธาตุอาหาร สารเสริม'), 'p102 retrieval query ยังไม่ดึงสินค้าบำรุง');
 assert(dsl.includes('สินค้า ICP Ladda รายการสินค้าทั้งหมด') && dsl.includes('สูตร องค์ประกอบ') && dsl.includes('จุดเด่น') && dsl.includes('ลำดับแนะนำภายใน'), 'p111 retrieval query ยังไม่ดึงลำดับ Strategy');
@@ -85,4 +89,4 @@ assert(byId.get(33).expected.max_chars === 220, 'case 33 ต้องมีง�
 assert(byId.get(34).expected.max_sentences === 3, 'case 34 ต้องตอบไม่เกิน 3 ประโยค');
 assert(byId.get(34).expected.max_chars === 350, 'case 34 ต้องมีงบ 350 ตัวอักษร');
 
-console.log('PASS: p88 character/product-first contract ' + cases.length + ' cases; persona, tone, response strategy and settings verified');
+console.log('PASS: p112 character/product-first contract ' + cases.length + ' cases; age gate, product validation, LINE QA coverage and greeting-image guard verified');

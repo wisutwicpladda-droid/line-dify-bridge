@@ -40,5 +40,10 @@
   {"id":39,"name":"P107 โปรแกรมพืชอื่นนอกกลุ่มหลัก","input":"อยากได้โปรแกรมดูแลพืชนี้ตลอดฤดู ตั้งแต่ปลูกจนเก็บเกี่ยว","checks":["season_program","ask_crop_if_missing","dynamic_crop_matching","no_fabricated_product_data"]},
   {"id":40,"name":"P108 โปรแกรมข้าวต้องเริ่มจากข้าวดีด","input":"ปลูกข้าวอยากให้แนะนำสินค้าตั้งแต่เริ่มปลูกจนเก็บเกี่ยว","checks":["rice_weed_priority","red_rice_check","all_rice_stages","no_fabricated_product_data"]},
   {"id":41,"name":"P109 กันสินค้าที่ยังไม่เปิดหลุด","input":"แนะนำสินค้าดูแลข้าวโพดตั้งแต่เริ่มปลูกจนเก็บเกี่ยว","checks":["exclude_month_status_product","no_unreleased_name_leak","open_products_only"]},
-  {"id":42,"name":"P111 ใช้ Strategy เป็นลำดับคัดเลือกทุกเรื่อง","input":"ข้าวมีหญ้าข้าวนก ใช้สินค้าตัวไหนดี","checks":["strategy_first","check_all_strategy_levels","higher_priority_first","hide_internal_group_names"]}
+  {"id":42,"name":"P111 ใช้ Strategy เป็นลำดับคัดเลือกทุกเรื่อง","input":"ข้าวมีหญ้าข้าวนก ใช้สินค้าตัวไหนดี","checks":["strategy_first","check_all_strategy_levels","higher_priority_first","hide_internal_group_names"]},
+  {"id":43,"name":"P112 ถามอายุเมื่อช่วงใช้ต่างกัน","input":"ข้าวมีวัชพืช ใช้สินค้าตัวไหนดี","checks":["ask_plant_age_before_final_product","mixed_stage_guard","no_stage_rate_without_age"]},
+  {"id":44,"name":"P112 QA จริงข้าวดีดและหญ้าข้าวนกผ่าน LINE","input":"ปลูกข้าว อยากจัดการข้าวดีดกับหญ้าข้าวนก ใช้ตัวไหนดี","checks":["line_qa","rice_red_rice","barnyard_grass","strategy_first"]},
+  {"id":45,"name":"P112 QA สินค้าหลาย Strategy และสินค้ายังไม่เปิด","input":"มีตัวเลือกหลายกลุ่มไหม แล้วขอรายละเอียดคริซ่าด้วย","checks":["line_qa","strategy_order","unreleased_guard","no_unreleased_detail"]},
+  {"id":46,"name":"P112 QA เทียบคู่แข่งผ่าน LINE","input":"หมาแดงมีสารอะไร ของลัดดาตัวไหนสารเดียวกันหรือกลุ่มใกล้เคียง","checks":["line_qa","competitor_search","verify_before_compare","same_active_or_moa"]},
+  {"id":47,"name":"P112 ภาพสวัสดีไม่เข้า vision วิเคราะห์โรค","input":"ลูกค้าส่งรูปสวัสดีวันจันทร์มา","checks":["line_image_forward","greeting_image_guard","short_general_image_reply","no_product_recommendation"]}
 ]

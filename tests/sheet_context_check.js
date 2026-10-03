@@ -46,4 +46,8 @@ const riceWeedResult = buildVerifiedUsageContext('ข้าวมีหญ้า
 assert(riceWeedResult.includes('หญ้าข้าวนก'), 'คำถามข้าวที่ไม่ระบุอายุยังต้องดึงเป้าหมายวัชพืช');
 assert(riceWeedResult.indexOf('ตัวเลือกระดับสูง') < riceWeedResult.indexOf('ตัวคุมนาข้าว'), 'คำถามข้าวทั่วไปต้องเรียงสินค้าตาม Strategy');
 
+const mixedStageResult = buildVerifiedUsageContext('ข้าวมีวัชพืช ใช้สินค้าตัวไหนดี', master, usage, { 'ตัวเลือกระดับสูง': 1, 'ตัวคุมนาข้าว': 2 });
+assert(mixedStageResult.includes('ต้องถามอายุ/ระยะพืชก่อนเลือกสินค้าตัวสุดท้าย'), 'เมื่อข้อมูลการใช้ต่างช่วงและไม่ทราบอายุ ต้องถามอายุก่อนเลือกตัวสุดท้าย');
+assert(!buildVerifiedUsageContext('ข้าวอายุ 10 วัน มีวัชพืช ใช้สินค้าตัวไหนดี', master, usage, { 'ตัวเลือกระดับสูง': 1, 'ตัวคุมนาข้าว': 2 }).includes('ต้องถามอายุ/ระยะพืชก่อนเลือกสินค้าตัวสุดท้าย'), 'เมื่อมีอายุพืชแล้วไม่ควรถามอายุซ้ำ');
+
 console.log('PASS: lifecycle sheet context includes all verified crop stages and open products');

@@ -106,6 +106,7 @@ const orderFix = require('./order_fix'); // v3.16: แก้ประโยค "
 const sheetContext = require('./sheet_context'); // v3.24: แนบข้อมูลจากชีตตามพืช-ศัตรูพืช-ระยะใช้ รวมถึงทุเรียนช่วงดอก
 const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไม่แสดงแหล่งอ้างอิงให้ลูกค้า
 const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
+const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -672,16 +673,32 @@ const PIMG_NAMES = Object.keys(PIMG).sort((a, b) => b.length - a.length);
 // โหลดหมวดและสถานะจาก Product master แบบ public แยกจาก DIFY_DATASET_KEY
 // เพื่อให้คำขอรูปทั้งหมดทำงานได้ แม้ระบบ sync KB จะยังไม่ได้ตั้ง API key
 const productMaster = { ok: false, products: 0, at: 0, error: '', master: [], usage: [] };
+const productValidation = { ok: false, at: 0, errors: [], warnings: [], summary: {}, error: '' };
+let productMasterRefreshing = false;
 async function refreshProductMaster() {
+  if (productMasterRefreshing) return;
+  productMasterRefreshing = true;
   try {
     const sh = await kbSync.fetchSheets();
     const built = kbSync.buildText(sh.master, sh.usage, sh.packages);
     kbSync.setLevels(built.levels, built.moa, built.categories, built.status);
     Object.assign(productMaster, { ok: true, products: built.products, at: Date.now(), error: '', master: sh.master, usage: sh.usage });
+    const checked = validateProductData(sh.master, sh.usage, PIMG);
+    Object.assign(productValidation, checked, { at: Date.now(), error: '' });
+    if (!checked.ok || checked.warnings.length) {
+      console.log(`[product-check] ${checked.ok ? 'WARN' : 'ERROR'} products=${checked.summary.products} errors=${checked.errors.length} warnings=${checked.warnings.length}`);
+      checked.errors.slice(0, 12).forEach((x) => console.log('[product-check][error] ' + x));
+      checked.warnings.slice(0, 12).forEach((x) => console.log('[product-check][warn] ' + x));
+    } else {
+      console.log(`[product-check] PASS products=${checked.summary.products} open=${checked.summary.openProducts}`);
+    }
     console.log(`[product-master] loaded ${built.products} products for image/category routing`);
   } catch (e) {
     Object.assign(productMaster, { ok: false, error: e.message });
+    Object.assign(productValidation, { ok: false, at: Date.now(), error: e.message });
     console.log('[product-master] load failed:', e.message);
+  } finally {
+    productMasterRefreshing = false;
   }
 }
 setTimeout(() => { refreshProductMaster().catch(() => {}); }, 1500);
@@ -2201,7 +2218,7 @@ async function handleEvent(ev) {
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
-  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่ม ห้ามเดา';
+  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
   else if (ev.message.type === 'sticker') text = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
   else return;
 
@@ -3527,7 +3544,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.27', citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.27', citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

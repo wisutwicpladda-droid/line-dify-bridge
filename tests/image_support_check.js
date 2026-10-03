@@ -23,5 +23,7 @@ assert((dsl.match(/vision:\s+enabled:\s+true/g) || []).length >= 2, 'LLM ที�
 assert(prompt.includes('การอ่านภาพจากลูกค้า'), 'Prompt ยังไม่มีกติกาอ่านภาพ');
 assert(prompt.includes('ห้ามเดาชื่อโรค แมลง วัชพืช สินค้า สูตร หรืออัตราจากภาพที่ไม่ชัด'), 'Prompt ยังไม่กันการเดาจากภาพ');
 assert(prompt.includes('ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ'), 'Prompt ยังไม่กำหนด fallback เมื่อภาพไม่พอ');
+assert(prompt.includes('ถ้าภาพเป็นรูปสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไป'), 'Prompt ยังไม่แยกภาพสวัสดีออกจากภาพเกษตร');
+assert(bridge.includes('ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไป'), 'Bridge ยังไม่ส่งคำสั่งแยกภาพสวัสดีให้ vision flow');
 
-console.log('PASS: image input contract, LINE binary download, Dify upload and vision rules verified');
+console.log('PASS: image input contract, greeting-image routing, LINE binary download, Dify upload and vision rules verified');
