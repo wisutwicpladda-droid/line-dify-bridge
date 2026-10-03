@@ -11,6 +11,11 @@ test('new crop does not inherit previous age/product/target',()=>{
  const ctx=extract('มะม่วงใบเหลือง',catalog,prev);
  assert.equal(ctx.age_days,undefined);assert.equal(ctx.target,null);assert.equal(ctx.product_ids.length,0);
 });
+test('direct formula followup is not forced to repeat previous weed recommendation warnings',async()=>{
+ const previous=extract('ข้าว 10 วัน หญ้าข้าวนกใช้อะไร',catalog);
+ const r=await run('ไบเตอร์ คือสารอะไร',{catalog,previous,generate:async()=>{throw Error('no remote')}});
+ assert.equal(r.failures.length,0);assert.ok(r.messages[0].text.includes('ไบเฟนทริน'));
+});
 test('duplicate event is suppressed; redelivery of an unseen event can be processed',()=>{
  const x=new EventLedger();assert.equal(x.claim('a'),true);assert.equal(x.claim('a'),false);
  const recovered=new EventLedger(x.snapshot());assert.equal(recovered.claim('a'),false);assert.equal(recovered.claim('new-redelivery'),true);

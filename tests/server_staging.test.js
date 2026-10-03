@@ -31,4 +31,12 @@ test('real webhook HMAC rejects invalid signature without side effects',()=>{
   let status;h.http()(req,{writeHead(s){status=s},end(){}});
   req.emit('data',Buffer.from('{"events":[]}'));req.emit('end');assert.equal(status,401);assert.equal(h.sent.length,0);
 });
+test('staging refuses an API key bound to the production application',async()=>{
+  const {buildCatalog}=require('../sales/catalog');
+  const version=buildCatalog(require('./fixtures/company-snapshot.json')).version;
+  const h=harness({knowledgeVersion:version,appName:'production app'});
+  await h.api.refreshProductMaster();await h.api.handleEvent(h.event('ทุเรียนใบเหลือง'));
+  assert.equal(h.calls.filter(x=>x.path.includes('chat-messages')).length,0);
+  assert.ok(h.sent.flat().some(m=>m.text?.includes('ยังตรวจข้อมูล')));
+});
 

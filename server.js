@@ -124,6 +124,7 @@ const salesCatalog = new CatalogStore();
 const {StagingKnowledgeSync} = require('./sales/knowledge_sync');
 const {learningEvent} = require('./sales/foundation');
 const salesTraceLog=[],salesLearningEvents=[];
+let stagingAppIdentityVerified=false;
 const salesKnowledge = new StagingKnowledgeSync({enabled:SALES_V2 && process.env.AI_SALES_KB_SYNC==='on' && !!process.env.DIFY_DATASET_KEY,
   api:(method,path,body)=>request(method,'https://api.dify.ai/v1'+path,{Authorization:'Bearer '+process.env.DIFY_DATASET_KEY},body)});
 if(SALES_V2 && process.env.AI_SALES_KB_VERSION)
@@ -528,6 +529,12 @@ async function askDify(sessionId, text, files) {
       strictKnowledgeVersion:true,knowledgeRelease:salesKnowledge.state,
       difyVersion:process.env.AI_SALES_DIFY_VERSION||'staging-draft',
       generate:async input=>{
+        if(!stagingAppIdentityVerified) {
+          const info=await request('GET',DIFY_BASE+'/info',{Authorization:'Bearer '+DIFY_KEY});
+          if(info.status!==200 || info.data?.name!=='น้องลัดดา AI Sales STAGING 20261003')
+            throw Error('isolated_staging_api_key_required');
+          stagingAppIdentityVerified=true;
+        }
         const payload={inputs:{prepared_context:input.prepared_context,trace_id:input.trace_id},query:input.query,response_mode:'blocking',
           user:sessionId,conversation_id:'',auto_generate_name:false};
         if(files?.length)payload.files=files;

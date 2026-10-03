@@ -12,8 +12,9 @@ function prepare(query,{catalog,previous={},history=[],ownership={},preference=n
   const selectedIds=[...new Set([...context.product_ids,...(candidates?.eligible||[]).slice(0,6).map(p=>p.product_id),...(candidates?.pending||[]).slice(0,6).map(p=>p.product_id)])];
   const allowed=selectedIds.map(id=>catalog?.products.get(id)).filter(p=>p?.open);
   const primary=candidates?.eligible.find(p=>p.product_id===candidates.primary_product_id);
-  const requiredWarnings=primary?.warnings||[];
-  const requiredQuestions=candidates?.missing_fields.includes('crop_stage')?['ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ']:[];
+  const selecting=['known_problem','season_program','general_agriculture'].includes(context.intent);
+  const requiredWarnings=selecting?primary?.warnings||[]:[];
+  const requiredQuestions=selecting&&candidates?.missing_fields.includes('crop_stage')?['ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ']:[];
   const prepared={
     intent:context.intent,needs_web:context.needs_web,customer_state:context,catalog_version:catalog?.version||null,
     diagnosis_state:{uncertain:context.diagnosis_uncertain,confirmed_target:context.target||null},
