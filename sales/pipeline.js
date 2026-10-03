@@ -9,6 +9,15 @@ const {shouldSearch}=require('./external_evidence');
 const {buildClaims,defaultPlan}=require('./claims');
 const {unansweredQuestions,recordAsked}=require('./conversation_facts');
 function prepare(query,{catalog,previous={},history=[],ownership={},preference=null,evidence=[]}={}) {
+  // A new admin handoff replaces stale bot context once. Reuse the existing
+  // extractor, and retain admin provenance; model prose is never a fact source.
+  const summary=String(ownership.summary||'').trim();
+  const summaryKey=summary?crypto.createHash('sha256').update(JSON.stringify([ownership.version||0,summary])).digest('hex'):null;
+  if(summaryKey&&summaryKey!==previous.admin_summary_applied) {
+    previous=extract(summary,catalog,{});
+    previous.admin_summary_applied=summaryKey;
+    for(const fact of Object.values(previous.facts?.values||{}))fact.source='admin_summary';
+  }
   const context=extract(query,catalog,previous);
   const candidates=catalog?selectCandidates(catalog,context,evidence):null;
   const selectedIds=[...new Set([...context.product_ids,...(candidates?.eligible||[]).slice(0,6).map(p=>p.product_id),...(candidates?.pending||[]).slice(0,6).map(p=>p.product_id)])];

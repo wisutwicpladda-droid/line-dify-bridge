@@ -1,0 +1,604 @@
+TAP version 13
+# Subtest: actual admin button resumes human-owned chat with fresh version and summary, then next turn answers
+ok 1 - actual admin button resumes human-owned chat with fresh version and summary, then next turn answers
+  ---
+  duration_ms: 108.6408
+  type: 'test'
+  ...
+# Subtest: stale admin cannot resume after another owner transition; refresh is requested
+ok 2 - stale admin cannot resume after another owner transition; refresh is requested
+  ---
+  duration_ms: 7.9854
+  type: 'test'
+  ...
+# Subtest: cancel or blank resume summary leaves ownership unchanged and makes no request
+ok 3 - cancel or blank resume summary leaves ownership unchanged and makes no request
+  ---
+  duration_ms: 8.5291
+  type: 'test'
+  ...
+# Subtest: mute API requires version and resume summary rather than bypassing ownership checks
+ok 4 - mute API requires version and resume summary rather than bypassing ownership checks
+  ---
+  duration_ms: 8.2023
+  type: 'test'
+  ...
+# Subtest: legacy UI retains original payload and never asks for staging summary
+ok 5 - legacy UI retains original payload and never asks for staging summary
+  ---
+  duration_ms: 1.4096
+  type: 'test'
+  ...
+# Subtest: all 89 catalog identities follow the same open/status/formula rules in final LINE payload
+ok 6 - all 89 catalog identities follow the same open/status/formula rules in final LINE payload
+  ---
+  duration_ms: 147.8574
+  type: 'test'
+  ...
+# Subtest: every product changes to closed safely without editing any name-based guard
+ok 7 - every product changes to closed safely without editing any name-based guard
+  ---
+  duration_ms: 634.5577
+  type: 'test'
+  ...
+# Subtest: comparison after pest recommendation keeps both requested ingredients, not prior primary recommendation
+ok 8 - comparison after pest recommendation keeps both requested ingredients, not prior primary recommendation
+  ---
+  duration_ms: 43.5608
+  type: 'test'
+  ...
+# Subtest: every open catalog ingredient answer is question-scoped, source-backed, zero model calls
+ok 9 - every open catalog ingredient answer is question-scoped, source-backed, zero model calls
+  ---
+  duration_ms: 120.0933
+  type: 'test'
+  ...
+# Subtest: raw prose cannot leak unsupported company/PHI/pollinator claims even with valid answer_plan
+ok 10 - raw prose cannot leak unsupported company/PHI/pollinator claims even with valid answer_plan
+  ---
+  duration_ms: 2.9574
+  type: 'test'
+  ...
+# Subtest: unlisted claims and answered-question references cannot pass the constrained renderer
+ok 11 - unlisted claims and answered-question references cannot pass the constrained renderer
+  ---
+  duration_ms: 3.8032
+  type: 'test'
+  ...
+# Subtest: three-turn followup preserves answered water/root/onset facts and asks only missing fields
+ok 12 - three-turn followup preserves answered water/root/onset facts and asks only missing fields
+  ---
+  duration_ms: 14.2149
+  type: 'test'
+  ...
+# Subtest: contradiction asks only changed fact and crop change resets irrelevant facts
+ok 13 - contradiction asks only changed fact and crop change resets irrelevant facts
+  ---
+  duration_ms: 10.5691
+  type: 'test'
+  ...
+# Subtest: approved alias comparison and ambiguity are deterministic; no dangerous fuzzy alias
+ok 14 - approved alias comparison and ambiguity are deterministic; no dangerous fuzzy alias
+  ---
+  duration_ms: 11.6592
+  type: 'test'
+  ...
+# Subtest: unknown spelling is queued as unreviewed hash, not auto-trained or fuzzy-resolved
+ok 15 - unknown spelling is queued as unreviewed hash, not auto-trained or fuzzy-resolved
+  ---
+  duration_ms: 3.7082
+  type: 'test'
+  ...
+# Subtest: persona checks bot text while preserving quoted customer ครับ
+ok 16 - persona checks bot text while preserving quoted customer ครับ
+  ---
+  duration_ms: 1.5786
+  type: 'test'
+  ...
+# Subtest: company package/status/features/ingredient never route to web
+ok 17 - company package/status/features/ingredient never route to web
+  ---
+  duration_ms: 3.5894
+  type: 'test'
+  ...
+# Subtest: concurrent source fetches deduplicate, cache and absolute deadline bounds stalled fetchers
+ok 18 - concurrent source fetches deduplicate, cache and absolute deadline bounds stalled fetchers
+  ---
+  duration_ms: 39.5712
+  type: 'test'
+  ...
+# Subtest: grounding metadata is unverified discovery, missing snippet/source does not become evidence
+ok 19 - grounding metadata is unverified discovery, missing snippet/source does not become evidence
+  ---
+  duration_ms: 1.5231
+  type: 'test'
+  ...
+# Subtest: contradictory verified sources fail closed instead of majority/model guessing
+ok 20 - contradictory verified sources fail closed instead of majority/model guessing
+  ---
+  duration_ms: 0.3538
+  type: 'test'
+  ...
+# Subtest: startup refuses mismatched bot/app/catalog/KB/replicas before serving and restricts test audience
+ok 21 - startup refuses mismatched bot/app/catalog/KB/replicas before serving and restricts test audience
+  ---
+  duration_ms: 0.5718
+  type: 'test'
+  ...
+# Subtest: closed alias and missing status fail closed
+ok 22 - closed alias and missing status fail closed
+  ---
+  duration_ms: 6.1161
+  type: 'test'
+  ...
+# Subtest: final LINE payload preserves all content through multiple batches
+ok 23 - final LINE payload preserves all content through multiple batches
+  ---
+  duration_ms: 1.4162
+  type: 'test'
+  ...
+# Subtest: concentration variants not merged
+ok 24 - concentration variants not merged
+  ---
+  duration_ms: 2.3395
+  type: 'test'
+  ...
+# Subtest: admin takeover while model pending drops final LINE payload
+ok 25 - admin takeover while model pending drops final LINE payload
+  ---
+  duration_ms: 2.239
+  type: 'test'
+  ...
+# Subtest: takeover between batches prevents remaining messages
+ok 26 - takeover between batches prevents remaining messages
+  ---
+  duration_ms: 0.679
+  type: 'test'
+  ...
+# Subtest: human ownership does not expire and explicit admin summary is required
+ok 27 - human ownership does not expire and explicit admin summary is required
+  ---
+  duration_ms: 0.7914
+  type: 'test'
+  ...
+# Subtest: contract validates every array element, primary scalar and handoff enum
+ok 28 - contract validates every array element, primary scalar and handoff enum
+  ---
+  duration_ms: 10.6978
+  type: 'test'
+  ...
+# Subtest: repair is restricted to empty containers and cannot invent missing fields or IDs
+ok 29 - repair is restricted to empty containers and cannot invent missing fields or IDs
+  ---
+  duration_ms: 5.985
+  type: 'test'
+  ...
+# Subtest: invalid output fallback preserves mandatory flowering/harvest warnings
+ok 30 - invalid output fallback preserves mandatory flowering/harvest warnings
+  ---
+  duration_ms: 22.9381
+  type: 'test'
+  ...
+# Subtest: human state rejects even otherwise valid facts at validator and delivery boundary
+ok 31 - human state rejects even otherwise valid facts at validator and delivery boundary
+  ---
+  duration_ms: 4.859
+  type: 'test'
+  ...
+# Subtest: rate references are restricted to actual prepared scope, not all company usage
+ok 32 - rate references are restricted to actual prepared scope, not all company usage
+  ---
+  duration_ms: 3.7929
+  type: 'test'
+  ...
+# Subtest: pending PHI/flowering risk cannot select a primary; harvest days are not plant age
+ok 33 - pending PHI/flowering risk cannot select a primary; harvest days are not plant age
+  ---
+  duration_ms: 4.3478
+  type: 'test'
+  ...
+# Subtest: diagnosis uncertainty blocks an active chemical recommendation without product metadata
+ok 34 - diagnosis uncertainty blocks an active chemical recommendation without product metadata
+  ---
+  duration_ms: 6.2415
+  type: 'test'
+  ...
+# Subtest: source ranking, formulation and concentration never collapse incompatible products
+ok 35 - source ranking, formulation and concentration never collapse incompatible products
+  ---
+  duration_ms: 2.1567
+  type: 'test'
+  ...
+# Subtest: PHI numbers cannot bypass provenance in a known-problem followup
+ok 36 - PHI numbers cannot bypass provenance in a known-problem followup
+  ---
+  duration_ms: 7.1172
+  type: 'test'
+  ...
+# Subtest: recommendation metadata cannot bypass unresolved selection by omitting primary ID
+ok 37 - recommendation metadata cannot bypass unresolved selection by omitting primary ID
+  ---
+  duration_ms: 7.7281
+  type: 'test'
+  ...
+# Subtest: active evidence is not proof that an ICP product is or is not registered
+ok 38 - active evidence is not proof that an ICP product is or is not registered
+  ---
+  duration_ms: 3.9419
+  type: 'test'
+  ...
+# Subtest: complete known-problem selection avoids model fabrication and records only the rendered selection
+ok 39 - complete known-problem selection avoids model fabrication and records only the rendered selection
+  ---
+  duration_ms: 5.9767
+  type: 'test'
+  ...
+# Subtest: near-harvest cannot substitute an unverified biological treatment for a chemical
+ok 40 - near-harvest cannot substitute an unverified biological treatment for a chemical
+  ---
+  duration_ms: 5.3324
+  type: 'test'
+  ...
+# Subtest: event duration is not crop age and a known flowering/harvest stage is not requested again
+ok 41 - event duration is not crop age and a known flowering/harvest stage is not requested again
+  ---
+  duration_ms: 11.3362
+  type: 'test'
+  ...
+# Subtest: all explicitly listed crop-age windows remain eligible without treating water duration as crop age
+ok 42 - all explicitly listed crop-age windows remain eligible without treating water duration as crop age
+  ---
+  duration_ms: 0.5549
+  type: 'test'
+  ...
+# Subtest: external provider disabled, unknown source, changed document and outage fail closed
+ok 43 - external provider disabled, unknown source, changed document and outage fail closed
+  ---
+  duration_ms: 5.9498
+  type: 'test'
+  ...
+# Subtest: company-only fast intents never trigger external search or model
+ok 44 - company-only fast intents never trigger external search or model
+  ---
+  duration_ms: 14.1161
+  type: 'test'
+  ...
+# Subtest: all six exposure types preserve first aid in real handler final payload, three runs each
+ok 45 - all six exposure types preserve first aid in real handler final payload, three runs each
+  ---
+  duration_ms: 131.7299
+  type: 'test'
+  ...
+# Subtest: learning supports all required event types and export excludes transcript and customer identity
+ok 46 - learning supports all required event types and export excludes transcript and customer identity
+  ---
+  duration_ms: 0.6826
+  type: 'test'
+  ...
+# Subtest: closed-product turn must not block a subsequent self-contained weed question
+ok 47 - closed-product turn must not block a subsequent self-contained weed question
+  ---
+  duration_ms: 38.2175
+  type: 'test'
+  ...
+# Subtest: summary-dependent package followup replaces the previous symptom context
+ok 48 - summary-dependent package followup replaces the previous symptom context
+  ---
+  duration_ms: 12.0658
+  type: 'test'
+  ...
+# Subtest: summary product cannot bypass closed status or supply an invented package value
+ok 49 - summary product cannot bypass closed status or supply an invented package value
+  ---
+  duration_ms: 5.788
+  type: 'test'
+  ...
+# Subtest: 01 symptom uncertainty survives final payload and forbids chemical recommendation
+ok 50 - 01 symptom uncertainty survives final payload and forbids chemical recommendation
+  ---
+  duration_ms: 9.7392
+  type: 'test'
+  ...
+# Subtest: 02 beetle ambiguity requests external analysis, no automatic insecticide choice
+ok 51 - 02 beetle ambiguity requests external analysis, no automatic insecticide choice
+  ---
+  duration_ms: 22.9643
+  type: 'test'
+  ...
+# Subtest: 03 insufficient symptoms permit multiple discriminating questions
+ok 52 - 03 insufficient symptoms permit multiple discriminating questions
+  ---
+  duration_ms: 1.6415
+  type: 'test'
+  ...
+# Subtest: 04 known pest does not fabricate symptoms or restart diagnosis
+ok 53 - 04 known pest does not fabricate symptoms or restart diagnosis
+  ---
+  duration_ms: 1.9563
+  type: 'test'
+  ...
+# Subtest: 05 missing age considers all intervals and blocks final choice
+ok 54 - 05 missing age considers all intervals and blocks final choice
+  ---
+  duration_ms: 2.4471
+  type: 'test'
+  ...
+# Subtest: 06 unknown inventory is never claimed available
+ok 55 - 06 unknown inventory is never claimed available
+  ---
+  duration_ms: 0.2358
+  type: 'test'
+  ...
+# Subtest: 07 closed product leakage blocked in final LINE payload for aliases and images
+ok 56 - 07 closed product leakage blocked in final LINE payload for aliases and images
+  ---
+  duration_ms: 1.5509
+  type: 'test'
+  ...
+# Subtest: 08 suitable candidates sorted by business priority independent of prose
+ok 57 - 08 suitable candidates sorted by business priority independent of prose
+  ---
+  duration_ms: 4.4472
+  type: 'test'
+  ...
+# Subtest: 09 missing crop can produce evidence-based conditional candidates for nutrition too
+ok 58 - 09 missing crop can produce evidence-based conditional candidates for nutrition too
+  ---
+  duration_ms: 6.5656
+  type: 'test'
+  ...
+# Subtest: 10 evidence formula/target mismatch cannot become candidate
+ok 59 - 10 evidence formula/target mismatch cannot become candidate
+  ---
+  duration_ms: 1.236
+  type: 'test'
+  ...
+# Subtest: 11 fabricated company rate blocked even with real usage reference
+ok 60 - 11 fabricated company rate blocked even with real usage reference
+  ---
+  duration_ms: 1.5401
+  type: 'test'
+  ...
+# Subtest: 12 conflicting or stale sources cannot replace current status
+ok 61 - 12 conflicting or stale sources cannot replace current status
+  ---
+  duration_ms: 0.9879
+  type: 'test'
+  ...
+# Subtest: 13 competitor uses web route without invented product identity
+ok 62 - 13 competitor uses web route without invented product identity
+  ---
+  duration_ms: 1.9619
+  type: 'test'
+  ...
+# Subtest: 14 ambiguous/unknown brand is not fuzzy-replaced
+ok 63 - 14 ambiguous/unknown brand is not fuzzy-replaced
+  ---
+  duration_ms: 0.1699
+  type: 'test'
+  ...
+# Subtest: 15 comparison is separate from symptom diagnosis
+ok 64 - 15 comparison is separate from symptom diagnosis
+  ---
+  duration_ms: 1.763
+  type: 'test'
+  ...
+# Subtest: 16 handoff request has explicit action and no sales content
+ok 65 - 16 handoff request has explicit action and no sales content
+  ---
+  duration_ms: 1.7617
+  type: 'test'
+  ...
+# Subtest: 18 greeting avoids all remote calls
+ok 66 - 18 greeting avoids all remote calls
+  ---
+  duration_ms: 4.747
+  type: 'test'
+  ...
+# Subtest: 19 followup retains product and rate intent
+ok 67 - 19 followup retains product and rate intent
+  ---
+  duration_ms: 3.0604
+  type: 'test'
+  ...
+# Subtest: 20 required warnings and questions cannot disappear
+ok 68 - 20 required warnings and questions cannot disappear
+  ---
+  duration_ms: 0.3439
+  type: 'test'
+  ...
+# Subtest: 21 dealer contract requires active verified record, separate stock
+ok 69 - 21 dealer contract requires active verified record, separate stock
+  ---
+  duration_ms: 0.0909
+  type: 'test'
+  ...
+# Subtest: 22 Jev 401 is not retried and opens circuit until config changed
+ok 70 - 22 Jev 401 is not retried and opens circuit until config changed
+  ---
+  duration_ms: 0.2802
+  type: 'test'
+  ...
+# Subtest: 23 unavailable KB/company catalog does not invent product facts
+ok 71 - 23 unavailable KB/company catalog does not invent product facts
+  ---
+  duration_ms: 0.5279
+  type: 'test'
+  ...
+# Subtest: 24 unavailable grounding falls back without registration/PHI claims
+ok 72 - 24 unavailable grounding falls back without registration/PHI claims
+  ---
+  duration_ms: 3.3838
+  type: 'test'
+  ...
+# Subtest: 25 failed refresh retains last good until explicit max age
+ok 73 - 25 failed refresh retains last good until explicit max age
+  ---
+  duration_ms: 6.6703
+  type: 'test'
+  ...
+# Subtest: 26 bounded history excludes injected catalog blobs
+ok 74 - 26 bounded history excludes injected catalog blobs
+  ---
+  duration_ms: 1.1745
+  type: 'test'
+  ...
+# Subtest: 27 rate basis preserved, no plus sign or guessed unit
+ok 75 - 27 rate basis preserved, no plus sign or guessed unit
+  ---
+  duration_ms: 3.2074
+  type: 'test'
+  ...
+# Subtest: 28 canonical image files are tied to same product ID
+ok 76 - 28 canonical image files are tied to same product ID
+  ---
+  duration_ms: 1.1537
+  type: 'test'
+  ...
+# Subtest: 29 exposure bypasses remote generation and all product recommendations
+ok 77 - 29 exposure bypasses remote generation and all product recommendations
+  ---
+  duration_ms: 0.6571
+  type: 'test'
+  ...
+# Subtest: 30 current registration routes search
+ok 78 - 30 current registration routes search
+  ---
+  duration_ms: 1.411
+  type: 'test'
+  ...
+# Subtest: 31 indexing must complete before promotion; shared live KB rejected
+ok 79 - 31 indexing must complete before promotion; shared live KB rejected
+  ---
+  duration_ms: 0.7043
+  type: 'test'
+  ...
+# Subtest: 32 internal groups and injected rates do not reach final LINE
+ok 80 - 32 internal groups and injected rates do not reach final LINE
+  ---
+  duration_ms: 0.6039
+  type: 'test'
+  ...
+# Subtest: communication preference never infers age/generation; learning is not approved ground truth
+ok 81 - communication preference never infers age/generation; learning is not approved ground truth
+  ---
+  duration_ms: 0.4857
+  type: 'test'
+  ...
+# Subtest: real Bridge handlers: greeting and lookup bypass remote LLM and preserve rate through final LINE transport
+ok 82 - real Bridge handlers: greeting and lookup bypass remote LLM and preserve rate through final LINE transport
+  ---
+  duration_ms: 101.9485
+  type: 'test'
+  ...
+# Subtest: real Bridge image request Legacy maps only to yellow box product ID
+ok 83 - real Bridge image request Legacy maps only to yellow box product ID
+  ---
+  duration_ms: 30.592
+  type: 'test'
+  ...
+# Subtest: real Bridge exposure works before registration and never calls model
+ok 84 - real Bridge exposure works before registration and never calls model
+  ---
+  duration_ms: 19.7071
+  type: 'test'
+  ...
+# Subtest: real Bridge ownership blocks all customer sends while admin active
+ok 85 - real Bridge ownership blocks all customer sends while admin active
+  ---
+  duration_ms: 21.5946
+  type: 'test'
+  ...
+# Subtest: real webhook HMAC rejects invalid signature without side effects
+ok 86 - real webhook HMAC rejects invalid signature without side effects
+  ---
+  duration_ms: 6.2319
+  type: 'test'
+  ...
+# Subtest: protected trace endpoint reports actual delivered payload and timing without handler reference errors
+ok 87 - protected trace endpoint reports actual delivered payload and timing without handler reference errors
+  ---
+  duration_ms: 23.7615
+  type: 'test'
+  ...
+# Subtest: staging refuses an API key bound to the production application
+ok 88 - staging refuses an API key bound to the production application
+  ---
+  duration_ms: 29.6164
+  type: 'test'
+  ...
+# Subtest: real handler drops pending model output after takeover in three independent runs
+ok 89 - real handler drops pending model output after takeover in three independent runs
+  ---
+  duration_ms: 68.6785
+  type: 'test'
+  ...
+# Subtest: new crop does not inherit previous age/product/target
+ok 90 - new crop does not inherit previous age/product/target
+  ---
+  duration_ms: 11.5155
+  type: 'test'
+  ...
+# Subtest: direct formula followup is not forced to repeat previous weed recommendation warnings
+ok 91 - direct formula followup is not forced to repeat previous weed recommendation warnings
+  ---
+  duration_ms: 31.6936
+  type: 'test'
+  ...
+# Subtest: duplicate event is suppressed; redelivery of an unseen event can be processed
+ok 92 - duplicate event is suppressed; redelivery of an unseen event can be processed
+  ---
+  duration_ms: 0.3741
+  type: 'test'
+  ...
+# Subtest: a stale KB never calls generation, but exact latest catalog fact remains fast
+ok 93 - a stale KB never calls generation, but exact latest catalog fact remains fast
+  ---
+  duration_ms: 8.6219
+  type: 'test'
+  ...
+# Subtest: current registration without trusted provenance cannot reach LINE
+ok 94 - current registration without trusted provenance cannot reach LINE
+  ---
+  duration_ms: 5.6527
+  type: 'test'
+  ...
+# Subtest: month-based usage is never compared as if its number meant days
+ok 95 - month-based usage is never compared as if its number meant days
+  ---
+  duration_ms: 0.4845
+  type: 'test'
+  ...
+# Subtest: unknown product named as a recommendation cannot escape metadata checks
+ok 96 - unknown product named as a recommendation cannot escape metadata checks
+  ---
+  duration_ms: 2.1949
+  type: 'test'
+  ...
+# Subtest: image dedup uses product ID and explicit requests can resend
+ok 97 - image dedup uses product ID and explicit requests can resend
+  ---
+  duration_ms: 1.2879
+  type: 'test'
+  ...
+# Subtest: isolated KB sync waits for indexing completion, versions release, preserves model settings
+ok 98 - isolated KB sync waits for indexing completion, versions release, preserves model settings
+  ---
+  duration_ms: 2.5298
+  type: 'test'
+  ...
+# Subtest: failed indexing or stale index job cannot be promoted
+ok 99 - failed indexing or stale index job cannot be promoted
+  ---
+  duration_ms: 0.9871
+  type: 'test'
+  ...
+1..99
+# tests 99
+# suites 0
+# pass 99
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 947.6577

@@ -44,7 +44,8 @@ function extract(text,catalog,previous={}) {
   else if(/เทียบ|ต่าง.*ยังไง|ต่าง.*อย่างไร|คล้าย|ดีกว่า/.test(t))intent=hits.length>=2?'comparison':'competitor';
   else if(/เริ่มปลูก.*เก็บเกี่ยว|ทั้งฤดู|ทุกช่วง/.test(t))intent='season_program';
   else if(rate)intent='rate';
-  else if(hits.length)intent=/ขนาด|บรรจุ|กระสอบละ|ขวดละ/.test(t)?'package':'product';
+  else if(/ขนาด|บรรจุ|กระสอบละ|ขวดละ/.test(t)&&ctx.product_ids.length)intent='package';
+  else if(hits.length)intent='product';
   else if(/ใบเหลือง|เหี่ยว|โคนเน่า|รากเน่า|รากดำ|มีกลิ่น|ยอดหงิก|ปลายใบไหม้|ไม่ออกผล|ไม่ติดผล/.test(t) && !/ยืนยันแล้ว|ตรวจพบเชื้อ/.test(t))intent='symptom';
   else if(ctx.target)intent='known_problem';
   else if(/เหลือง|เหี่ยว|เน่า|จุด|หงิก|ไหม้|แห้ง|ไม่ออกผล|ไม่ติดผล/.test(t))intent='symptom';
@@ -70,7 +71,7 @@ function fastAnswer(ctx,catalog) {
   if(!catalog)return null;
   if(ctx.ambiguous_aliases?.length){const ids=[...new Set(ctx.ambiguous_aliases.flatMap(x=>x.product_ids))];const names=ids.map(id=>catalog.products.get(id)).filter(p=>p?.open).map(p=>'"'+p.canonical_name+'"');return result('ชื่อนี้ตรงกับมากกว่าหนึ่งรายการค่ะ หมายถึง '+names.join(' หรือ ')+' คะ','clarification');}
   const p=ctx.product_ids.length===1?catalog.products.get(ctx.product_ids[0]):null;
-  if(p&&!p.open)return result('น้องลัดดายังยืนยันข้อมูลสินค้านี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจสอบก่อนแนะนำ',ctx.intent);
+  if(p&&!p.open&&['product','package','rate'].includes(ctx.intent))return result('น้องลัดดายังยืนยันข้อมูลสินค้านี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจสอบก่อนแนะนำ',ctx.intent);
   const direct=directFact(ctx,catalog,buildClaims(catalog,ctx,null));
   if(direct)return result(direct.text,ctx.intent,{claim_refs:direct.claim_refs});
   // Exact fact questions only. Do not treat every question mentioning a name as lookup.
