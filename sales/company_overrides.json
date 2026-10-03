@@ -1,0 +1,18 @@
+{
+  "version": "owner-approved-2026-10-03",
+  "source": "Owner instructions in this conversation; never inferred from external sources",
+  "aliases": {
+    "ไดพิม 90": "P0019",
+    "ไดแพ๊กซ์ 80": "P0020",
+    "ไดยูแมกซ์ 80": "P0021",
+    "ก๊อปกัน (สีเขียว)": "P0001",
+    "ก็อปกัน (สีเหลือง)": "P0002"
+  },
+  "image_requests": {
+    "เลกาซี 20": { "product_id": "P0013", "reason": "Owner: no standalone Legacy sale; show yellow box set" },
+    "เลกาซี": { "product_id": "P0013", "reason": "Owner: no standalone Legacy sale; show yellow box set" }
+  },
+  "severity_rates": {
+    "P0049": { "low_label": "ระบาดไม่รุนแรง/หว่านป้องกัน", "high_label": "ระบาดรุนแรง", "min": 3, "max": 5, "unit": "กิโลกรัม", "basis_value": 1, "basis_unit": "ไร่" }
+  }
+}
