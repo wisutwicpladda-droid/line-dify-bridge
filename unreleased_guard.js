@@ -4,7 +4,7 @@ const clean = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
 
 function isOpenForSale(status) {
   const st = clean(status);
-  return /ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย/.test(st)
+  return /^(ขาย|ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย)$/.test(st)
     && !/รอเปิด|ยังไม่เปิด|ปิด|ไม่พร้อม|เดือน|เปิดตัว/.test(st);
 }
 

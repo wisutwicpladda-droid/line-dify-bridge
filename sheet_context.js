@@ -52,7 +52,7 @@ function levelFor(name, levels) {
 
 function isOpenForSale(status) {
   const st = clean(status);
-  return /ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย/.test(st)
+  return /^(ขาย|ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย)$/.test(st)
     && !/รอเปิด|ยังไม่เปิด|ปิด|ไม่พร้อม|เดือน|เปิดตัว/.test(st);
 }
 
@@ -74,12 +74,19 @@ function cropLabels(crop) {
 function cropMatchesQuery(crop, query, allLabels) {
   const q = clean(query).replace(/\s+/g, '');
   const rowLabels = cropLabels(crop).map((label) => label.replace(/\s+/g, ''));
-  const matches = (allLabels || [])
+  const labels = (allLabels || [])
     .map((label) => clean(label).replace(/\s+/g, ''))
     .filter((label) => label.length >= 2 && q.includes(label));
+  // ลูกค้ามักพูดว่า "ข้าว" แต่ชีตใช้ป้าย "นาข้าว"; จับคู่แบบนี้ได้
+  // โดยต้องกันไม่ให้คำว่า "ข้าว" ไปชนกับ "ข้าวโพด"
+  const genericRice = q.includes('ข้าว') && !q.includes('ข้าวโพด');
+  const matches = [...new Set([...labels, ...(genericRice ? (allLabels || [])
+    .map((label) => clean(label).replace(/\s+/g, ''))
+    .filter((label) => label === 'นาข้าว') : [])])];
   if (!matches.length) return false;
+  if (genericRice) return rowLabels.some((label) => matches.includes(label));
   const longest = Math.max(...matches.map((label) => label.length));
-  return rowLabels.some((label) => label.length >= 2 && q.includes(label) && label.length === longest);
+  return rowLabels.some((label) => matches.includes(label) && label.length === longest);
 }
 
 function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {

@@ -5,7 +5,7 @@ const { buildText } = require('../kb_sync');
 
 const master = [
   ['id', 'name', 'category', 'common', 'ai', 'moa', 'form', 'selling', 'absorb', 'mech', 'act', 'phyto', 'prec', 'strategy', 'status'],
-  ['P1', 'สินค้าที่เปิดแล้ว', 'กำจัดวัชพืช', '', 'สาร A', '', '', '', '', '', '', '', '', 'Standard', 'ขายได้แล้ว'],
+  ['P1', 'สินค้าที่เปิดแล้ว', 'กำจัดวัชพืช', '', 'สาร A', '', '', '', '', '', '', '', '', 'Standard', 'ขาย'],
   ['P2', 'คริซ่า', 'กำจัดวัชพืช', '', 'Tricyclazole', '', '', '', '', '', '', '', '', 'Natural', 'เดือนธันวาคม']
 ];
 const usage = [

@@ -11,7 +11,7 @@ const GIDS = { master: process.env.PRODUCT_GID_MASTER || '1517893127', usage: pr
 // สถานะเดือนเปิดตัว เช่น "เดือนธันวาคม" ยังไม่ถือว่าเปิดขาย
 function isOpenForSale(status) {
   const st = s(status);
-  return /ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย/.test(st)
+  return /^(ขาย|ขายได้แล้ว|ขายแล้ว|เปิดขายแล้ว|พร้อมจำหน่าย)$/.test(st)
     && !/รอเปิด|ยังไม่เปิด|ปิด|ไม่พร้อม|เดือน|เปิดตัว/.test(st);
 }
 const DATASET_ID = process.env.KB_DATASET_ID || 'af225749-33cc-4f0a-ae49-934ada9af79f';
