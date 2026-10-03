@@ -116,6 +116,7 @@ const OWNERSHIP_V2 = process.env.OWNERSHIP_V2 === 'on';
 const salesPipeline = require('./sales/pipeline');
 const {CatalogStore} = require('./sales/catalog');
 const salesRouter = require('./sales/router');
+const stagingIdentity = require('./sales/staging_identity');
 const salesImages = require('./sales/images');
 const {EventLedger} = require('./sales/event_ledger');
 let salesEvents = new EventLedger();
@@ -526,6 +527,8 @@ async function uploadLineImageToDify(messageId, sessionId) {
 async function askDify(sessionId, text, files) {
   if (SALES_V2) {
     const session=sessions.get(sessionId)||{};
+    const generationTicket=ownership.ticket(session);
+    let difyRequestAt=null,difyResponseAt=null;
     const result=await salesPipeline.run(text,{catalog:salesCatalog.get(),previous:session.salesContext||{},history:session.history,
       ownership:ownership.ensure(session),preference:session.communication_preference,
       strictKnowledgeVersion:true,knowledgeRelease:salesKnowledge.state,
@@ -541,16 +544,20 @@ async function askDify(sessionId, text, files) {
         const payload={inputs:{prepared_context:input.prepared_context,trace_id:input.trace_id},query:input.query,response_mode:'blocking',
           user:sessionId,conversation_id:'',auto_generate_name:false};
         if(files?.length)payload.files=files;
-        const r=await request('POST',DIFY_BASE+'/chat-messages',{Authorization:'Bearer '+DIFY_KEY},payload);
+        difyRequestAt=Date.now();
+        let r;try{r=await request('POST',DIFY_BASE+'/chat-messages',{Authorization:'Bearer '+DIFY_KEY},payload);}finally{difyResponseAt=Date.now();}
         if(r.status!==200||!r.data?.answer)throw new Error('staging_generation_failed');
         return {answer:r.data.answer,usage:r.data.metadata?.usage||null};
       },observe:metric=>{
+        metric.dify_network={request_at:difyRequestAt,response_at:difyResponseAt};
         salesTraceLog.push(metric);if(salesTraceLog.length>200)salesTraceLog.shift();
+        if(metric.alias_review)salesLearningEvents.push(learningEvent('unknown_product_spelling',{trace_id:metric.trace_id,alias_review:metric.alias_review}));
         for(const type of ['customer_message','bot_response','latency',...(metric.primary_product_id?['recommendation_event']:[]),...(metric.failures.length?['failure']:[])])
           salesLearningEvents.push(learningEvent(type,{trace_id:metric.trace_id,product_ids:metric.primary_product_id?[metric.primary_product_id]:[],version_refs:{release_id:metric.release_id,catalog:metric.catalog_version,kb:metric.kb_version}}));
         if(salesLearningEvents.length>1000)salesLearningEvents.splice(0,salesLearningEvents.length-1000);
         console.log('[sales-trace]',JSON.stringify(metric));
       }});
+    if(!ownership.canSend(session,generationTicket))return '';
     session.salesContext=result.context;session.salesLastResult=result.response;session.salesTrace=result.metrics.trace_id;markDirty();
     return result.response.answer_text;
   }
@@ -2214,6 +2221,8 @@ function notifyAdmins(id, s, isNew) {
 
 // opts.system = ข้อความระบบของ bridge เอง (เช่น แบบฟอร์มลงทะเบียน) -> ไม่ต้องตรวจ "บอทรับปากติดต่อกลับ" (ตรวจเฉพาะคำตอบจาก Dify)
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
+  const sendStarted=Date.now();let lineApiMs=0,lineSendStart=null,lineSendEnd=null;const renderedPayload=[];
+  const timedLine=async fn=>{const started=Date.now();lineSendStart??=started;try{return await fn();}finally{lineSendEnd=Date.now();lineApiMs+=lineSendEnd-started;}};
   const token = ev._ownershipTicket;
   // Revalidate selling status on the current catalog at final delivery, including images.
   const currentCatalog=SALES_V2?salesCatalog.get():null;
@@ -2240,15 +2249,20 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
     return true;
   };
   const result = await deliver({ content: text, canSend,
-    reply: group => lineReply(ev.replyToken, group),
-    push: group => fallbackTo && fallbackTo !== 'unknown' ? linePush(fallbackTo, group, canSend) : false,
+    reply: group => timedLine(()=>lineReply(ev.replyToken, group)),
+    push: group => fallbackTo && fallbackTo !== 'unknown' ? timedLine(()=>linePush(fallbackTo, group, canSend)) : false,
     onSent: group => group.forEach(m => {
+      if(SALES_V2)renderedPayload.push(m);
       const ht = m.text || m.altText || (m.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)');
       pushHist(s, 'b', ht);
       if (!opts?.system) detectBotPromise(fallbackTo || 'unknown', s, ht);
     })
   });
   console.log('[send]', JSON.stringify({...result,trace_id:s.salesTrace||null,state_version:s.ownership?.version}));
+  if(SALES_V2&&!opts?.system){
+    const metric=salesTraceLog.find(m=>m.trace_id===s.salesTrace);
+    if(metric){metric.network={webhook_received_at:ev._receivedAt||null,line_send_start_at:lineSendStart,line_send_end_at:lineSendEnd,line_api_ms:lineApiMs,delivery_render_ms:Date.now()-sendStarted-lineApiMs,total_ms:ev._receivedAt?Date.now()-ev._receivedAt:null,status:result.status,state_version:s.ownership?.version};metric.final_line_payload=renderedPayload;}
+  }
   return result;
 }
 
@@ -3716,6 +3730,8 @@ const server = http.createServer((req, res) => {
     let data = {};
     try { data = JSON.parse(body.toString('utf8')); } catch (_) { return; }
     (data.events || []).forEach((ev) => {
+      ev._receivedAt=Date.now();
+      if(SALES_V2 && !stagingIdentity.audienceAllowed(process.env,ev.source))return;
       if(SALES_V2 && !salesEvents.claim(ev.webhookEventId))return;
       if(SALES_V2){markDirty();saveNow();}
       handleEvent(ev).then(()=>{if(SALES_V2){salesEvents.finish(ev.webhookEventId,'handled');markDirty();}})
@@ -3741,4 +3757,13 @@ if (SB_ON) {
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
 if(!SALES_V2) { setTimeout(bootBackfill, 3000); kbSync.start(); }
-server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+const listen=()=>server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
+if(SALES_V2) {
+  (async()=>{
+    await refreshProductMaster();
+    const identity=await stagingIdentity.verifyStaging({env:process.env,catalog:salesCatalog.get(),knowledge:salesKnowledge.state,
+      lineInfo:()=>request('GET',LINE_API+'/v2/bot/info',{Authorization:'Bearer '+CH_TOKEN}),
+      difyInfo:()=>request('GET',DIFY_BASE+'/info',{Authorization:'Bearer '+DIFY_KEY})});
+    stagingAppIdentityVerified=true;console.log('[staging-identity]',JSON.stringify(identity));listen();
+  })().catch(error=>{console.error('[staging-startup-refused]',error.message);process.exit(1);});
+}else listen();

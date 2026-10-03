@@ -1,0 +1,502 @@
+TAP version 13
+# Subtest: all 89 catalog identities follow the same open/status/formula rules in final LINE payload
+ok 1 - all 89 catalog identities follow the same open/status/formula rules in final LINE payload
+  ---
+  duration_ms: 114.8547
+  type: 'test'
+  ...
+# Subtest: every product changes to closed safely without editing any name-based guard
+ok 2 - every product changes to closed safely without editing any name-based guard
+  ---
+  duration_ms: 675.7847
+  type: 'test'
+  ...
+# Subtest: closed alias and missing status fail closed
+ok 3 - closed alias and missing status fail closed
+  ---
+  duration_ms: 6.6571
+  type: 'test'
+  ...
+# Subtest: final LINE payload preserves all content through multiple batches
+ok 4 - final LINE payload preserves all content through multiple batches
+  ---
+  duration_ms: 1.4411
+  type: 'test'
+  ...
+# Subtest: concentration variants not merged
+ok 5 - concentration variants not merged
+  ---
+  duration_ms: 2.5204
+  type: 'test'
+  ...
+# Subtest: admin takeover while model pending drops final LINE payload
+ok 6 - admin takeover while model pending drops final LINE payload
+  ---
+  duration_ms: 2.3465
+  type: 'test'
+  ...
+# Subtest: takeover between batches prevents remaining messages
+ok 7 - takeover between batches prevents remaining messages
+  ---
+  duration_ms: 0.6615
+  type: 'test'
+  ...
+# Subtest: human ownership does not expire and explicit admin summary is required
+ok 8 - human ownership does not expire and explicit admin summary is required
+  ---
+  duration_ms: 0.7399
+  type: 'test'
+  ...
+# Subtest: contract validates every array element, primary scalar and handoff enum
+ok 9 - contract validates every array element, primary scalar and handoff enum
+  ---
+  duration_ms: 11.3902
+  type: 'test'
+  ...
+# Subtest: repair is restricted to empty containers and cannot invent missing fields or IDs
+ok 10 - repair is restricted to empty containers and cannot invent missing fields or IDs
+  ---
+  duration_ms: 6.1462
+  type: 'test'
+  ...
+# Subtest: invalid output fallback preserves mandatory flowering/harvest warnings
+ok 11 - invalid output fallback preserves mandatory flowering/harvest warnings
+  ---
+  duration_ms: 21.3592
+  type: 'test'
+  ...
+# Subtest: human state rejects even otherwise valid facts at validator and delivery boundary
+ok 12 - human state rejects even otherwise valid facts at validator and delivery boundary
+  ---
+  duration_ms: 3.5357
+  type: 'test'
+  ...
+# Subtest: rate references are restricted to actual prepared scope, not all company usage
+ok 13 - rate references are restricted to actual prepared scope, not all company usage
+  ---
+  duration_ms: 2.6296
+  type: 'test'
+  ...
+# Subtest: pending PHI/flowering risk cannot select a primary; harvest days are not plant age
+ok 14 - pending PHI/flowering risk cannot select a primary; harvest days are not plant age
+  ---
+  duration_ms: 4.5518
+  type: 'test'
+  ...
+# Subtest: diagnosis uncertainty blocks an active chemical recommendation without product metadata
+ok 15 - diagnosis uncertainty blocks an active chemical recommendation without product metadata
+  ---
+  duration_ms: 6.4872
+  type: 'test'
+  ...
+# Subtest: source ranking, formulation and concentration never collapse incompatible products
+ok 16 - source ranking, formulation and concentration never collapse incompatible products
+  ---
+  duration_ms: 2.2808
+  type: 'test'
+  ...
+# Subtest: PHI numbers cannot bypass provenance in a known-problem followup
+ok 17 - PHI numbers cannot bypass provenance in a known-problem followup
+  ---
+  duration_ms: 4.4571
+  type: 'test'
+  ...
+# Subtest: recommendation metadata cannot bypass unresolved selection by omitting primary ID
+ok 18 - recommendation metadata cannot bypass unresolved selection by omitting primary ID
+  ---
+  duration_ms: 4.5036
+  type: 'test'
+  ...
+# Subtest: active evidence is not proof that an ICP product is or is not registered
+not ok 19 - active evidence is not proof that an ICP product is or is not registered
+  ---
+  duration_ms: 14.4998
+  type: 'test'
+  location: 'C:\\Users\\artwi\\Documents\\Codex\\2026-09-27\\x20\\work\\line-dify-bridge\\tests\\readiness.test.js:64:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+    
+      assert.ok(f.response.answer_text.includes('ยังตรวจยืนยันทะเบียน'))
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (C:\Users\artwi\Documents\Codex\2026-09-27\x20\work\line-dify-bridge\tests\readiness.test.js:67:123)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: rejected recommendations are not recorded as final recommendation events
+not ok 20 - rejected recommendations are not recorded as final recommendation events
+  ---
+  duration_ms: 7.8163
+  type: 'test'
+  location: 'C:\\Users\\artwi\\Documents\\Codex\\2026-09-27\\x20\\work\\line-dify-bridge\\tests\\readiness.test.js:71:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    'P0034' !== null
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ~
+  actual: 'P0034'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\artwi\Documents\Codex\2026-09-27\x20\work\line-dify-bridge\tests\readiness.test.js:73:68)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: near-harvest cannot substitute an unverified biological treatment for a chemical
+ok 21 - near-harvest cannot substitute an unverified biological treatment for a chemical
+  ---
+  duration_ms: 4.6679
+  type: 'test'
+  ...
+# Subtest: event duration is not crop age and a known flowering/harvest stage is not requested again
+ok 22 - event duration is not crop age and a known flowering/harvest stage is not requested again
+  ---
+  duration_ms: 7.7606
+  type: 'test'
+  ...
+# Subtest: all explicitly listed crop-age windows remain eligible without treating water duration as crop age
+ok 23 - all explicitly listed crop-age windows remain eligible without treating water duration as crop age
+  ---
+  duration_ms: 0.3906
+  type: 'test'
+  ...
+# Subtest: external provider disabled, unknown source, changed document and outage fail closed
+ok 24 - external provider disabled, unknown source, changed document and outage fail closed
+  ---
+  duration_ms: 2.7206
+  type: 'test'
+  ...
+# Subtest: company-only fast intents never trigger external search or model
+ok 25 - company-only fast intents never trigger external search or model
+  ---
+  duration_ms: 12.2941
+  type: 'test'
+  ...
+# Subtest: all six exposure types preserve first aid in real handler final payload, three runs each
+ok 26 - all six exposure types preserve first aid in real handler final payload, three runs each
+  ---
+  duration_ms: 131.01
+  type: 'test'
+  ...
+# Subtest: learning supports all required event types and export excludes transcript and customer identity
+ok 27 - learning supports all required event types and export excludes transcript and customer identity
+  ---
+  duration_ms: 0.6748
+  type: 'test'
+  ...
+# Subtest: 01 symptom uncertainty survives final payload and forbids chemical recommendation
+ok 28 - 01 symptom uncertainty survives final payload and forbids chemical recommendation
+  ---
+  duration_ms: 8.7084
+  type: 'test'
+  ...
+# Subtest: 02 beetle ambiguity requests external analysis, no automatic insecticide choice
+ok 29 - 02 beetle ambiguity requests external analysis, no automatic insecticide choice
+  ---
+  duration_ms: 19.277
+  type: 'test'
+  ...
+# Subtest: 03 insufficient symptoms permit multiple discriminating questions
+ok 30 - 03 insufficient symptoms permit multiple discriminating questions
+  ---
+  duration_ms: 1.5251
+  type: 'test'
+  ...
+# Subtest: 04 known pest does not fabricate symptoms or restart diagnosis
+ok 31 - 04 known pest does not fabricate symptoms or restart diagnosis
+  ---
+  duration_ms: 2.945
+  type: 'test'
+  ...
+# Subtest: 05 missing age considers all intervals and blocks final choice
+ok 32 - 05 missing age considers all intervals and blocks final choice
+  ---
+  duration_ms: 2.7054
+  type: 'test'
+  ...
+# Subtest: 06 unknown inventory is never claimed available
+ok 33 - 06 unknown inventory is never claimed available
+  ---
+  duration_ms: 0.2594
+  type: 'test'
+  ...
+# Subtest: 07 closed product leakage blocked in final LINE payload for aliases and images
+ok 34 - 07 closed product leakage blocked in final LINE payload for aliases and images
+  ---
+  duration_ms: 2.9599
+  type: 'test'
+  ...
+# Subtest: 08 suitable candidates sorted by business priority independent of prose
+ok 35 - 08 suitable candidates sorted by business priority independent of prose
+  ---
+  duration_ms: 4.8882
+  type: 'test'
+  ...
+# Subtest: 09 missing crop can produce evidence-based conditional candidates for nutrition too
+ok 36 - 09 missing crop can produce evidence-based conditional candidates for nutrition too
+  ---
+  duration_ms: 3.5049
+  type: 'test'
+  ...
+# Subtest: 10 evidence formula/target mismatch cannot become candidate
+ok 37 - 10 evidence formula/target mismatch cannot become candidate
+  ---
+  duration_ms: 1.4786
+  type: 'test'
+  ...
+# Subtest: 11 fabricated company rate blocked even with real usage reference
+ok 38 - 11 fabricated company rate blocked even with real usage reference
+  ---
+  duration_ms: 1.7533
+  type: 'test'
+  ...
+# Subtest: 12 conflicting or stale sources cannot replace current status
+ok 39 - 12 conflicting or stale sources cannot replace current status
+  ---
+  duration_ms: 0.5011
+  type: 'test'
+  ...
+# Subtest: 13 competitor uses web route without invented product identity
+ok 40 - 13 competitor uses web route without invented product identity
+  ---
+  duration_ms: 2.4698
+  type: 'test'
+  ...
+# Subtest: 14 ambiguous/unknown brand is not fuzzy-replaced
+ok 41 - 14 ambiguous/unknown brand is not fuzzy-replaced
+  ---
+  duration_ms: 0.1979
+  type: 'test'
+  ...
+# Subtest: 15 comparison is separate from symptom diagnosis
+ok 42 - 15 comparison is separate from symptom diagnosis
+  ---
+  duration_ms: 1.1603
+  type: 'test'
+  ...
+# Subtest: 16 handoff request has explicit action and no sales content
+ok 43 - 16 handoff request has explicit action and no sales content
+  ---
+  duration_ms: 1.2073
+  type: 'test'
+  ...
+# Subtest: 18 greeting avoids all remote calls
+ok 44 - 18 greeting avoids all remote calls
+  ---
+  duration_ms: 5.0258
+  type: 'test'
+  ...
+# Subtest: 19 followup retains product and rate intent
+ok 45 - 19 followup retains product and rate intent
+  ---
+  duration_ms: 2.6974
+  type: 'test'
+  ...
+# Subtest: 20 required warnings and questions cannot disappear
+ok 46 - 20 required warnings and questions cannot disappear
+  ---
+  duration_ms: 0.5596
+  type: 'test'
+  ...
+# Subtest: 21 dealer contract requires active verified record, separate stock
+ok 47 - 21 dealer contract requires active verified record, separate stock
+  ---
+  duration_ms: 0.142
+  type: 'test'
+  ...
+# Subtest: 22 Jev 401 is not retried and opens circuit until config changed
+ok 48 - 22 Jev 401 is not retried and opens circuit until config changed
+  ---
+  duration_ms: 0.4207
+  type: 'test'
+  ...
+# Subtest: 23 unavailable KB/company catalog does not invent product facts
+ok 49 - 23 unavailable KB/company catalog does not invent product facts
+  ---
+  duration_ms: 0.7027
+  type: 'test'
+  ...
+# Subtest: 24 unavailable grounding falls back without registration/PHI claims
+ok 50 - 24 unavailable grounding falls back without registration/PHI claims
+  ---
+  duration_ms: 5.0255
+  type: 'test'
+  ...
+# Subtest: 25 failed refresh retains last good until explicit max age
+ok 51 - 25 failed refresh retains last good until explicit max age
+  ---
+  duration_ms: 8.7717
+  type: 'test'
+  ...
+# Subtest: 26 bounded history excludes injected catalog blobs
+ok 52 - 26 bounded history excludes injected catalog blobs
+  ---
+  duration_ms: 0.716
+  type: 'test'
+  ...
+# Subtest: 27 rate basis preserved, no plus sign or guessed unit
+ok 53 - 27 rate basis preserved, no plus sign or guessed unit
+  ---
+  duration_ms: 2.9373
+  type: 'test'
+  ...
+# Subtest: 28 canonical image files are tied to same product ID
+ok 54 - 28 canonical image files are tied to same product ID
+  ---
+  duration_ms: 0.8802
+  type: 'test'
+  ...
+# Subtest: 29 exposure bypasses remote generation and all product recommendations
+ok 55 - 29 exposure bypasses remote generation and all product recommendations
+  ---
+  duration_ms: 0.5089
+  type: 'test'
+  ...
+# Subtest: 30 current registration routes search
+ok 56 - 30 current registration routes search
+  ---
+  duration_ms: 1.6851
+  type: 'test'
+  ...
+# Subtest: 31 indexing must complete before promotion; shared live KB rejected
+ok 57 - 31 indexing must complete before promotion; shared live KB rejected
+  ---
+  duration_ms: 0.698
+  type: 'test'
+  ...
+# Subtest: 32 internal groups and injected rates do not reach final LINE
+ok 58 - 32 internal groups and injected rates do not reach final LINE
+  ---
+  duration_ms: 4.1627
+  type: 'test'
+  ...
+# Subtest: communication preference never infers age/generation; learning is not approved ground truth
+ok 59 - communication preference never infers age/generation; learning is not approved ground truth
+  ---
+  duration_ms: 1.9705
+  type: 'test'
+  ...
+# Subtest: real Bridge handlers: greeting and lookup bypass remote LLM and preserve rate through final LINE transport
+ok 60 - real Bridge handlers: greeting and lookup bypass remote LLM and preserve rate through final LINE transport
+  ---
+  duration_ms: 103.8643
+  type: 'test'
+  ...
+# Subtest: real Bridge image request Legacy maps only to yellow box product ID
+ok 61 - real Bridge image request Legacy maps only to yellow box product ID
+  ---
+  duration_ms: 31.4875
+  type: 'test'
+  ...
+# Subtest: real Bridge exposure works before registration and never calls model
+ok 62 - real Bridge exposure works before registration and never calls model
+  ---
+  duration_ms: 21.0608
+  type: 'test'
+  ...
+# Subtest: real Bridge ownership blocks all customer sends while admin active
+ok 63 - real Bridge ownership blocks all customer sends while admin active
+  ---
+  duration_ms: 23.8281
+  type: 'test'
+  ...
+# Subtest: real webhook HMAC rejects invalid signature without side effects
+ok 64 - real webhook HMAC rejects invalid signature without side effects
+  ---
+  duration_ms: 6.3359
+  type: 'test'
+  ...
+# Subtest: staging refuses an API key bound to the production application
+ok 65 - staging refuses an API key bound to the production application
+  ---
+  duration_ms: 29.7717
+  type: 'test'
+  ...
+# Subtest: real handler drops pending model output after takeover in three independent runs
+ok 66 - real handler drops pending model output after takeover in three independent runs
+  ---
+  duration_ms: 84.363
+  type: 'test'
+  ...
+# Subtest: new crop does not inherit previous age/product/target
+ok 67 - new crop does not inherit previous age/product/target
+  ---
+  duration_ms: 8.3018
+  type: 'test'
+  ...
+# Subtest: direct formula followup is not forced to repeat previous weed recommendation warnings
+ok 68 - direct formula followup is not forced to repeat previous weed recommendation warnings
+  ---
+  duration_ms: 28.1303
+  type: 'test'
+  ...
+# Subtest: duplicate event is suppressed; redelivery of an unseen event can be processed
+ok 69 - duplicate event is suppressed; redelivery of an unseen event can be processed
+  ---
+  duration_ms: 0.483
+  type: 'test'
+  ...
+# Subtest: a stale KB never calls generation, but exact latest catalog fact remains fast
+ok 70 - a stale KB never calls generation, but exact latest catalog fact remains fast
+  ---
+  duration_ms: 6.8655
+  type: 'test'
+  ...
+# Subtest: current registration without trusted provenance cannot reach LINE
+ok 71 - current registration without trusted provenance cannot reach LINE
+  ---
+  duration_ms: 6.9683
+  type: 'test'
+  ...
+# Subtest: month-based usage is never compared as if its number meant days
+ok 72 - month-based usage is never compared as if its number meant days
+  ---
+  duration_ms: 1.0787
+  type: 'test'
+  ...
+# Subtest: unknown product named as a recommendation cannot escape metadata checks
+ok 73 - unknown product named as a recommendation cannot escape metadata checks
+  ---
+  duration_ms: 2.581
+  type: 'test'
+  ...
+# Subtest: image dedup uses product ID and explicit requests can resend
+ok 74 - image dedup uses product ID and explicit requests can resend
+  ---
+  duration_ms: 1.0355
+  type: 'test'
+  ...
+# Subtest: isolated KB sync waits for indexing completion, versions release, preserves model settings
+ok 75 - isolated KB sync waits for indexing completion, versions release, preserves model settings
+  ---
+  duration_ms: 1.9634
+  type: 'test'
+  ...
+# Subtest: failed indexing or stale index job cannot be promoted
+ok 76 - failed indexing or stale index job cannot be promoted
+  ---
+  duration_ms: 0.7269
+  type: 'test'
+  ...
+1..76
+# tests 76
+# suites 0
+# pass 74
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 964.5434

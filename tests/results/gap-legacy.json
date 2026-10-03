@@ -1,0 +1,38 @@
+[
+  {
+    "test": "unreleased_guard_check",
+    "status": 0,
+    "output": "PASS: canonical closed status and unavailable catalog fail closed\n",
+    "error": ""
+  },
+  {
+    "test": "sheet_context_check",
+    "status": 0,
+    "output": "PASS: lifecycle sheet context includes all verified crop stages and open products\n",
+    "error": ""
+  },
+  {
+    "test": "response_compactor_check",
+    "status": 0,
+    "output": "PASS: no semantic content removed\n",
+    "error": ""
+  },
+  {
+    "test": "product_validation_check",
+    "status": 0,
+    "output": "PASS: product master validation checks identity, Strategy, status and usage completeness\n",
+    "error": ""
+  },
+  {
+    "test": "image_support_check",
+    "status": 0,
+    "output": "PASS: image input contract, greeting-image routing, LINE binary download, Dify upload and vision rules verified\n",
+    "error": ""
+  },
+  {
+    "test": "citation_visibility_check",
+    "status": 0,
+    "output": "PASS: citation/format visibility guard 5 cases\n",
+    "error": ""
+  }
+]

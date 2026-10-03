@@ -31,6 +31,20 @@ test('real webhook HMAC rejects invalid signature without side effects',()=>{
   let status;h.http()(req,{writeHead(s){status=s},end(){}});
   req.emit('data',Buffer.from('{"events":[]}'));req.emit('end');assert.equal(status,401);assert.equal(h.sent.length,0);
 });
+
+test('protected trace endpoint reports actual delivered payload and timing without handler reference errors',async()=>{
+ const h=harness();await h.api.refreshProductMaster();
+ const ev=h.event('ไบเตอร์คือสารอะไร');ev._receivedAt=Date.now();await h.api.handleEvent(ev);
+ let status,body;
+ h.api.handleAdmin({method:'GET',url:'/admin/api/sales/traces',headers:{'x-admin-key':'test-fixture-only'}},{writeHead:s=>status=s,end:b=>body=JSON.parse(b)},'/admin/api/sales/traces',Buffer.alloc(0));
+ assert.equal(status,200);
+ const trace=body.traces.at(-1);
+ assert.deepEqual(trace.final_line_payload,h.sent.at(-1));
+ assert.equal(trace.network.webhook_received_at,ev._receivedAt);
+ assert.ok(trace.network.line_send_end_at>=trace.network.line_send_start_at);
+ assert.ok(trace.network.total_ms>=trace.network.line_api_ms);
+ assert.equal(trace.dify_network.request_at,null,'exact fact must not call Dify');
+});
 test('staging refuses an API key bound to the production application',async()=>{
   const {buildCatalog}=require('../sales/catalog');
   const version=buildCatalog(require('./fixtures/company-snapshot.json')).version;
@@ -49,7 +63,10 @@ test('real handler drops pending model output after takeover in three independen
   const pending=h.api.handleEvent(h.event('ทุเรียนใบเหลือง'));
   await entered;const s=h.api.sessions.get('staging-only-user');
   require('../conversation_ownership').transition(s,'HUMAN_ACTIVE',{actor:'admin'});
+  const newerContext={facts:{values:{water_condition:{value:'receded',source:'customer',turn:2}}},marker:'newer-turn'};
+  s.salesContext=newerContext;
   release();await pending;assert.equal(h.sent.length,0);
+  assert.equal(s.salesContext,newerContext,'stale generation must not overwrite newer confirmed facts');
  }
 });
 

@@ -1,0 +1,2916 @@
+[
+  {
+    "id": "C-symptom",
+    "query": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย",
+    "implementationHash": "677d3dac29c97e577b16fd0f776facb9ef483f5283387ca8a54f0fb5913bd33e",
+    "at": "2026-10-03T13:40:25.783Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"uncertain\",\"claim_refs\":[],\"guidance_ids\":[\"observe\",\"inspect_root\"],\"question_ids\":[\"distribution\",\"onset\",\"recent_spray\"]},\"reasoning_note\":\"อาการทุเรียนใบเหลืองและเหี่ยวยังไม่ชัดเจน อาจเกิดจากระบบราก สภาพน้ำ การพ่นสาร หรือโรค จึงแนะนำให้สังเกตและตรวจรากเบื้องต้น พร้อมสอบถามการกระจายตัว ระยะเวลาที่เริ่มเป็น และประวัติการพ่นสารก่อนระบุสาเหตุ\"}",
+    "prepared": {
+      "intent": "symptom",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย",
+        "ambiguous_aliases": [],
+        "crop": "ทุเรียน",
+        "near_harvest": false,
+        "target": null,
+        "intent": "symptom",
+        "rate_requested": false,
+        "diagnosis_uncertain": true,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+            },
+            "crop": {
+              "value": "ทุเรียน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+            },
+            "symptoms": {
+              "value": [
+                "ใบเหลือง",
+                "เหี่ยว"
+              ],
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+            },
+            "affected_part": {
+              "value": "ใบ",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791034725639
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": true,
+        "confirmed_target": null
+      },
+      "uncertainties": [
+        "ต้องแยกโรค น้ำขัง ขาดธาตุ และผลจากสารก่อนเลือกยา"
+      ],
+      "missing_fields": [],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [
+        {
+          "id": "distribution",
+          "field": "distribution",
+          "text": "เป็นบางต้นหรือกระจายทั่วแปลงคะ"
+        },
+        {
+          "id": "onset",
+          "field": "onset",
+          "text": "เริ่มมีอาการเมื่อไรคะ"
+        },
+        {
+          "id": "recent_spray",
+          "field": "recent_spray",
+          "text": "ก่อนเกิดอาการเพิ่งพ่นสารอะไร ผสมอะไร และใช้เท่าไรคะ"
+        }
+      ],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; RAG only enabled when reviewed prose adds evidence"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [
+        "เป็นบางต้นหรือกระจายทั่วแปลงคะ",
+        "เริ่มมีอาการเมื่อไรคะ",
+        "ก่อนเกิดอาการเพิ่งพ่นสารอะไร ผสมอะไร และใช้เท่าไรคะ"
+      ],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "uncertain",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": [
+          "distribution",
+          "onset",
+          "recent_spray"
+        ]
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย",
+      "ambiguous_aliases": [],
+      "crop": "ทุเรียน",
+      "near_harvest": false,
+      "target": null,
+      "intent": "symptom",
+      "rate_requested": false,
+      "diagnosis_uncertain": true,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+          },
+          "crop": {
+            "value": "ทุเรียน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+          },
+          "symptoms": {
+            "value": [
+              "ใบเหลือง",
+              "เหี่ยว"
+            ],
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+          },
+          "affected_part": {
+            "value": "ใบ",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791034725639
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [
+          "เป็นบางต้นหรือกระจายทั่วแปลงคะ",
+          "เริ่มมีอาการเมื่อไรคะ",
+          "ก่อนเกิดอาการเพิ่งพ่นสารอะไร ผสมอะไร และใช้เท่าไรคะ"
+        ],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nสังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ\nตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ\nเป็นบางต้นหรือกระจายทั่วแปลงคะ\nเริ่มมีอาการเมื่อไรคะ\nก่อนเกิดอาการเพิ่งพ่นสารอะไร ผสมอะไร และใช้เท่าไรคะ",
+        "intent": "symptom",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nสังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ\nตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ\nเป็นบางต้นหรือกระจายทั่วแปลงคะ\nเริ่มมีอาการเมื่อไรคะ\nก่อนเกิดอาการเพิ่งพ่นสารอะไร ผสมอะไร และใช้เท่าไรคะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ทุเรียนใบเหลืองและเหี่ยว ช่วยดูหน่อย\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.085 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 185.998 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.100 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.087 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.086 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.198 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.459K tokens · 1.699 s\r\n  - generic: Structured result\r\n  - generic: 0.087 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"uncertain\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[\\\"observe\\\",\\\"inspect_root\\\"],\\\"question_ids\\\":[\\\"distribution\\\",\\\"onset\\\",\\\"recent_spray\\\"]},\\\"reasoning_note\\\":\\\"อาการทุเรียนใบเหลืองและเหี่ยวยังไม่ชัดเจน อาจเกิดจากระบบราก สภาพน้ำ การพ่นสาร หรือโรค จึงแนะนำให้สังเกตและตรวจรากเบื้องต้น พร้อมสอบถามการกระจายตัว ระยะเวลาที่เริ่มเป็น และประวัติการพ่นสารก่อนระบุสาเหตุ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "I-flowering",
+    "query": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี",
+    "implementationHash": "677d3dac29c97e577b16fd0f776facb9ef483f5283387ca8a54f0fb5913bd33e",
+    "at": "2026-10-03T13:41:25.065Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"risk\",\"claim_refs\":[],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"claim_control.enforced=true, ทุเรียนอยู่ในช่วงดอกบานซึ่งต้องระวังผลกระทบต่อแมลงผสมเกสรและตัวดอก ไม่มี allowed_product_claims จึงใช้ summary_key='risk' ตาม answer_plan_default โดยไม่แนะนำสารเคมีโดยพลการ\"}",
+    "prepared": {
+      "intent": "known_problem",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี",
+        "ambiguous_aliases": [],
+        "crop": "ทุเรียน",
+        "near_harvest": false,
+        "stage": "ดอก",
+        "target": "เพลี้ยไฟ",
+        "intent": "known_problem",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+            },
+            "crop": {
+              "value": "ทุเรียน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+            },
+            "crop_stage": {
+              "value": "ดอก",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+            },
+            "known_pest": {
+              "value": "เพลี้ยไฟ",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791034836658
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": "เพลี้ยไฟ"
+      },
+      "uncertainties": [],
+      "missing_fields": [
+        "pollinator_review"
+      ],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; RAG only enabled when reviewed prose adds evidence"
+      },
+      "allowed_rates": [],
+      "required_warnings": [
+        "ช่วงดอกบานต้องระวังแมลงผสมเกสร และยังไม่ควรสรุปว่าปลอดภัยต่อดอกจากชื่อสารอย่างเดียวค่ะ"
+      ],
+      "required_questions": [],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "risk",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี",
+      "ambiguous_aliases": [],
+      "crop": "ทุเรียน",
+      "near_harvest": false,
+      "stage": "ดอก",
+      "target": "เพลี้ยไฟ",
+      "intent": "known_problem",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+          },
+          "crop": {
+            "value": "ทุเรียน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+          },
+          "crop_stage": {
+            "value": "ดอก",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+          },
+          "known_pest": {
+            "value": "เพลี้ยไฟ",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791034836658
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [
+          "ช่วงดอกบานต้องระวังแมลงผสมเกสร และยังไม่ควรสรุปว่าปลอดภัยต่อดอกจากชื่อสารอย่างเดียวค่ะ"
+        ],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ต้องตรวจข้อจำกัดของสินค้าก่อน\nช่วงดอกบานต้องระวังแมลงผสมเกสร และยังไม่ควรสรุปว่าปลอดภัยต่อดอกจากชื่อสารอย่างเดียวค่ะ",
+        "intent": "known_problem",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ต้องตรวจข้อจำกัดของสินค้าก่อน\nช่วงดอกบานต้องระวังแมลงผสมเกสร และยังไม่ควรสรุปว่าปลอดภัยต่อดอกจากชื่อสารอย่างเดียวค่ะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.240 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 55.221 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.247 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.142 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.123 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.135 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.392K tokens · 1.719 s\r\n  - generic: Structured result\r\n  - generic: 0.094 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"risk\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"claim_control.enforced=true, ทุเรียนอยู่ในช่วงดอกบานซึ่งต้องระวังผลกระทบต่อแมลงผสมเกสรและตัวดอก ไม่มี allowed_product_claims จึงใช้ summary_key='risk' ตาม answer_plan_default โดยไม่แนะนำสารเคมีโดยพลการ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "J-harvest",
+    "query": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+    "implementationHash": "677d3dac29c97e577b16fd0f776facb9ef483f5283387ca8a54f0fb5913bd33e",
+    "at": "2026-10-03T13:42:09.724Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"risk\",\"claim_refs\":[],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"เกษตรกรสอบถามการฉีดพ่นกำจัดเพลี้ยไฟในทุเรียนระยะก่อนเก็บเกี่ยว 7 วัน ซึ่งมีความเสี่ยงเรื่องระยะหยุดพ่นก่อนเก็บเกี่ยว (PHI) และไม่มีข้อมูลสินค้าหรือสารเคมีที่ระบุ จึงต้องระวังเรื่องความปลอดภัยและระยะเว้นการเก็บเกี่ยว\"}",
+    "prepared": {
+      "intent": "known_problem",
+      "needs_web": true,
+      "customer_state": {
+        "product_ids": [],
+        "query": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+        "ambiguous_aliases": [],
+        "crop": "ทุเรียน",
+        "near_harvest": true,
+        "days_to_harvest": 7,
+        "target": "เพลี้ยไฟ",
+        "intent": "known_problem",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": true,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+            },
+            "crop": {
+              "value": "ทุเรียน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+            },
+            "known_pest": {
+              "value": "เพลี้ยไฟ",
+              "source": "customer",
+              "turn": 1,
+              "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791034885172
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": "เพลี้ยไฟ"
+      },
+      "uncertainties": [],
+      "missing_fields": [
+        "verified_phi"
+      ],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; RAG only enabled when reviewed prose adds evidence"
+      },
+      "allowed_rates": [],
+      "required_warnings": [
+        "ใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ"
+      ],
+      "required_questions": [],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "risk",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+      "ambiguous_aliases": [],
+      "crop": "ทุเรียน",
+      "near_harvest": true,
+      "days_to_harvest": 7,
+      "target": "เพลี้ยไฟ",
+      "intent": "known_problem",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": true,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+          },
+          "crop": {
+            "value": "ทุเรียน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+          },
+          "known_pest": {
+            "value": "เพลี้ยไฟ",
+            "source": "customer",
+            "turn": 1,
+            "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791034885172
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [
+          "ใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ"
+        ],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ต้องตรวจข้อจำกัดของสินค้าก่อน\nใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ",
+        "intent": "known_problem",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ต้องตรวจข้อจำกัดของสินค้าก่อน\nใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.240 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 55.221 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.247 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.142 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.123 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.135 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.392K tokens · 1.719 s\r\n  - generic: Structured result\r\n  - generic: 0.094 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"risk\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"claim_control.enforced=true, ทุเรียนอยู่ในช่วงดอกบานซึ่งต้องระวังผลกระทบต่อแมลงผสมเกสรและตัวดอก ไม่มี allowed_product_claims จึงใช้ summary_key='risk' ตาม answer_plan_default โดยไม่แนะนำสารเคมีโดยพลการ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "P-followup",
+    "query": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+    "implementationHash": "677d3dac29c97e577b16fd0f776facb9ef483f5283387ca8a54f0fb5913bd33e",
+    "at": "2026-10-03T13:42:52.500Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"uncertain\",\"claim_refs\":[],\"guidance_ids\":[\"inspect_root\"],\"question_ids\":[\"recent_fertilizer\"]},\"reasoning_note\":\"ลูกค้าแจ้งว่ามีอาการรากดำและมีกลิ่นหลังน้ำขัง 3 วัน น้ำลดแล้วจากประวัติก่อนหน้า ยังไม่ยืนยันว่าเป็นโรครากเน่าจากเชื้อราหรือรากขาดอากาศเน่าเสีย แนะนำตรวจรากและสภาพดินรอบต้น และสอบถามเรื่องการใส่ปุ๋ยเพิ่มเติม\"}",
+    "prepared": {
+      "intent": "symptom",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+        "ambiguous_aliases": [],
+        "crop": "ทุเรียน",
+        "near_harvest": false,
+        "target": null,
+        "intent": "symptom",
+        "rate_requested": false,
+        "diagnosis_uncertain": true,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 2,
+          "values": {
+            "customer_question": {
+              "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "crop": {
+              "value": "ทุเรียน",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "symptoms": {
+              "value": [
+                "เหี่ยว",
+                "รากดำ"
+              ],
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "distribution": {
+              "value": "บางต้น/เป็นหย่อม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+            },
+            "water_condition": {
+              "value": "มีประวัติน้ำขัง",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "recent_spray": {
+              "value": "ไม่ได้พ่นสาร",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+            },
+            "affected_part": {
+              "value": "ราก",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "onset": {
+              "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "root_color": {
+              "value": "ดำ",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "root_smell": {
+              "value": "มีกลิ่นผิดปกติ",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791034929862
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": true,
+        "confirmed_target": null
+      },
+      "uncertainties": [
+        "ต้องแยกโรค น้ำขัง ขาดธาตุ และผลจากสารก่อนเลือกยา"
+      ],
+      "missing_fields": [],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [
+        {
+          "id": "water_condition",
+          "field": "water_condition",
+          "text": "ตอนนี้ยังมีน้ำขังอยู่หรือน้ำลดแล้วคะ"
+        },
+        {
+          "id": "recent_fertilizer",
+          "field": "recent_fertilizer",
+          "text": "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        }
+      ],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; RAG only enabled when reviewed prose adds evidence"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [
+        "ตอนนี้ยังมีน้ำขังอยู่หรือน้ำลดแล้วคะ",
+        "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+      ],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "uncertain",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": [
+          "water_condition",
+          "recent_fertilizer"
+        ]
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+      "ambiguous_aliases": [],
+      "crop": "ทุเรียน",
+      "near_harvest": false,
+      "target": null,
+      "intent": "symptom",
+      "rate_requested": false,
+      "diagnosis_uncertain": true,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 2,
+        "values": {
+          "customer_question": {
+            "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "crop": {
+            "value": "ทุเรียน",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "symptoms": {
+            "value": [
+              "เหี่ยว",
+              "รากดำ"
+            ],
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "distribution": {
+            "value": "บางต้น/เป็นหย่อม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+          },
+          "water_condition": {
+            "value": "มีประวัติน้ำขัง",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "recent_spray": {
+            "value": "ไม่ได้พ่นสาร",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+          },
+          "affected_part": {
+            "value": "ราก",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "onset": {
+            "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "root_color": {
+            "value": "ดำ",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "root_smell": {
+            "value": "มีกลิ่นผิดปกติ",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791034929862
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [
+          "ตอนนี้ยังมีน้ำขังอยู่หรือน้ำลดแล้วคะ",
+          "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        ],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ\nตอนนี้ยังมีน้ำขังอยู่หรือน้ำลดแล้วคะ\nช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ",
+        "intent": "symptom",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ\nตอนนี้ยังมีน้ำขังอยู่หรือน้ำลดแล้วคะ\nช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.240 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 55.221 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.247 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.142 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.123 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.135 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.392K tokens · 1.719 s\r\n  - generic: Structured result\r\n  - generic: 0.094 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"risk\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"claim_control.enforced=true, ทุเรียนอยู่ในช่วงดอกบานซึ่งต้องระวังผลกระทบต่อแมลงผสมเกสรและตัวดอก ไม่มี allowed_product_claims จึงใช้ summary_key='risk' ตาม answer_plan_default โดยไม่แนะนำสารเคมีโดยพลการ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "N-regulatory",
+    "query": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+    "implementationHash": "677d3dac29c97e577b16fd0f776facb9ef483f5283387ca8a54f0fb5913bd33e",
+    "at": "2026-10-03T13:43:36.862Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"regulatory_unknown\",\"claim_refs\":[],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"ลูกค้าสอบถามเรื่องการขึ้นทะเบียนของไบเตอร์ในข้าวโพด แต่ในระบบไม่มีข้อมูลการขึ้นทะเบียนพืชข้าวโพดของผลิตภัณฑ์นี้ และไม่มี claim ที่ตรงกับการขึ้นทะเบียนสำหรับข้าวโพด จึงคง summary_key เป็น regulatory_unknown โดยไม่ใส่ claim_refs\"}",
+    "prepared": {
+      "intent": "regulatory",
+      "needs_web": true,
+      "customer_state": {
+        "product_ids": [
+          "P0062"
+        ],
+        "query": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+        "ambiguous_aliases": [],
+        "crop": "ข้าวโพด",
+        "near_harvest": false,
+        "target": null,
+        "intent": "regulatory",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": true,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+            },
+            "crop": {
+              "value": "ข้าวโพด",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+            },
+            "previous_product": {
+              "value": [
+                "P0062"
+              ],
+              "source": "customer",
+              "turn": 1,
+              "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791034972634
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": null
+      },
+      "uncertainties": [],
+      "missing_fields": [],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [
+        {
+          "claim_id": "C7fd9d9d81112c493fc",
+          "product_id": "P0062",
+          "field": "active_ingredient",
+          "value": "ไบเฟนทริน 5% + อิมิดาคลอพริด 25% SC",
+          "source_type": "company_catalog",
+          "source_ref": "master:P0062",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"ไบเตอร์\" มีสารสำคัญ ไบเฟนทริน 5% + อิมิดาคลอพริด 25% SC ค่ะ"
+        }
+      ],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; RAG only enabled when reviewed prose adds evidence"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "regulatory_unknown",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [
+        "P0062"
+      ],
+      "query": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+      "ambiguous_aliases": [],
+      "crop": "ข้าวโพด",
+      "near_harvest": false,
+      "target": null,
+      "intent": "regulatory",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": true,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+          },
+          "crop": {
+            "value": "ข้าวโพด",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+          },
+          "previous_product": {
+            "value": [
+              "P0062"
+            ],
+            "source": "customer",
+            "turn": 1,
+            "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791034972634
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "",
+        "handoff_action": "none",
+        "answer_text": "น้องลัดดายังตรวจยืนยันข้อมูลล่าสุดส่วนนี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจจากแหล่งข้อมูลทางการก่อนสรุป",
+        "intent": "regulatory"
+      },
+      "failures": [
+        "current_fact_requires_verified_evidence"
+      ],
+      "messages": [
+        {
+          "type": "text",
+          "text": "น้องลัดดายังตรวจยืนยันข้อมูลล่าสุดส่วนนี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจจากแหล่งข้อมูลทางการก่อนสรุป"
+        }
+      ],
+      "safe_fallback": true
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.240 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 55.221 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.247 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.142 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.123 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.135 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.392K tokens · 1.719 s\r\n  - generic: Structured result\r\n  - generic: 0.094 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"risk\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"claim_control.enforced=true, ทุเรียนอยู่ในช่วงดอกบานซึ่งต้องระวังผลกระทบต่อแมลงผสมเกสรและตัวดอก ไม่มี allowed_product_claims จึงใช้ summary_key='risk' ตาม answer_plan_default โดยไม่แนะนำสารเคมีโดยพลการ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "O-external",
+    "query": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+    "implementationHash": "677d3dac29c97e577b16fd0f776facb9ef483f5283387ca8a54f0fb5913bd33e",
+    "at": "2026-10-03T13:44:35.648Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"conditional\",\"claim_refs\":[\"Caa478145b2b00e584d\",\"Edoa-corn-whitehopper-pymetrozine-20261003\"],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"ลูกค้าถามถึงการใช้ไพรซีนกับเพลี้ยกระโดดท้องขาวในข้าวโพด ไพรซีนมีสารสำคัญไพมีโทรซีน 50% WG ซึ่งมีเอกสารราชการแนะนำสารกลุ่มนี้ในกรณีระบาดรุนแรง แต่ยังไม่มีการยืนยันทะเบียนหรืออัตราเฉพาะของสินค้า ICP จึงให้ข้อมูลสารสำคัญและเงื่อนไขตามหลักฐานภายนอก\"}",
+    "prepared": {
+      "intent": "product",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [
+          "P0070"
+        ],
+        "query": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+        "ambiguous_aliases": [],
+        "crop": "ข้าวโพด",
+        "near_harvest": false,
+        "target": "เพลี้ยกระโดดท้องขาว",
+        "intent": "product",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            },
+            "crop": {
+              "value": "ข้าวโพด",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            },
+            "known_pest": {
+              "value": "เพลี้ยกระโดดท้องขาว",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            },
+            "previous_product": {
+              "value": [
+                "P0070"
+              ],
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035017788
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": "เพลี้ยกระโดดท้องขาว"
+      },
+      "uncertainties": [],
+      "missing_fields": [
+        "external_stage_safety_review"
+      ],
+      "validated_candidates": [],
+      "conditional_candidates": [
+        {
+          "product_id": "P0070",
+          "rank": 5,
+          "usage_refs": [],
+          "warnings": [],
+          "evidence_refs": [
+            "doa-corn-whitehopper-pymetrozine-20261003"
+          ],
+          "reason": "external_active_evidence",
+          "conditional": true,
+          "active_evidence_supported": true,
+          "product_label_verified": false,
+          "company_rate_available": false
+        }
+      ],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [
+        {
+          "claim_id": "Caa478145b2b00e584d",
+          "product_id": "P0070",
+          "field": "active_ingredient",
+          "value": "ไพมีโทรซีน 50% WG",
+          "source_type": "company_catalog",
+          "source_ref": "master:P0070",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"ไพรซีน\" มีสารสำคัญ ไพมีโทรซีน 50% WG ค่ะ"
+        },
+        {
+          "claim_id": "Edoa-corn-whitehopper-pymetrozine-20261003",
+          "product_id": null,
+          "field": "active_crop_target",
+          "value": "เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+          "source_type": "thai_government",
+          "source_ref": "doa-corn-whitehopper-pymetrozine-20261003",
+          "text": "ข้อมูลสารสำคัญ: เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+          "evidence_id": "doa-corn-whitehopper-pymetrozine-20261003"
+        },
+        {
+          "claim_id": "Edoa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "product_id": null,
+          "field": "active_crop_target",
+          "value": "เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+          "source_type": "thai_government",
+          "source_ref": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "text": "ข้อมูลสารสำคัญ: เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+          "evidence_id": "doa-corn-whitehopper-thiamethoxam-wp-20261003"
+        }
+      ],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; RAG only enabled when reviewed prose adds evidence"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [],
+      "external_evidence_summary": [
+        {
+          "evidence_id": "doa-corn-whitehopper-pymetrozine-20261003",
+          "source_type": "thai_government",
+          "source_name": "กรมวิชาการเกษตร ศูนย์วิจัยพืชไร่นครสวรรค์",
+          "source_url": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "reviewed_sha256": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "review_valid_until": "2026-11-03T00:00:00Z",
+          "claim_type": "active_crop_target",
+          "active_ingredient": "PYMETROZINE 50% WG",
+          "formulation": "WG",
+          "concentration": [
+            "50%"
+          ],
+          "crop": "ข้าวโพด",
+          "target": "เพลี้ยกระโดดท้องขาว",
+          "stage": "unspecified",
+          "claim": "เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+          "jurisdiction": "TH",
+          "confidence": "high",
+          "technical_owner_approved": false,
+          "section_start": "การป้องกันกำจัด หมั่นสำรวจ",
+          "section_end": "Post navigation",
+          "id": "doa-corn-whitehopper-pymetrozine-20261003",
+          "source": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "scope": "active_ingredient",
+          "verified": true,
+          "retrieved_at": "2026-10-03T13:43:36.975Z",
+          "valid_until": "2026-10-03T13:53:36.975Z",
+          "content_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "source_tier": 1,
+          "active_evidence_supported": true,
+          "product_label_verified": false,
+          "company_rate_available": false,
+          "expires_at": "2026-10-03T13:53:36.975Z",
+          "document_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "query_fingerprint": "7adbd6240d0419c349df7064dc349b9dc893f9261a28f6c1cace32011feb8835",
+          "verification_status": "verified_active_only",
+          "stage_verified": false,
+          "safety_reviewed": false
+        },
+        {
+          "evidence_id": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "source_type": "thai_government",
+          "source_name": "กรมวิชาการเกษตร ศูนย์วิจัยพืชไร่นครสวรรค์",
+          "source_url": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "reviewed_sha256": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "review_valid_until": "2026-11-03T00:00:00Z",
+          "claim_type": "active_crop_target",
+          "active_ingredient": "THIAMETHOXAM 25% WP",
+          "formulation": "WP",
+          "concentration": [
+            "25%"
+          ],
+          "crop": "ข้าวโพด",
+          "target": "เพลี้ยกระโดดท้องขาว",
+          "stage": "unspecified",
+          "claim": "เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+          "jurisdiction": "TH",
+          "confidence": "high",
+          "technical_owner_approved": false,
+          "section_start": "การป้องกันกำจัด หมั่นสำรวจ",
+          "section_end": "Post navigation",
+          "id": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "source": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "scope": "active_ingredient",
+          "verified": true,
+          "retrieved_at": "2026-10-03T13:43:36.975Z",
+          "valid_until": "2026-10-03T13:53:36.975Z",
+          "content_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "source_tier": 1,
+          "active_evidence_supported": true,
+          "product_label_verified": false,
+          "company_rate_available": false,
+          "expires_at": "2026-10-03T13:53:36.975Z",
+          "document_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "query_fingerprint": "7adbd6240d0419c349df7064dc349b9dc893f9261a28f6c1cace32011feb8835",
+          "verification_status": "verified_active_only",
+          "stage_verified": false,
+          "safety_reviewed": false
+        }
+      ],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "conditional",
+        "claim_refs": [
+          "Edoa-corn-whitehopper-pymetrozine-20261003",
+          "Edoa-corn-whitehopper-thiamethoxam-wp-20261003"
+        ],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [
+        "P0070"
+      ],
+      "query": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+      "ambiguous_aliases": [],
+      "crop": "ข้าวโพด",
+      "near_harvest": false,
+      "target": "เพลี้ยกระโดดท้องขาว",
+      "intent": "product",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          },
+          "crop": {
+            "value": "ข้าวโพด",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          },
+          "known_pest": {
+            "value": "เพลี้ยกระโดดท้องขาว",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          },
+          "previous_product": {
+            "value": [
+              "P0070"
+            ],
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035017788
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [
+          "doa-corn-whitehopper-pymetrozine-20261003"
+        ],
+        "image_product_ids": [],
+        "uncertainty": "",
+        "handoff_action": "none",
+        "answer_text": "สารสำคัญมีข้อมูลรองรับในกรณีนี้ค่ะ แต่ยังต้องตรวจระยะพืชและข้อจำกัดก่อนเลือกใช้สินค้า ข้อมูลนี้ไม่ได้ยืนยันทะเบียนหรืออัตราใช้ของสินค้า\n\"ไพรซีน\" มีสารสำคัญ ไพมีโทรซีน 50% WG ค่ะ\nข้อมูลสารสำคัญ: เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+        "intent": "product",
+        "claim_refs": [
+          "Caa478145b2b00e584d",
+          "Edoa-corn-whitehopper-pymetrozine-20261003"
+        ]
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "สารสำคัญมีข้อมูลรองรับในกรณีนี้ค่ะ แต่ยังต้องตรวจระยะพืชและข้อจำกัดก่อนเลือกใช้สินค้า ข้อมูลนี้ไม่ได้ยืนยันทะเบียนหรืออัตราใช้ของสินค้า\n\"ไพรซีน\" มีสารสำคัญ ไพมีโทรซีน 50% WG ค่ะ\nข้อมูลสารสำคัญ: เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ทุเรียนช่วงดอกบาน มีเพลี้ยไฟ ใช้อะไรดี\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.240 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 55.221 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.247 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.142 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.123 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.135 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.392K tokens · 1.719 s\r\n  - generic: Structured result\r\n  - generic: 0.094 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"risk\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"claim_control.enforced=true, ทุเรียนอยู่ในช่วงดอกบานซึ่งต้องระวังผลกระทบต่อแมลงผสมเกสรและตัวดอก ไม่มี allowed_product_claims จึงใช้ summary_key='risk' ตาม answer_plan_default โดยไม่แนะนำสารเคมีโดยพลการ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "P-followup",
+    "query": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:48:22.241Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"uncertain\",\"claim_refs\":[],\"guidance_ids\":[\"inspect_root\"],\"question_ids\":[\"recent_fertilizer\"]},\"reasoning_note\":\"อาการรากดำและมีกลิ่นหลังน้ำขัง 3 วัน บ่งชี้ถึงภาวะรากขาดอากาศและเน่าเสียหายจากการแช่น้ำ แต่อาจมีโรครากเน่าหรือผลจากการใส่ปุ๋ยร่วมด้วย จึงยังไม่สามารถระบุสาเหตุแน่ชัดได้ แนะนำให้ตรวจสภาพรากและการระบายน้ำรอบต้นเพิ่มเติม พร้อมสอบถามประวัติการใส่ปุ๋ยเพื่อประกอบการวินิจฉัย\"}",
+    "prepared": {
+      "intent": "symptom",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [],
+        "crop": "ทุเรียน",
+        "near_harvest": false,
+        "target": null,
+        "intent": "symptom",
+        "rate_requested": false,
+        "diagnosis_uncertain": true,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 2,
+          "values": {
+            "customer_question": {
+              "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "crop": {
+              "value": "ทุเรียน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+            },
+            "symptoms": {
+              "value": [
+                "เหี่ยว",
+                "รากดำ"
+              ],
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "distribution": {
+              "value": "บางต้น/เป็นหย่อม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+            },
+            "water_condition": {
+              "value": "น้ำลดแล้ว/ไม่มีน้ำขัง",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+            },
+            "recent_spray": {
+              "value": "ไม่ได้พ่นสาร",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+            },
+            "affected_part": {
+              "value": "ราก",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "onset": {
+              "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "root_color": {
+              "value": "ดำ",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            },
+            "root_smell": {
+              "value": "มีกลิ่นผิดปกติ",
+              "source": "customer",
+              "turn": 2,
+              "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035186620
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": true,
+        "confirmed_target": null
+      },
+      "uncertainties": [
+        "ต้องแยกโรค น้ำขัง ขาดธาตุ และผลจากสารก่อนเลือกยา"
+      ],
+      "missing_fields": [],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [
+        {
+          "id": "recent_fertilizer",
+          "field": "recent_fertilizer",
+          "text": "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        }
+      ],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [
+        "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+      ],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "uncertain",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": [
+          "recent_fertilizer"
+        ]
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [],
+      "crop": "ทุเรียน",
+      "near_harvest": false,
+      "target": null,
+      "intent": "symptom",
+      "rate_requested": false,
+      "diagnosis_uncertain": true,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 2,
+        "values": {
+          "customer_question": {
+            "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "crop": {
+            "value": "ทุเรียน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+          },
+          "symptoms": {
+            "value": [
+              "เหี่ยว",
+              "รากดำ"
+            ],
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "distribution": {
+            "value": "บางต้น/เป็นหย่อม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+          },
+          "water_condition": {
+            "value": "น้ำลดแล้ว/ไม่มีน้ำขัง",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+          },
+          "recent_spray": {
+            "value": "ไม่ได้พ่นสาร",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา"
+          },
+          "affected_part": {
+            "value": "ราก",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "onset": {
+            "value": "เพิ่งเป็นหลังน้ำขัง 3 วัน",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "root_color": {
+            "value": "ดำ",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          },
+          "root_smell": {
+            "value": "มีกลิ่นผิดปกติ",
+            "source": "customer",
+            "turn": 2,
+            "quote": "เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035186620
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [
+          "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        ],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ\nช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ",
+        "intent": "symptom",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ\nช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.087 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 57.914 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.149 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.120 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.126 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.138 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.735K tokens · 1.897 s\r\n  - generic: Structured result\r\n  - generic: 0.094 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"uncertain\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[\\\"inspect_root\\\"],\\\"question_ids\\\":[\\\"recent_fertilizer\\\"]},\\\"reasoning_note\\\":\\\"อาการรากดำและมีกลิ่นหลังน้ำขัง 3 วัน บ่งชี้ถึงภาวะรากขาดอากาศและเน่าเสียหายจากการแช่น้ำ แต่อาจมีโรครากเน่าหรือผลจากการใส่ปุ๋ยร่วมด้วย จึงยังไม่สามารถระบุสาเหตุแน่ชัดได้ แนะนำให้ตรวจสภาพรากและการระบายน้ำรอบต้นเพิ่มเติม พร้อมสอบถามประวัติการใส่ปุ๋ยเพื่อประกอบการวินิจฉัย\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "J-harvest",
+    "query": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:49:14.452Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"risk\",\"claim_refs\":[],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"ลูกค้าถามเรื่องการฉีดพ่นกำจัดเพลี้ยไฟในทุเรียนช่วงใกล้เก็บเกี่ยว (อีก 7 วัน) ซึ่งมีความเสี่ยงเรื่องระยะปลอดภัยก่อนเก็บเกี่ยว (PHI) และไม่มีสินค้าหรือค่า PHI ที่ยืนยันใน catalog ให้แนะนำ จึงเน้นการเตือนเรื่อง PHI ตาม answer_plan_default\"}",
+    "prepared": {
+      "intent": "known_problem",
+      "needs_web": true,
+      "customer_state": {
+        "product_ids": [],
+        "query": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [],
+        "crop": "ทุเรียน",
+        "near_harvest": true,
+        "days_to_harvest": 7,
+        "target": "เพลี้ยไฟ",
+        "intent": "known_problem",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": true,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+            },
+            "crop": {
+              "value": "ทุเรียน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+            },
+            "known_pest": {
+              "value": "เพลี้ยไฟ",
+              "source": "customer",
+              "turn": 1,
+              "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035302400
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": "เพลี้ยไฟ"
+      },
+      "uncertainties": [],
+      "missing_fields": [
+        "verified_phi"
+      ],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [
+        "ใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ"
+      ],
+      "required_questions": [],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "risk",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [],
+      "crop": "ทุเรียน",
+      "near_harvest": true,
+      "days_to_harvest": 7,
+      "target": "เพลี้ยไฟ",
+      "intent": "known_problem",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": true,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+          },
+          "crop": {
+            "value": "ทุเรียน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+          },
+          "known_pest": {
+            "value": "เพลี้ยไฟ",
+            "source": "customer",
+            "turn": 1,
+            "quote": "อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035302400
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [
+          "ใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ"
+        ],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ต้องตรวจข้อจำกัดของสินค้าก่อน\nใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ",
+        "intent": "known_problem",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ต้องตรวจข้อจำกัดของสินค้าก่อน\nใกล้เก็บเกี่ยว ต้องตรวจระยะเว้นก่อนเก็บเกี่ยวของสินค้านั้นก่อนใช้ค่ะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.089 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 57.793 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.127 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.120 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.124 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.112 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.388K tokens · 2.105 s\r\n  - generic: Structured result\r\n  - generic: 0.099 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"risk\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"ลูกค้าถามเรื่องการฉีดพ่นกำจัดเพลี้ยไฟในทุเรียนช่วงใกล้เก็บเกี่ยว (อีก 7 วัน) ซึ่งมีความเสี่ยงเรื่องระยะปลอดภัยก่อนเก็บเกี่ยว (PHI) และไม่มีสินค้าหรือค่า PHI ที่ยืนยันใน catalog ให้แนะนำ จึงเน้นการเตือนเรื่อง PHI ตาม answer_plan_default\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "N-regulatory",
+    "query": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:50:20.276Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"regulatory_unknown\",\"claim_refs\":[],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"ลูกค้าสอบถามเรื่องการขึ้นทะเบียนของไบเตอร์ในข้าวโพด แต่ไม่มีข้อมูล claim เรื่องการขึ้นทะเบียนในพืชดังกล่าว จึงตอบตาม default plan โดยไม่กล่าวอ้างข้อมูลทะเบียนที่ไม่มีหลักฐานยืนยัน\"}",
+    "prepared": {
+      "intent": "regulatory",
+      "needs_web": true,
+      "customer_state": {
+        "product_ids": [
+          "P0062"
+        ],
+        "query": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [
+          "P0062"
+        ],
+        "crop": "ข้าวโพด",
+        "near_harvest": false,
+        "target": null,
+        "intent": "regulatory",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": true,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+            },
+            "crop": {
+              "value": "ข้าวโพด",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+            },
+            "previous_product": {
+              "value": [
+                "P0062"
+              ],
+              "source": "customer",
+              "turn": 1,
+              "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035354623
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": null
+      },
+      "uncertainties": [],
+      "missing_fields": [],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [
+        {
+          "claim_id": "C7fd9d9d81112c493fc",
+          "product_id": "P0062",
+          "field": "active_ingredient",
+          "value": "ไบเฟนทริน 5% + อิมิดาคลอพริด 25% SC",
+          "source_type": "company_catalog",
+          "source_ref": "master:P0062",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"ไบเตอร์\" มีสารสำคัญ ไบเฟนทริน 5% + อิมิดาคลอพริด 25% SC ค่ะ"
+        }
+      ],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "regulatory_unknown",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [
+        "P0062"
+      ],
+      "query": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [
+        "P0062"
+      ],
+      "crop": "ข้าวโพด",
+      "near_harvest": false,
+      "target": null,
+      "intent": "regulatory",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": true,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+          },
+          "crop": {
+            "value": "ข้าวโพด",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+          },
+          "previous_product": {
+            "value": [
+              "P0062"
+            ],
+            "source": "customer",
+            "turn": 1,
+            "quote": "ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035354623
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "",
+        "handoff_action": "none",
+        "answer_text": "น้องลัดดายังตรวจยืนยันทะเบียนหรือระยะเว้นก่อนเก็บเกี่ยวสำหรับกรณีนี้ไม่ได้ค่ะ ต้องตรวจฉลากหรือแหล่งทางการเพิ่มเติม",
+        "intent": "regulatory",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "น้องลัดดายังตรวจยืนยันทะเบียนหรือระยะเว้นก่อนเก็บเกี่ยวสำหรับกรณีนี้ไม่ได้ค่ะ ต้องตรวจฉลากหรือแหล่งทางการเพิ่มเติม"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ไบเตอร์ขึ้นทะเบียนสำหรับข้าวโพดไหม\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.123 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 56.740 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.119 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.113 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.112 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.100 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.455K tokens · 2.082 s\r\n  - generic: Structured result\r\n  - generic: 0.091 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"regulatory_unknown\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"ลูกค้าสอบถามเรื่องการขึ้นทะเบียนของไบเตอร์ในข้าวโพด แต่ไม่มีข้อมูล claim เรื่องการขึ้นทะเบียนในพืชดังกล่าว จึงตอบตาม default plan โดยไม่กล่าวอ้างข้อมูลทะเบียนที่ไม่มีหลักฐานยืนยัน\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "O-external",
+    "query": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:51:14.516Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"conditional\",\"claim_refs\":[\"Caa478145b2b00e584d\",\"Edoa-corn-whitehopper-pymetrozine-20261003\"],\"guidance_ids\":[],\"question_ids\":[]},\"reasoning_note\":\"ลูกค้าถามถึงการใช้ไพรซีนกับเพลี้ยกระโดดท้องขาวในข้าวโพด ไพรซีนมีสารสำคัญไพมีโทรซีน 50% WG ซึ่งมีเอกสารราชการแนะนำสารกลุ่มนี้ในกรณีระบาดรุนแรง แต่ยังไม่มีการรับรองทะเบียนหรืออัตราเฉพาะของตัวสินค้า ICP โดยตรง จึงตอบแบบมีเงื่อนไขตามหลักฐานสารสำคัญ\"}",
+    "prepared": {
+      "intent": "product",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [
+          "P0070"
+        ],
+        "query": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [
+          "P0070"
+        ],
+        "crop": "ข้าวโพด",
+        "near_harvest": false,
+        "target": "เพลี้ยกระโดดท้องขาว",
+        "intent": "product",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            },
+            "crop": {
+              "value": "ข้าวโพด",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            },
+            "known_pest": {
+              "value": "เพลี้ยกระโดดท้องขาว",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            },
+            "previous_product": {
+              "value": [
+                "P0070"
+              ],
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035421180
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": "เพลี้ยกระโดดท้องขาว"
+      },
+      "uncertainties": [],
+      "missing_fields": [
+        "external_stage_safety_review"
+      ],
+      "validated_candidates": [],
+      "conditional_candidates": [
+        {
+          "product_id": "P0070",
+          "rank": 5,
+          "usage_refs": [],
+          "warnings": [],
+          "evidence_refs": [
+            "doa-corn-whitehopper-pymetrozine-20261003"
+          ],
+          "reason": "external_active_evidence",
+          "conditional": true,
+          "active_evidence_supported": true,
+          "product_label_verified": false,
+          "company_rate_available": false
+        }
+      ],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [
+        {
+          "claim_id": "Caa478145b2b00e584d",
+          "product_id": "P0070",
+          "field": "active_ingredient",
+          "value": "ไพมีโทรซีน 50% WG",
+          "source_type": "company_catalog",
+          "source_ref": "master:P0070",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"ไพรซีน\" มีสารสำคัญ ไพมีโทรซีน 50% WG ค่ะ"
+        },
+        {
+          "claim_id": "Edoa-corn-whitehopper-pymetrozine-20261003",
+          "product_id": null,
+          "field": "active_crop_target",
+          "value": "เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+          "source_type": "thai_government",
+          "source_ref": "doa-corn-whitehopper-pymetrozine-20261003",
+          "text": "ข้อมูลสารสำคัญ: เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+          "evidence_id": "doa-corn-whitehopper-pymetrozine-20261003"
+        },
+        {
+          "claim_id": "Edoa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "product_id": null,
+          "field": "active_crop_target",
+          "value": "เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+          "source_type": "thai_government",
+          "source_ref": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "text": "ข้อมูลสารสำคัญ: เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+          "evidence_id": "doa-corn-whitehopper-thiamethoxam-wp-20261003"
+        }
+      ],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [],
+      "external_evidence_summary": [
+        {
+          "evidence_id": "doa-corn-whitehopper-pymetrozine-20261003",
+          "source_type": "thai_government",
+          "source_name": "กรมวิชาการเกษตร ศูนย์วิจัยพืชไร่นครสวรรค์",
+          "source_url": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "reviewed_sha256": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "review_valid_until": "2026-11-03T00:00:00Z",
+          "claim_type": "active_crop_target",
+          "active_ingredient": "PYMETROZINE 50% WG",
+          "formulation": "WG",
+          "concentration": [
+            "50%"
+          ],
+          "crop": "ข้าวโพด",
+          "target": "เพลี้ยกระโดดท้องขาว",
+          "stage": "unspecified",
+          "claim": "เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+          "jurisdiction": "TH",
+          "confidence": "high",
+          "technical_owner_approved": false,
+          "section_start": "การป้องกันกำจัด หมั่นสำรวจ",
+          "section_end": "Post navigation",
+          "id": "doa-corn-whitehopper-pymetrozine-20261003",
+          "source": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "scope": "active_ingredient",
+          "verified": true,
+          "retrieved_at": "2026-10-03T13:50:20.441Z",
+          "valid_until": "2026-10-03T14:00:20.441Z",
+          "content_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "source_tier": 1,
+          "active_evidence_supported": true,
+          "product_label_verified": false,
+          "company_rate_available": false,
+          "expires_at": "2026-10-03T14:00:20.441Z",
+          "document_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "query_fingerprint": "7adbd6240d0419c349df7064dc349b9dc893f9261a28f6c1cace32011feb8835",
+          "verification_status": "verified_active_only",
+          "stage_verified": false,
+          "safety_reviewed": false
+        },
+        {
+          "evidence_id": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "source_type": "thai_government",
+          "source_name": "กรมวิชาการเกษตร ศูนย์วิจัยพืชไร่นครสวรรค์",
+          "source_url": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "reviewed_sha256": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "review_valid_until": "2026-11-03T00:00:00Z",
+          "claim_type": "active_crop_target",
+          "active_ingredient": "THIAMETHOXAM 25% WP",
+          "formulation": "WP",
+          "concentration": [
+            "25%"
+          ],
+          "crop": "ข้าวโพด",
+          "target": "เพลี้ยกระโดดท้องขาว",
+          "stage": "unspecified",
+          "claim": "เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+          "jurisdiction": "TH",
+          "confidence": "high",
+          "technical_owner_approved": false,
+          "section_start": "การป้องกันกำจัด หมั่นสำรวจ",
+          "section_end": "Post navigation",
+          "id": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+          "source": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+          "scope": "active_ingredient",
+          "verified": true,
+          "retrieved_at": "2026-10-03T13:50:20.441Z",
+          "valid_until": "2026-10-03T14:00:20.441Z",
+          "content_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "source_tier": 1,
+          "active_evidence_supported": true,
+          "product_label_verified": false,
+          "company_rate_available": false,
+          "expires_at": "2026-10-03T14:00:20.441Z",
+          "document_hash": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+          "query_fingerprint": "7adbd6240d0419c349df7064dc349b9dc893f9261a28f6c1cace32011feb8835",
+          "verification_status": "verified_active_only",
+          "stage_verified": false,
+          "safety_reviewed": false
+        }
+      ],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "conditional",
+        "claim_refs": [
+          "Edoa-corn-whitehopper-pymetrozine-20261003",
+          "Edoa-corn-whitehopper-thiamethoxam-wp-20261003"
+        ],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [
+        "P0070"
+      ],
+      "query": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [
+        "P0070"
+      ],
+      "crop": "ข้าวโพด",
+      "near_harvest": false,
+      "target": "เพลี้ยกระโดดท้องขาว",
+      "intent": "product",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          },
+          "crop": {
+            "value": "ข้าวโพด",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          },
+          "known_pest": {
+            "value": "เพลี้ยกระโดดท้องขาว",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          },
+          "previous_product": {
+            "value": [
+              "P0070"
+            ],
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035421180
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [
+          "doa-corn-whitehopper-pymetrozine-20261003"
+        ],
+        "image_product_ids": [],
+        "uncertainty": "",
+        "handoff_action": "none",
+        "answer_text": "สารสำคัญมีข้อมูลรองรับในกรณีนี้ค่ะ แต่ยังต้องตรวจระยะพืชและข้อจำกัดก่อนเลือกใช้สินค้า ข้อมูลนี้ไม่ได้ยืนยันทะเบียนหรืออัตราใช้ของสินค้า\n\"ไพรซีน\" มีสารสำคัญ ไพมีโทรซีน 50% WG ค่ะ\nข้อมูลสารสำคัญ: เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+        "intent": "product",
+        "claim_refs": [
+          "Caa478145b2b00e584d",
+          "Edoa-corn-whitehopper-pymetrozine-20261003"
+        ]
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "สารสำคัญมีข้อมูลรองรับในกรณีนี้ค่ะ แต่ยังต้องตรวจระยะพืชและข้อจำกัดก่อนเลือกใช้สินค้า ข้อมูลนี้ไม่ได้ยืนยันทะเบียนหรืออัตราใช้ของสินค้า\n\"ไพรซีน\" มีสารสำคัญ ไพมีโทรซีน 50% WG ค่ะ\nข้อมูลสารสำคัญ: เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ข้าวโพดมีเพลี้ยกระโดดท้องขาว ใช้ไพรซีนได้ไหม\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.102 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 114.404 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.139 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.098 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.139 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.099 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 3.509K tokens · 1.791 s\r\n  - generic: Structured result\r\n  - generic: 0.105 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"conditional\\\",\\\"claim_refs\\\":[\\\"Caa478145b2b00e584d\\\",\\\"Edoa-corn-whitehopper-pymetrozine-20261003\\\"],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[]},\\\"reasoning_note\\\":\\\"ลูกค้าถามถึงการใช้ไพรซีนกับเพลี้ยกระโดดท้องขาวในข้าวโพด ไพรซีนมีสารสำคัญไพมีโทรซีน 50% WG ซึ่งมีเอกสารราชการแนะนำสารกลุ่มนี้ในกรณีระบาดรุนแรง แต่ยังไม่มีการรับรองทะเบียนหรืออัตราเฉพาะของตัวสินค้า ICP โดยตรง จึงตอบแบบมีเงื่อนไขตามหลักฐานสารสำคัญ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "M-missing-active",
+    "query": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:52:14.715Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_text\":\"สารไซแอนทรานิลิโพรล (cyantraniliprole) เป็นสารกลุ่ม 28 ออกฤทธิ์กำจัดแมลงได้กว้างขวาง โดยเฉพาะกลุ่มหนอนผีเสื้อ หนอนชอนใบ แมลงหวี่ขาว เพลี้ยไฟ เพลี้ยอ่อน และด้วงบางชนิดค่ะ สารนี้จะออกฤทธิ์ต่อกล้ามเนื้อของแมลง ทำให้แมลงหยุดกินอาหารและตายในที่สุดค่ะ\",\"intent\":\"general_agriculture\",\"uncertainty\":\"\",\"product_ids_recommended\":[],\"primary_product_id\":null,\"warnings_required\":[],\"question_required\":[],\"rate_refs\":[],\"evidence_refs\":[],\"handoff_action\":\"none\",\"image_product_ids\":[]}",
+    "prepared": {
+      "intent": "general_agriculture",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [],
+        "crop": null,
+        "near_harvest": false,
+        "target": null,
+        "intent": "general_agriculture",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035474711
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": null
+      },
+      "uncertainties": [],
+      "missing_fields": [],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": false
+      },
+      "question_options": [],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "no_match",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": []
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [],
+      "crop": null,
+      "near_harvest": false,
+      "target": null,
+      "intent": "general_agriculture",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035474711
+    },
+    "final": {
+      "response": {
+        "answer_text": "สารไซแอนทรานิลิโพรล (cyantraniliprole) เป็นสารกลุ่ม 28 ออกฤทธิ์กำจัดแมลงได้กว้างขวาง โดยเฉพาะกลุ่มหนอนผีเสื้อ หนอนชอนใบ แมลงหวี่ขาว เพลี้ยไฟ เพลี้ยอ่อน และด้วงบางชนิดค่ะ สารนี้จะออกฤทธิ์ต่อกล้ามเนื้อของแมลง ทำให้แมลงหยุดกินอาหารและตายในที่สุดค่ะ",
+        "intent": "general_agriculture",
+        "uncertainty": "",
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "handoff_action": "none",
+        "image_product_ids": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "สารไซแอนทรานิลิโพรล (cyantraniliprole) เป็นสารกลุ่ม 28 ออกฤทธิ์กำจัดแมลงได้กว้างขวาง โดยเฉพาะกลุ่มหนอนผีเสื้อ หนอนชอนใบ แมลงหวี่ขาว เพลี้ยไฟ เพลี้ยอ่อน และด้วงบางชนิดค่ะ สารนี้จะออกฤทธิ์ต่อกล้ามเนื้อของแมลง ทำให้แมลงหยุดกินอาหารและตายในที่สุดค่ะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: สาร cyantraniliprole ใช้กับแมลงกลุ่มไหน\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.092 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 79.838 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.110 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.110 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.104 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.091 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.295K tokens · 2.046 s\r\n  - generic: Structured result\r\n  - generic: 0.091 ms\r\n  - paragraph: \"{\\\"answer_text\\\":\\\"สารไซแอนทรานิลิโพรล (cyantraniliprole) เป็นสารกลุ่ม 28 ออกฤทธิ์กำจัดแมลงได้กว้างขวาง โดยเฉพาะกลุ่มหนอนผีเสื้อ หนอนชอนใบ แมลงหวี่ขาว เพลี้ยไฟ เพลี้ยอ่อน และด้วงบางชนิดค่ะ สารนี้จะออกฤทธิ์ต่อกล้ามเนื้อของแมลง ทำให้แมลงหยุดกินอาหารและตายในที่สุดค่ะ\\\",\\\"intent\\\":\\\"general_agriculture\\\",\\\"uncertainty\\\":\\\"\\\",\\\"product_ids_recommended\\\":[],\\\"primary_product_id\\\":null,\\\"warnings_required\\\":[],\\\"question_required\\\":[],\\\"rate_refs\\\":[],\\\"evidence_refs\\\":[],\\\"handoff_action\\\":\\\"none\\\",\\\"image_product_ids\\\":[]}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "H-stage-missing",
+    "query": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:53:09.248Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"ask_stage\",\"claim_refs\":[],\"guidance_ids\":[],\"question_ids\":[\"plant_age\"]},\"reasoning_note\":\"ลูกค้าต้องการกำจัดหญ้าข้าวนกในนาข้าว แต่ยังไม่ทราบระยะของข้าวหรืออายุข้าวเพื่อแนะนำสารกำจัดวัชพืชที่เหมาะสมและปลอดภัย จึงต้องสอบถามระยะของข้าวก่อน\"}",
+    "prepared": {
+      "intent": "known_problem",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [],
+        "crop": "นาข้าว",
+        "near_harvest": false,
+        "target": "หญ้าข้าวนก",
+        "intent": "known_problem",
+        "rate_requested": false,
+        "diagnosis_uncertain": false,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน"
+            },
+            "crop": {
+              "value": "นาข้าว",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน"
+            },
+            "known_pest": {
+              "value": "หญ้าข้าวนก",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035534874
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": false,
+        "confirmed_target": "หญ้าข้าวนก"
+      },
+      "uncertainties": [],
+      "missing_fields": [
+        "crop_stage"
+      ],
+      "validated_candidates": [],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [
+        {
+          "id": "plant_age",
+          "field": "plant_age",
+          "text": "ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ"
+        }
+      ],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [
+        "ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ"
+      ],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "ask_stage",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": [
+          "plant_age"
+        ]
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [],
+      "crop": "นาข้าว",
+      "near_harvest": false,
+      "target": "หญ้าข้าวนก",
+      "intent": "known_problem",
+      "rate_requested": false,
+      "diagnosis_uncertain": false,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน"
+          },
+          "crop": {
+            "value": "นาข้าว",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน"
+          },
+          "known_pest": {
+            "value": "หญ้าข้าวนก",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035534874
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [
+          "ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ"
+        ],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "",
+        "handoff_action": "none",
+        "answer_text": "ตัวเลือกขึ้นอยู่กับระยะพืชค่ะ น้องลัดดาขอทราบระยะก่อนเลือกตัวที่เหมาะ\nตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ",
+        "intent": "known_problem",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "ตัวเลือกขึ้นอยู่กับระยะพืชค่ะ น้องลัดดาขอทราบระยะก่อนเลือกตัวที่เหมาะ\nตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ในนาข้าวมีหญ้าข้าวนก ควรใช้ตัวไหน\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.129 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 197.561 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.163 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.138 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.119 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.161 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 1.361K tokens · 1.586 s\r\n  - generic: Structured result\r\n  - generic: 0.106 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"ask_stage\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[],\\\"question_ids\\\":[\\\"plant_age\\\"]},\\\"reasoning_note\\\":\\\"ลูกค้าต้องการกำจัดหญ้าข้าวนกในนาข้าว แต่ยังไม่ทราบระยะของข้าวหรืออายุข้าวเพื่อแนะนำสารกำจัดวัชพืชที่เหมาะสมและปลอดภัย จึงต้องสอบถามระยะของข้าวก่อน\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  },
+  {
+    "id": "F-chemical-injury",
+    "query": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+    "implementationHash": "3b2b3c5c5bd27b97d14d6b589e92d99d1d5878078a1dc620f012a8a97c5eee37",
+    "at": "2026-10-03T13:54:25.506Z",
+    "environment": "Dify Preview live; Bridge validation replay; LINE NOT SENT",
+    "raw": "{\"answer_plan\":{\"summary_key\":\"uncertain\",\"claim_refs\":[],\"guidance_ids\":[\"observe\"],\"question_ids\":[\"plant_age\",\"distribution\",\"recent_fertilizer\"]},\"reasoning_note\":\"อาการใบไหม้เกิดขึ้นทันทีหลังพ่นยาเมื่อวาน อาจเกิดจากความเป็นพิษของสารเคมี (phytotoxicity) หรืออาการกระทบจากสภาพแวดล้อม ยังไม่สามารถยืนยันว่าเป็นโรคไหม้จากเชื้อราได้ จึงยังไม่แนะนำสารเคมีใดๆ และเลือกสอบถามข้อมูลระยะข้าว การกระจายตัว และการใส่ปุ๋ยเพิ่มเติมเพื่อประเมินสาเหตุ\"}",
+    "prepared": {
+      "intent": "symptom",
+      "needs_web": false,
+      "customer_state": {
+        "product_ids": [],
+        "query": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+        "ambiguous_aliases": [],
+        "explicit_product_ids": [],
+        "crop": "ข้าว",
+        "near_harvest": false,
+        "target": "โรคไหม้",
+        "intent": "symptom",
+        "rate_requested": false,
+        "diagnosis_uncertain": true,
+        "needs_web": false,
+        "explicit_actives": [],
+        "facts": {
+          "version": 1,
+          "turn": 1,
+          "values": {
+            "customer_question": {
+              "value": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+            },
+            "crop": {
+              "value": "ข้าว",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+            },
+            "symptoms": {
+              "value": [
+                "ใบไหม้"
+              ],
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+            },
+            "affected_part": {
+              "value": "ใบ",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+            },
+            "onset": {
+              "value": "เมื่อวาน",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+            },
+            "recent_spray": {
+              "value": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+              "source": "customer",
+              "turn": 1,
+              "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+            }
+          },
+          "conflicts": {},
+          "questions_already_asked": [],
+          "questions_answered": []
+        },
+        "updated_at": 1791035589398
+      },
+      "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+      "diagnosis_state": {
+        "uncertain": true,
+        "confirmed_target": "โรคไหม้"
+      },
+      "uncertainties": [
+        "ต้องแยกโรค น้ำขัง ขาดธาตุ และผลจากสารก่อนเลือกยา"
+      ],
+      "missing_fields": [
+        "crop_stage"
+      ],
+      "validated_candidates": [
+        {
+          "product_id": "P0010",
+          "rank": 3,
+          "usage_refs": [
+            "U00031",
+            "U00032"
+          ],
+          "warnings": [],
+          "evidence_refs": [],
+          "reason": "company_usage_match",
+          "conditional": false,
+          "active_evidence_supported": false,
+          "product_label_verified": false,
+          "company_rate_available": true
+        }
+      ],
+      "conditional_candidates": [],
+      "strategy_selected_candidate": null,
+      "allowed_product_facts": [],
+      "allowed_product_claims": [
+        {
+          "claim_id": "C491374ff6e407a7765",
+          "product_id": "P0010",
+          "field": "active_ingredient",
+          "value": "ทีบูโคนาโซล 50% + ไตรฟอกซี่สโตรบิน 25% WG",
+          "source_type": "company_catalog",
+          "source_ref": "master:P0010",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"โคเฟสต้า\" มีสารสำคัญ ทีบูโคนาโซล 50% + ไตรฟอกซี่สโตรบิน 25% WG ค่ะ"
+        },
+        {
+          "claim_id": "C3702eee0b2b84664c8",
+          "product_id": "P0010",
+          "field": "crop_target",
+          "value": {
+            "crop": "นาข้าว",
+            "target": "โรคไหม้"
+          },
+          "source_type": "company_catalog",
+          "source_ref": "U00031",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"โคเฟสต้า\" มีข้อมูลบริษัทสำหรับโรคไหม้ในนาข้าวค่ะ"
+        },
+        {
+          "claim_id": "C154eee64e3e70fcb80",
+          "product_id": "P0010",
+          "field": "stage",
+          "value": "ทุกระยะ",
+          "source_type": "company_catalog",
+          "source_ref": "U00031",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"โคเฟสต้า\" ระยะใช้ที่บริษัทระบุ: ทุกระยะ"
+        },
+        {
+          "claim_id": "C16df7e6181afc3a1c8",
+          "product_id": "P0010",
+          "field": "crop_target",
+          "value": {
+            "crop": "นาข้าว",
+            "target": "โรคไหม้"
+          },
+          "source_type": "company_catalog",
+          "source_ref": "U00032",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"โคเฟสต้า\" มีข้อมูลบริษัทสำหรับโรคไหม้ในนาข้าวค่ะ"
+        },
+        {
+          "claim_id": "C7a7cccd542b1baa485",
+          "product_id": "P0010",
+          "field": "stage",
+          "value": "ทุกระยะ",
+          "source_type": "company_catalog",
+          "source_ref": "U00032",
+          "catalog_version": "34f84609afe5b402237d22be40c39f12fc1cac65e146ab4b27342cc06b2ffa08",
+          "text": "\"โคเฟสต้า\" ระยะใช้ที่บริษัทระบุ: ทุกระยะ"
+        }
+      ],
+      "claim_control": {
+        "version": 2,
+        "enforced": true
+      },
+      "question_options": [
+        {
+          "id": "plant_age",
+          "field": "plant_age",
+          "text": "ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ"
+        },
+        {
+          "id": "distribution",
+          "field": "distribution",
+          "text": "เป็นบางต้นหรือกระจายทั่วแปลงคะ"
+        },
+        {
+          "id": "recent_fertilizer",
+          "field": "recent_fertilizer",
+          "text": "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        }
+      ],
+      "retrieval_plan": {
+        "query_llm": false,
+        "rag": false,
+        "reason": "Company facts/usage are structured; Main handles ambiguity directly; reviewed prose retrieval remains an explicit opt-in"
+      },
+      "allowed_rates": [],
+      "required_warnings": [],
+      "required_questions": [
+        "ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ",
+        "เป็นบางต้นหรือกระจายทั่วแปลงคะ",
+        "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+      ],
+      "external_evidence_summary": [],
+      "human_state": "BOT_ACTIVE",
+      "communication_preference": null,
+      "conversation": {
+        "admin_summary": "",
+        "recent": []
+      },
+      "answer_plan_default": {
+        "summary_key": "uncertain",
+        "claim_refs": [],
+        "guidance_ids": [],
+        "question_ids": [
+          "plant_age",
+          "distribution",
+          "recent_fertilizer"
+        ]
+      },
+      "guidance_options": {
+        "observe": "สังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ",
+        "inspect_root": "ตรวจรากและสภาพน้ำรอบต้น โดยยังไม่สรุปว่าเป็นเชื้อราจากอาการอย่างเดียวค่ะ"
+      }
+    },
+    "context": {
+      "product_ids": [],
+      "query": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+      "ambiguous_aliases": [],
+      "explicit_product_ids": [],
+      "crop": "ข้าว",
+      "near_harvest": false,
+      "target": "โรคไหม้",
+      "intent": "symptom",
+      "rate_requested": false,
+      "diagnosis_uncertain": true,
+      "needs_web": false,
+      "explicit_actives": [],
+      "facts": {
+        "version": 1,
+        "turn": 1,
+        "values": {
+          "customer_question": {
+            "value": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+          },
+          "crop": {
+            "value": "ข้าว",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+          },
+          "symptoms": {
+            "value": [
+              "ใบไหม้"
+            ],
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+          },
+          "affected_part": {
+            "value": "ใบ",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+          },
+          "onset": {
+            "value": "เมื่อวาน",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+          },
+          "recent_spray": {
+            "value": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม",
+            "source": "customer",
+            "turn": 1,
+            "quote": "ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม"
+          }
+        },
+        "conflicts": {},
+        "questions_already_asked": [],
+        "questions_answered": []
+      },
+      "updated_at": 1791035589398
+    },
+    "final": {
+      "response": {
+        "product_ids_recommended": [],
+        "primary_product_id": null,
+        "warnings_required": [],
+        "question_required": [
+          "ตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ",
+          "เป็นบางต้นหรือกระจายทั่วแปลงคะ",
+          "ช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        ],
+        "rate_refs": [],
+        "evidence_refs": [],
+        "image_product_ids": [],
+        "uncertainty": "ยังต้องตรวจเงื่อนไขเพิ่มเติม",
+        "handoff_action": "none",
+        "answer_text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nสังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ\nตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ\nเป็นบางต้นหรือกระจายทั่วแปลงคะ\nช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ",
+        "intent": "symptom",
+        "claim_refs": []
+      },
+      "failures": [],
+      "messages": [
+        {
+          "type": "text",
+          "text": "อาการนี้ยังแยกสาเหตุไม่ได้แน่ชัดค่ะ น้องลัดดาขอข้อมูลเพิ่มเพื่อเลือกแนวทางให้ตรง\nสังเกตตำแหน่งที่เริ่มเป็นและการกระจายของอาการไว้ก่อนค่ะ\nตอนนี้พืชอายุเท่าไรหรืออยู่ระยะไหนคะ\nเป็นบางต้นหรือกระจายทั่วแปลงคะ\nช่วงนี้ใส่ปุ๋ยอะไรไปบ้างคะ"
+        }
+      ],
+      "safe_fallback": false,
+      "prose_removed": false
+    },
+    "metrics": "\r\n  - generic: PREVIEW\r\n  - button \"Restart\"\r\n  - button \"User Input Field\"\r\n  - button \"Close\"\r\n  - paragraph: ข้าวใบไหม้หลังพ่นยาเมื่อวาน เป็นโรคไหม้ไหม\r\n  - button \"Log\":\r\n  - button \"Copy\"\r\n  - button \"Regenerate\"\r\n  - button \"Workflow Process succeeded Workflow Process\" [expanded] [active]:\r\n    - img \"Workflow Process succeeded\"\r\n    - generic: Workflow Process\r\n  - generic: User Input\r\n  - generic: 0.112 ms\r\n  - generic: Prepared intent routing\r\n  - generic: 90.612 ms\r\n  - generic: Fetch team only when needed\r\n  - generic: 0.139 ms\r\n  - generic: Query LLM only when needed\r\n  - generic: 0.141 ms\r\n  - generic: Reviewed prose retrieval only\r\n  - generic: 0.117 ms\r\n  - generic: Grounding only for current or external facts\r\n  - generic: 0.169 ms\r\n  - generic: Synthesis with verified context\r\n  - generic: 2.446K tokens · 1.899 s\r\n  - generic: Structured result\r\n  - generic: 0.092 ms\r\n  - paragraph: \"{\\\"answer_plan\\\":{\\\"summary_key\\\":\\\"uncertain\\\",\\\"claim_refs\\\":[],\\\"guidance_ids\\\":[\\\"observe\\\"],\\\"question_ids\\\":[\\\"plant_age\\\",\\\"distribution\\\",\\\"recent_fertilizer\\\"]},\\\"reasoning_note\\\":\\\"อาการใบไหม้เกิดขึ้นทันทีหลังพ่นยาเมื่อวาน อาจเกิดจากความเป็นพิษของสารเคมี (phytotoxicity) หรืออาการกระทบจากสภาพแวดล้อม ยังไม่สามารถยืนยันว่าเป็นโรคไหม้จากเชื้อราได้ จึงยังไม่แนะนำสารเคมีใดๆ และเลือกสอบถามข้อมูลระยะข้าว การกระจายตัว และการใส่ปุ๋ยเพิ่มเติมเพื่อประเมินสาเหตุ\\\"}\"\r\n  - textbox \"Talk to Bot\"\r\n  - button \"Send\" [disabled]\r\n  - generic: Enable feature to enhance web app user experience\r\n  "
+  }
+]

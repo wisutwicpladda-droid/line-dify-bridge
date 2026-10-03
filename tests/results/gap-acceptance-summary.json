@@ -1,0 +1,123 @@
+{
+  "cases": 106,
+  "by_intent": {
+    "known_problem": {
+      "n": 6,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 3,
+      "selection_ready": 3
+    },
+    "symptom": {
+      "n": 1,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    },
+    "exposure": {
+      "n": 1,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    },
+    "regulatory": {
+      "n": 1,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    },
+    "product": {
+      "n": 91,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    },
+    "comparison": {
+      "n": 1,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    },
+    "rate": {
+      "n": 1,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    },
+    "greeting": {
+      "n": 1,
+      "blocked": 0,
+      "safe_fallback": 0,
+      "recommended": 0,
+      "selection_ready": 0
+    }
+  },
+  "local_latency": {
+    "greeting": {
+      "samples": 30,
+      "p50_ms": 1.7274000000000456,
+      "p95_ms": 2.7124000000000024,
+      "final_line_payload": [
+        {
+          "type": "text",
+          "text": "สวัสดีค่ะ น้องลัดดาช่วยเรื่องพืชและสินค้าเกษตรได้ วันนี้อยากปรึกษาเรื่องไหนคะ"
+        }
+      ],
+      "scope": "actual handler / mocked network — NOT LINE SLA"
+    },
+    "exact": {
+      "samples": 30,
+      "p50_ms": 1.648399999999981,
+      "p95_ms": 2.86869999999999,
+      "final_line_payload": [
+        {
+          "type": "text",
+          "text": "\"ไบเตอร์\" มีสารสำคัญ ไบเฟนทริน 5% + อิมิดาคลอพริด 25% SC ค่ะ"
+        }
+      ],
+      "scope": "actual handler / mocked network — NOT LINE SLA"
+    },
+    "package": {
+      "samples": 30,
+      "p50_ms": 1.5314000000000192,
+      "p95_ms": 2.031000000000006,
+      "final_line_payload": [
+        {
+          "type": "text",
+          "text": "\"นาแดน-จี\" มีขนาด 15 กิโลกรัม ค่ะ"
+        }
+      ],
+      "scope": "actual handler / mocked network — NOT LINE SLA"
+    },
+    "known_problem": {
+      "samples": 30,
+      "p50_ms": 2.9956999999999994,
+      "p95_ms": 4.106999999999971,
+      "final_line_payload": [
+        {
+          "type": "text",
+          "text": "\"แกนเตอร์\" มีข้อมูลบริษัทสำหรับหญ้าข้าวนกในนาข้าวค่ะ\n1. ไม่ควรพ่นในพื้นที่ที่ลมแรง เพราะละอองสารอาจปลิวไปยังพืชที่ไม่ต้องการกำจัด \n 2. ใช้ในอัตราที่แนะนำเพื่อป้องกันการตกค้างและผลกระทบต่อข้าว\n 3. ห้ามพ่นจี้หรือซ้ำอาจทำให้ข้าวยุบหรือตายได้"
+        }
+      ],
+      "scope": "actual handler / mocked network — NOT LINE SLA"
+    },
+    "comparison": {
+      "samples": 30,
+      "p50_ms": 3.1713000000000306,
+      "p95_ms": 3.9348999999999705,
+      "final_line_payload": [
+        {
+          "type": "text",
+          "text": "จุดต่างจากข้อมูลบริษัทมีดังนี้ค่ะ\n\"อะนิลการ์ด\" มีสารสำคัญ อะนิโลฟอส 30% EC ค่ะ\n\"แกนเตอร์\" มีสารสำคัญ โพรพานิล 36% + อะนิโลฟอส 18% EC ค่ะ"
+        }
+      ],
+      "scope": "actual handler / mocked network — NOT LINE SLA"
+    }
+  }
+}

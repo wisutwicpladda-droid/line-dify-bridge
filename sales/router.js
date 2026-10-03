@@ -1,6 +1,8 @@
 'use strict';
 const {normalize,companyFacts}=require('./catalog');
 const evidenceSources=require('./evidence_sources.json');
+const {updateFacts}=require('./conversation_facts');
+const {buildClaims,directFact}=require('./claims');
 const EMPTY={product_ids_recommended:[],primary_product_id:null,warnings_required:[],question_required:[],rate_refs:[],evidence_refs:[],image_product_ids:[],uncertainty:'',handoff_action:'none'};
 const result=(answer_text,intent,extra={})=>({...EMPTY,answer_text,intent,...extra});
 const {isExposure,SAFETY,exposureAnswer}=require('./safety');
@@ -8,6 +10,8 @@ function extract(text,catalog,previous={}) {
   if(previous.updated_at && Date.now()-previous.updated_at>1800000)previous={};
   const t=String(text||'').trim(), hits=catalog?catalog.index.mentions(t):[];
   const ctx={...previous,product_ids:hits.length?hits.map(p=>p.product_id):(previous.product_ids||[]),query:t};
+  ctx.ambiguous_aliases=catalog?.index.ambiguities(t)||[];
+  ctx.explicit_product_ids=hits.map(p=>p.product_id);
   const crops=[...new Set(['ข้าวโพด','ทุเรียน','มะม่วง','อ้อย','ข้าว','ลำไย','มันสำปะหลัง',
     ...(catalog?[...catalog.products.values()].flatMap(p=>p.usage.flatMap(u=>(u.crop_name||u.crop_group).split(/[,、/]/).map(x=>x.trim()).filter(Boolean))):[])])].sort((a,b)=>b.length-a.length);
   const explicitCrop=crops.find(c=>t.includes(c));
@@ -19,11 +23,11 @@ function extract(text,catalog,previous={}) {
   const harvest=t.match(/(?:อีก\s*)?(\d+)\s*วัน.{0,8}เก็บเกี่ยว/);
   const age=t.replace(/(?:อีก\s*)?\d+\s*วัน.{0,8}เก็บเกี่ยว/g,'').match(/(?:อายุ|ข้าว|อ้อย|ปลูก|หว่าน)\s*(\d+)\s*(วัน|เดือน)/)
     || (/^\d+\s*(?:วัน|เดือน)(?:ค่ะ|ครับ|คะ)?$/.test(t)?t.match(/(\d+)\s*(วัน|เดือน)/):null);
-  ctx.near_harvest=/ใกล้เก็บเกี่ยว|ก่อนเก็บเกี่ยว/.test(t)||!!harvest;
+  ctx.near_harvest=/ใกล้เก็บเกี่ยว|ก่อนเก็บเกี่ยว/.test(t)||!!harvest||previous.near_harvest||false;
   if(harvest)ctx.days_to_harvest=+harvest[1];
   if(age){ctx.age_days=Number(age[1])*(age[2]==='เดือน'?30:1);ctx.age_months=age[2]==='เดือน'?+age[1]:null;ctx.age_unit=age[2];}
   if(/ก่อนปลูก|เตรียมดิน/.test(t))ctx.stage='ก่อนปลูก';
-  if(/ช่วงดอก|ดอกบาน|ออกดอก/.test(t))ctx.stage='ดอก';
+  if(/ช่วงดอก|ดอกบาน|กำลังออกดอก/.test(t)&&!/ยังไม่|ไม่ออกดอก/.test(t))ctx.stage='ดอก';
   if(catalog){
     const targets=[...new Set([...catalog.products.values()].flatMap(p=>p.usage.flatMap(u=>u.target_name.split(/[,\n:：]/).map(x=>x.trim()).filter(x=>x.length>=4))))].sort((a,b)=>b.length-a.length);
     ctx.target=[...targets,...evidenceSources.map(e=>e.target)].sort((a,b)=>b.length-a.length).find(x=>t.includes(x))||previous.target||null;
@@ -49,7 +53,11 @@ function extract(text,catalog,previous={}) {
     ctx.intent='symptom';ctx.diagnosis_uncertain=true;
   }
   ctx.needs_web=['regulatory','competitor'].includes(intent)||/IRAC|FRAC|HRAC|ผ่าดอก|ผสมเกสร|แมลงปีกแข็ง/i.test(t);
+  ctx.explicit_actives=catalog?[...new Set([...catalog.products.values()].flatMap(p=>[p.active_ingredient,p.common_name_th]).filter(s=>s&&normalize(t).includes(normalize(s))))]:[];
   if(ctx.near_harvest)ctx.needs_web=true;
+  if(previous.diagnosis_uncertain&&['general_agriculture','product'].includes(ctx.intent)&&!hits.length&&!/ยืนยันแล้ว|ตรวจพบเชื้อ/.test(t)) {ctx.intent='symptom';ctx.diagnosis_uncertain=true;}
+  ctx.facts=updateFacts(t,ctx,previous);
+  if(Object.keys(ctx.facts.conflicts).length)ctx.diagnosis_uncertain=true;
   ctx.updated_at=Date.now();return ctx;
 }
 function fastAnswer(ctx,catalog) {
@@ -60,8 +68,11 @@ function fastAnswer(ctx,catalog) {
   if(ctx.intent==='admin')return result('รับเรื่องให้ทีมงานแล้วค่ะ น้องลัดดาจะพักการตอบระหว่างแอดมินดูแล','admin',{handoff_action:'request'});
   if(ctx.intent==='out_of_scope')return result('น้องลัดดาช่วยเรื่องการดูแลพืชและสินค้าเกษตรค่ะ เรื่องนี้อยู่นอกขอบเขตที่น้องลัดดาแนะนำได้','out_of_scope');
   if(!catalog)return null;
+  if(ctx.ambiguous_aliases?.length){const ids=[...new Set(ctx.ambiguous_aliases.flatMap(x=>x.product_ids))];const names=ids.map(id=>catalog.products.get(id)).filter(p=>p?.open).map(p=>'"'+p.canonical_name+'"');return result('ชื่อนี้ตรงกับมากกว่าหนึ่งรายการค่ะ หมายถึง '+names.join(' หรือ ')+' คะ','clarification');}
   const p=ctx.product_ids.length===1?catalog.products.get(ctx.product_ids[0]):null;
   if(p&&!p.open)return result('น้องลัดดายังยืนยันข้อมูลสินค้านี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจสอบก่อนแนะนำ',ctx.intent);
+  const direct=directFact(ctx,catalog,buildClaims(catalog,ctx,null));
+  if(direct)return result(direct.text,ctx.intent,{claim_refs:direct.claim_refs});
   // Exact fact questions only. Do not treat every question mentioning a name as lookup.
   if(p&&ctx.intent==='package')return result('"'+p.canonical_name+'" มีขนาด '+p.packages.map(k=>k.package_size_value+' '+k.package_size_unit).join(' และ ')+' ค่ะ','package');
   if(p&&ctx.intent==='product'&&(/คือสาร|สารอะไร|ชื่อสามัญ|ส่วนประกอบ|สูตรอะไร/.test(t)||normalize(t)===p.normalized_name))

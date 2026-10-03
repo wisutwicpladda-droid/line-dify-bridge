@@ -22,12 +22,12 @@ const cases=[
  ['P-followup','เพิ่งเป็นหลังน้ำขัง 3 วัน รากดำและมีกลิ่นค่ะ']
 ].map(([id,query])=>({id,query}));
 const root=path.join(__dirname,'results');fs.mkdirSync(root,{recursive:true});
-const saved=path.join(root,'live-preview.json');let records=fs.existsSync(saved)?JSON.parse(fs.readFileSync(saved)):[];
+const saved=path.join(root,process.env.QA_RESULTS_FILE||'live-preview.json');let records=fs.existsSync(saved)?JSON.parse(fs.readFileSync(saved)):[];
 const implementationHash=require('node:crypto').createHash('sha256').update(['router','candidates','pipeline','contracts'].map(n=>fs.readFileSync(path.join(__dirname,'../sales/'+n+'.js'),'utf8')).join('\n')).digest('hex');
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const provider=new (require('../sales/external_evidence').EvidenceProvider)({enabled:true});
 const preparedRuns=new Map();
-async function work(c){const options={catalog,previous:c.id==='P-followup'?{crop:'ทุเรียน',intent:'symptom',diagnosis_uncertain:true}: {},ownership:{state:'BOT_ACTIVE'}};
+async function work(c){const options={catalog,previous:c.id==='P-followup'?require('../sales/router').extract('ทุเรียนเหี่ยวหลังน้ำขัง น้ำลดแล้ว เป็นบางต้น ไม่ได้พ่นยา',catalog): {},ownership:{state:'BOT_ACTIVE'}};
  const first=prepare(c.query,options);if(c.id==='O-external'){const external=await provider.search(first.context);return prepare(c.query,{...options,evidence:external.evidence});}return first;}
 http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://127.0.0.1:9199');

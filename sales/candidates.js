@@ -25,9 +25,9 @@ function stageMatch(stage,ctx) {
 }
 function evidenceMatch(e,p,ctx) {
   // Evidence is an approved adapter result, never a model's invented source URL.
-  return e.verified===true && e.scope==='active_ingredient' && !!e.source && !!e.retrieved_at && !!e.claim &&
-    (e.evidence_id?compatible(e,p):same(e.active_ingredient,p.active_ingredient) && same(e.formulation,p.physical_form)) &&
-    (!e.valid_until || Date.parse(e.valid_until)>Date.now()) &&
+  return e.verified===true && !e.conflict && !!e.evidence_id && !!e.document_hash && e.scope==='active_ingredient' && !!e.source && !!e.retrieved_at && !!e.claim &&
+    compatible(e,p) && (e.formulation!==null || same(e.physical_form,p.physical_form)) &&
+    Date.parse(e.valid_until||e.expires_at)>Date.now() &&
     same(e.crop,ctx.crop) && same(e.target,ctx.target) && e.confidence==='high';
 }
 function selectCandidates(catalog,ctx,evidence=[]) {
@@ -54,7 +54,7 @@ function selectCandidates(catalog,ctx,evidence=[]) {
     if(!direct.length){
       conditional.push(item);
       // Ingredient evidence alone is not enough: its stage/safety scope must also be reviewed.
-      if(ext.some(e=>(!e.evidence_id||e.technical_owner_approved===true)&&e.stage_verified===true && e.safety_reviewed===true &&
+      if(ext.some(e=>e.technical_owner_approved===true&&e.stage_verified===true && e.safety_reviewed===true &&
         (e.stage==='all' || (ctx.stage && same(e.stage,ctx.stage))))) eligible.push(item);
       else pending.push({...item,reason:'external_stage_safety_review_required'});
       continue;

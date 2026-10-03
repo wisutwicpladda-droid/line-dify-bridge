@@ -11,6 +11,6 @@ const catalog=buildCatalog(require('./fixtures/company-snapshot.json'));
   results.push({context:ctx,external,candidates:{conditional:candidates.conditional,pending:candidates.pending,primary:candidates.primary_product_id},
     compatibility:external.evidence.map(e=>({evidence_id:e.evidence_id,compatible_products:[...catalog.products.values()].filter(p=>compatible(e,p)).map(p=>p.product_id)}))});
  }
- fs.writeFileSync('tests/results/live-evidence.json',JSON.stringify({environment:'live HTTPS source retrieval, local real catalog matching; no LINE',at:new Date().toISOString(),results},null,2));
+ fs.writeFileSync('tests/results/'+(process.env.QA_EVIDENCE_FILE||'live-evidence.json'),JSON.stringify({environment:'live HTTPS source retrieval, local real catalog matching; no LINE',at:new Date().toISOString(),results},null,2));
  console.log(JSON.stringify(results.map(r=>({crop:r.context.crop,target:r.context.target,status:r.external.status,failures:r.external.failures,conditional:r.candidates.conditional.map(c=>c.product_id),primary:r.candidates.primary}))));
 })().catch(e=>{console.error(e.message);process.exitCode=1;});

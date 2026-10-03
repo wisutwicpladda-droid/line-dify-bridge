@@ -24,21 +24,32 @@ function fetchSource(url,{timeoutMs=7000,maxBytes=12500000}={}) {
  // Exact reviewed URLs only. No model/customer URL, redirects, arbitrary ports or private hosts.
  if(!registry.some(r=>r.source_url===url)||sourceTier(url)===99)return Promise.reject(Error('unreviewed_source'));
  return new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>req.destroy(Error('source_absolute_deadline')),timeoutMs);
+  const finish=(error,value)=>{clearTimeout(timer);error?reject(error):resolve(value);};
   const req=https.get(url,{headers:{Accept:'text/html,application/pdf','User-Agent':'Ladda-Staging-Evidence/1.0'}},res=>{
-   if(res.statusCode!==200){res.resume();reject(Error('source_http_'+res.statusCode));return;}
+   if(res.statusCode!==200){res.resume();finish(Error('source_http_'+res.statusCode));return;}
    const chunks=[];let size=0;
    res.on('data',c=>{size+=c.length;if(size>maxBytes)req.destroy(Error('source_too_large'));else chunks.push(c);});
-   res.on('end',()=>resolve({body:Buffer.concat(chunks),content_type:res.headers['content-type']||''}));res.on('error',reject);
-  });req.setTimeout(timeoutMs,()=>req.destroy(Error('source_timeout')));req.on('error',reject);
+   res.on('end',()=>finish(null,{body:Buffer.concat(chunks),content_type:res.headers['content-type']||''}));res.on('error',finish);
+  });req.setTimeout(timeoutMs,()=>req.destroy(Error('source_timeout')));req.on('error',finish);
  });
 }
 function shouldSearch(ctx,candidates) {
  if(['exposure','greeting','acknowledgement','admin','image','package','rate','team','out_of_scope'].includes(ctx.intent))return false;
- if(ctx.intent==='product'&&/คือสาร|สารอะไร|ชื่อสามัญ|สูตรอะไร|ส่วนประกอบ/.test(ctx.query))return false;
+ if(ctx.intent==='product'&&require('./claims').factFacet(ctx))return false;
  return !!ctx.needs_web || !!(ctx.crop&&ctx.target&&!ctx.diagnosis_uncertain&&!candidates?.eligible?.length&&!candidates?.pending?.length);
 }
 class EvidenceProvider {
- constructor({enabled=false,fetcher=fetchSource,now=()=>Date.now()}={}){this.enabled=enabled;this.fetcher=fetcher;this.now=now;this.cache=new Map();}
+ constructor({enabled=false,fetcher=fetchSource,now=()=>Date.now(),deadlineMs=7000,discovery=null}={}){this.enabled=enabled;this.fetcher=fetcher;this.now=now;this.cache=new Map();this.inflight=new Map();this.deadlineMs=deadlineMs;this.discovery=discovery;}
+ async source(url){
+  const cached=this.cache.get(url);if(cached?.until>this.now())return cached;
+  if(this.inflight.has(url))return this.inflight.get(url);
+  let timer;
+  const task=Promise.race([Promise.resolve().then(()=>this.fetcher(url,{timeoutMs:this.deadlineMs})),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('source_absolute_deadline')),this.deadlineMs);})])
+   .then(source=>{const record={...source,until:this.now()+600000};this.cache.set(url,record);return record;})
+   .finally(()=>{clearTimeout(timer);this.inflight.delete(url);});
+  this.inflight.set(url,task);return task;
+ }
  async search(ctx,{trace_id}={}) {
   if(!this.enabled)return {evidence:[],status:'disabled',trace_id};
   const started=performance.now(), failures=[],now=this.now();
@@ -47,17 +58,22 @@ class EvidenceProvider {
     .sort((a,b)=>sourceTier(a.source_url,a.source_type)-sourceTier(b.source_url,b.source_type)).slice(0,3);
   const evidence=(await Promise.all(matches.map(async e=>{
    try {
-    let record=this.cache.get(e.source_url);
-    if(!record || record.until<=now){const source=await this.fetcher(e.source_url);record={...source,until:now+600000};this.cache.set(e.source_url,record);}
+    const record=await this.source(e.source_url);
     const content_hash=crypto.createHash('sha256').update(reviewedContent(record.body,e)).digest('hex');
     if(content_hash!==e.reviewed_sha256)throw Error('source_changed_requires_review');
-    return {...e,id:e.evidence_id,source:e.source_url,scope:'active_ingredient',verified:true,
+    return {...e,id:e.evidence_id,source:e.source_url,source_ref:e.source_url+'#reviewed-'+content_hash.slice(0,12),scope:'active_ingredient',verified:true,
       retrieved_at:new Date(now).toISOString(),valid_until:new Date(Math.min(now+600000,Date.parse(e.review_valid_until))).toISOString(),content_hash,
       source_tier:sourceTier(e.source_url,e.source_type),active_evidence_supported:true,product_label_verified:false,company_rate_available:false,
+      expires_at:new Date(Math.min(now+600000,Date.parse(e.review_valid_until))).toISOString(),document_hash:content_hash,
+      query_fingerprint:require('./evidence_discovery').fingerprint(ctx),verification_status:'verified_active_only',
       stage_verified:false,safety_reviewed:false};
    }catch(error){failures.push({evidence_id:e.evidence_id,reason:error.message});return null;}
   }))).filter(Boolean);
-  return {evidence,status:evidence.length?'verified_active_only':failures.length?'failed':'no_reviewed_source',failures,trace_id,ms:performance.now()-started};
+  const verified=require('./evidence_discovery').verifyReviewedClaims(evidence,{now});
+  for(const id of verified.conflicts)failures.push({evidence_id:id,reason:'source_conflict'});
+  let discovery={status:'provider_unavailable',leads:[],feature_enabled:false};
+  if(!verified.evidence.length&&this.discovery)discovery=await this.discovery.search(ctx);
+  return {evidence:verified.evidence,status:verified.conflicts.length?'source_conflict':verified.evidence.length?'verified_active_only':failures.length?'failed':discovery.leads.length?'discovered_pending_verification':'no_reviewed_source',discovery,failures,trace_id,ms:performance.now()-started};
  }
 }
 function compatible(e,p) {

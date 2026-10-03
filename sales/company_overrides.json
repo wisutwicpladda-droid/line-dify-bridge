@@ -2,11 +2,15 @@
   "version": "owner-approved-2026-10-03",
   "source": "Owner instructions in this conversation; never inferred from external sources",
   "aliases": {
+    "อนิลการ์ด": "P0081",
     "ไดพิม 90": "P0019",
     "ไดแพ๊กซ์ 80": "P0020",
     "ไดยูแมกซ์ 80": "P0021",
     "ก๊อปกัน (สีเขียว)": "P0001",
     "ก็อปกัน (สีเหลือง)": "P0002"
+  },
+  "alias_provenance": {
+    "อนิลการ์ด": "Owner Final Gap Closure section 5 explicitly identifies อนิลการ์ด/อะนิลการ์ด as the same company product; canonical catalog P0081"
   },
   "image_requests": {
     "เลกาซี 20": { "product_id": "P0013", "reason": "Owner: no standalone Legacy sale; show yellow box set" },

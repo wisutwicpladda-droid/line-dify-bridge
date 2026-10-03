@@ -2,6 +2,7 @@
 const {renderMessages}=require('../line_renderer');
 const {result}=require('./router');
 const {rateAnswer}=require('./rates');
+const {renderPlan,defaultPlan,SUMMARY}=require('./claims');
 const FALLBACK='น้องลัดดายังยืนยันรายละเอียดนี้ไม่ได้ค่ะ ขอข้อมูลพืช ระยะพืช และสิ่งที่ต้องการแก้เพิ่ม เพื่อเลือกคำแนะนำให้ตรงค่ะ';
 const ARRAYS=['product_ids_recommended','warnings_required','question_required','rate_refs','evidence_refs','image_product_ids'];
 const HANDOFF=new Set(['none','hold','request','human_requested','dealer_referral']);
@@ -23,7 +24,7 @@ function parseResponse(raw) {
   const value=String(raw||'').trim().replace(/^\x60\x60\x60(?:json)?\s*/,'').replace(/\s*\x60\x60\x60$/,'');
   return JSON.parse(value);
 }
-function validateResponse(r,{catalog,context={},candidates,prepared={},requiredWarnings=[],requiredQuestions=[],evidence=[]}) {
+function validateResponse(r,{catalog,context={},candidates,prepared={},requiredWarnings=[],requiredQuestions=[],evidence=[],controlledPlan=false}) {
   const failures=[];
   if(!r||typeof r.answer_text!=='string'||!r.answer_text.trim())return ['missing_answer'];
   for(const key of ARRAYS)if(!Array.isArray(r[key])||r[key].some(v=>typeof v!=='string'||!v.trim()))failures.push('invalid_'+key);
@@ -73,15 +74,36 @@ function validateResponse(r,{catalog,context={},candidates,prepared={},requiredW
      !evidence.some(e=>e.verified&&e.product_label_verified&&(!e.valid_until||Date.parse(e.valid_until)>Date.now())))failures.push('unverified_product_label_claim');
   if(/(?:PHI|ระยะ(?:หยุดพ่น|ปลอดภัย|เว้น)[^\n]{0,35}เก็บเกี่ยว)[^\n]{0,60}?\d+(?:\s*[-–]\s*\d+)?\s*วัน/i.test(r.answer_text)&&
      !evidence.some(e=>e.verified&&e.claim_type==='phi'&&e.product_label_verified&&(!e.valid_until||Date.parse(e.valid_until)>Date.now())))failures.push('unverified_phi_claim');
-  if(['regulatory','competitor'].includes(context.intent) && r.intent!=='unavailable' && !r.evidence_refs.length)
+  if(['regulatory','competitor'].includes(context.intent) && !controlledPlan && r.intent!=='unavailable' && !r.evidence_refs.length)
     failures.push('current_fact_requires_verified_evidence');
   return [...new Set(failures)];
 }
 function finalPayload(raw,prepared) {
   if(['HUMAN_ACTIVE','HUMAN_REQUESTED','BOT_ASSIST_ONLY'].includes(prepared.prepared?.human_state))return {response:result('','hold',{handoff_action:'hold'}),failures:['human_owned'],messages:[]};
   const safeText=base=>[base,...(prepared.requiredWarnings||[])].join('\n');
-  let r;try{r=repairTypes(parseResponse(raw));}catch{const text=safeText(FALLBACK);return {response:result(text,prepared.context.intent),failures:['invalid_json'],messages:renderMessages(text)};}
-  const failures=validateResponse(r,prepared);
+  let r;try{r=repairTypes(parseResponse(raw));}catch{const text=safeText(FALLBACK);return {response:result(text,prepared.context.intent),failures:['invalid_json'],messages:renderMessages(text),safe_fallback:true};}
+  let planFailures=[],prose_removed=false,controlledPlan=false;
+  if(prepared.prepared?.claim_control?.enforced&&!prepared.generatedLocally) {
+    let rendered=renderPlan(r.answer_plan,prepared);
+    if(rendered.failures.length){
+      planFailures=[...rendered.failures,...validateResponse(r,prepared)];
+      rendered=renderPlan(defaultPlan(prepared),prepared);
+      if(planFailures.includes('unverified_product_label_claim')||planFailures.includes('unverified_phi_claim'))rendered={...rendered,text:safeText(SUMMARY.regulatory_unknown),claim_refs:[],primary:null,evidence_refs:[]};
+    }
+    if(rendered.failures.length){const text=safeText(FALLBACK);return {response:result(text,prepared.context.intent),messages:renderMessages(text),failures:[...planFailures,...rendered.failures],safe_fallback:true};}
+    prose_removed=!!r.answer_text;controlledPlan=true;
+    r=result(rendered.text,prepared.context.intent,{claim_refs:rendered.claim_refs,
+      primary_product_id:rendered.primary,product_ids_recommended:rendered.primary?[rendered.primary]:[],
+      evidence_refs:rendered.evidence_refs,warnings_required:prepared.requiredWarnings,question_required:prepared.requiredQuestions,
+      uncertainty:prepared.context.diagnosis_uncertain||prepared.context.near_harvest||prepared.context.stage==='ดอก'?'ยังต้องตรวจเงื่อนไขเพิ่มเติม':''});
+  }
+  // Validate bot-authored text only: preserve quoted customer language verbatim.
+  const botText=r.answer_text?.replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»/g,'')||'';
+  if(/ครับ/.test(botText)) {
+    const text=safeText('น้องลัดดาขอตรวจรายละเอียดอีกครั้งค่ะ');
+    return {response:result(text,prepared.context.intent),messages:renderMessages(text),failures:['persona_mismatch'],safe_fallback:true};
+  }
+  const failures=validateResponse(r,{...prepared,controlledPlan});
   if(failures.length) {
     const fallback=failures.includes('unverified_phi_claim')?
       'น้องลัดดายังยืนยันจำนวนวันที่ต้องเว้นก่อนเก็บเกี่ยวของสินค้านี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจฉลากก่อนใช้':failures.includes('unverified_product_label_claim')?
@@ -89,8 +111,8 @@ function finalPayload(raw,prepared) {
       'น้องลัดดายังยืนยันวิธีใช้ที่ปลอดภัยในระยะนี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจข้อจำกัดของสินค้าก่อนแนะนำ':failures.includes('current_fact_requires_verified_evidence')?
       'น้องลัดดายังตรวจยืนยันข้อมูลล่าสุดส่วนนี้ไม่ได้ค่ะ ขอให้ทีมงานตรวจจากแหล่งข้อมูลทางการก่อนสรุป':FALLBACK;
     const text=safeText(fallback);
-    return {response:result(text,prepared.context.intent,{warnings_required:prepared.requiredWarnings||[]}),failures,messages:renderMessages(text)};
+    return {response:result(text,prepared.context.intent,{warnings_required:prepared.requiredWarnings||[]}),failures,messages:renderMessages(text),safe_fallback:true};
   }
-  return {response:r,failures:[],messages:renderMessages(r.answer_text)};
+  return {response:r,failures:planFailures,messages:renderMessages(r.answer_text),safe_fallback:planFailures.length>0,prose_removed};
 }
 module.exports={parseResponse,repairTypes,validateResponse,finalPayload,FALLBACK};

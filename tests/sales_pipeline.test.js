@@ -48,10 +48,11 @@ test('08 suitable candidates sorted by business priority independent of prose',(
 });
 test('09 missing crop can produce evidence-based conditional candidates for nutrition too',()=>{
   const prod=[...catalog.products.values()].find(p=>p.canonical_name==='บอมส์ ไวท์');
-  const e={id:'ev1',verified:true,scope:'active_ingredient',source:'https://example.edu/evidence',retrieved_at:'2026-10-03',claim:'TEST FIXTURE ONLY',active_ingredient:prod.active_ingredient,formulation:prod.physical_form,crop:'พืชทดสอบ',target:'ทดสอบ',confidence:'high'};
+  const evidenceTools=require('../sales/external_evidence');
+  const e={id:'ev1',evidence_id:'ev1',document_hash:'fixture-only',valid_until:new Date(Date.now()+60000).toISOString(),verified:true,scope:'active_ingredient',source:'https://example.edu/evidence',retrieved_at:'2026-10-03',claim:'TEST FIXTURE ONLY',active_ingredient:prod.active_ingredient,formulation:evidenceTools.formulation(prod.active_ingredient),concentration:evidenceTools.concentrations(prod.active_ingredient),physical_form:prod.physical_form,crop:'พืชทดสอบ',target:'ทดสอบ',confidence:'high'};
   assert.ok(selectCandidates(catalog,{crop:'พืชทดสอบ',target:'ทดสอบ'},[e]).conditional.some(p=>p.product_id===prod.product_id));
   assert.equal(selectCandidates(catalog,{crop:'พืชทดสอบ',target:'ทดสอบ'},[e]).primary_product_id,null);
-  const reviewed={...e,stage:'all',stage_verified:true,safety_reviewed:true};
+  const reviewed={...e,stage:'all',stage_verified:true,safety_reviewed:true,technical_owner_approved:true};
   assert.equal(selectCandidates(catalog,{crop:'พืชทดสอบ',target:'ทดสอบ'},[reviewed]).primary_product_id,prod.product_id);
 });
 test('10 evidence formula/target mismatch cannot become candidate',()=>{

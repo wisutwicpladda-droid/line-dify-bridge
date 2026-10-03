@@ -30,7 +30,10 @@ function identities(rows, aliases = {}) {
     }
     return [...result].map(id => byId.get(id));
   }
-  return { byId, resolve, mentions };
+  function ambiguities(value) {
+    const text=normalize(value);
+    return [...byAlias].filter(([alias,ids])=>alias.length>=3&&ids.size>1&&text.includes(alias)).map(([alias,ids])=>({alias,product_ids:[...ids]}));
+  }
+  return { byId, resolve, mentions, ambiguities };
 }
 module.exports = { canonicalName, normalize, isOpenForSale, identities };
-

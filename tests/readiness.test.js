@@ -68,9 +68,10 @@ test('active evidence is not proof that an ICP product is or is not registered',
  }
 });
 
-test('rejected recommendations are not recorded as final recommendation events',async()=>{
- const r=await run('ข้าว 10 วัน มีหญ้าข้าวนก ใช้อะไรดี',{catalog,generate:async()=>result('ใช้ 999 ซีซี ต่อไร่','known_problem',{primary_product_id:'P0034',product_ids_recommended:['P0034']})});
- assert.equal(r.metrics.planned_primary_product_id,'P0034');assert.equal(r.metrics.primary_product_id,null);assert.ok(r.failures.length);
+test('complete known-problem selection avoids model fabrication and records only the rendered selection',async()=>{
+ let calls=0;
+ const r=await run('ข้าว 10 วัน มีหญ้าข้าวนก ใช้อะไรดี',{catalog,generate:async()=>{calls++;return result('ใช้ 999 ซีซี ต่อไร่','known_problem',{primary_product_id:'P0034',product_ids_recommended:['P0034']});}});
+ assert.equal(calls,0);assert.equal(r.metrics.planned_primary_product_id,'P0034');assert.equal(r.metrics.primary_product_id,'P0034');assert.equal(r.failures.length,0);assert.ok(!r.response.answer_text.includes('999'));
 });
 test('near-harvest cannot substitute an unverified biological treatment for a chemical',()=>{
  const w=prepare('อีก 7 วันจะเก็บเกี่ยวทุเรียน ฉีดกำจัดเพลี้ยไฟได้ไหม',{catalog});

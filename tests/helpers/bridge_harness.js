@@ -28,7 +28,7 @@ function harness({answer,register='off',knowledgeVersion,appName='น้อง�
   const kb={...localRequire('./kb_sync'),fetchSheets:async()=>fixture,start(){throw Error('Legacy KB sync must not run');}};
   const sandbox={Buffer,URL,console:{log:(...v)=>logs.push(v)},process:{env:{
     AI_SALES_PIPELINE:'on',AI_SALES_ENVIRONMENT:'staging',AI_SALES_DIFY_APP_ID:'ed28c981-1c94-4547-9003-aefa5e98aaf4',
-    OWNERSHIP_V2:'on',REGISTER:register,PRODUCT_IMAGES:'on',PUBLIC_URL:'https://staging.invalid',
+    OWNERSHIP_V2:'on',REGISTER:register,PRODUCT_IMAGES:'on',PUBLIC_URL:'https://staging.invalid',ADMIN_KEY:'test-fixture-only',
     AI_SALES_KB_VERSION:knowledgeVersion,
     LINE_CHANNEL_SECRET:'test-fixture-only',LINE_CHANNEL_ACCESS_TOKEN:'test-fixture-only',DIFY_API_KEY:'test-fixture-only'
   },on(){}},setTimeout:()=>({unref(){}}),setInterval:()=>({unref(){}}),clearTimeout(){},clearInterval(){},
