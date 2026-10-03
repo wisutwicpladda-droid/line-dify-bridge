@@ -21,7 +21,7 @@ test('02 beetle ambiguity requests external analysis, no automatic insecticide c
   assert.equal(w.context.needs_web,true);assert.equal(w.candidates.primary_product_id,null);
 });
 test('03 insufficient symptoms permit multiple discriminating questions',()=>{
-  const q=['น้ำขังหรือไม่คะ','เริ่มเป็นส่วนไหนคะ'];const out=checked(result('ยังต้องแยกสาเหตุค่ะ '+q.join(' '),'symptom',{question_required:q}),{diagnosis_uncertain:true},{requiredQuestions:q});
+  const q=['น้ำขังหรือไม่คะ','เริ่มเป็นส่วนไหนคะ'];const out=checked(result('ยังต้องแยกสาเหตุค่ะ '+q.join(' '),'symptom',{question_required:q,uncertainty:'ยังต้องแยกสาเหตุ'}),{diagnosis_uncertain:true},{requiredQuestions:q});
   assert.equal(out.failures.length,0);assert.ok(out.messages[0].text.includes(q[1]));
 });
 test('04 known pest does not fabricate symptoms or restart diagnosis',()=>{

@@ -1,0 +1,25 @@
+{
+  "app_id": "ed28c981-1c94-4547-9003-aefa5e98aaf4",
+  "query": "ขอเบอร์พนักงานขายเชียงใหม่",
+  "actual_schema": {
+    "answer_text": "string",
+    "intent": "string",
+    "uncertainty": "string",
+    "product_ids_recommended": "array",
+    "primary_product_id": "null",
+    "warnings_required": "array",
+    "question_required": "array",
+    "rate_refs": "array",
+    "evidence_refs": "array",
+    "handoff_action": "string",
+    "image_product_ids": "array"
+  },
+  "phone_count": 2,
+  "all_phones_in_injected_source": true,
+  "phone_values_redacted": true,
+  "workflow_seconds": 2.865,
+  "team_http_ms": 338.533,
+  "main_ms": 1506,
+  "total_tokens": 2080,
+  "pass": true
+}

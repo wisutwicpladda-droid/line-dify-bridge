@@ -1,11 +1,11 @@
 {
-  "measured_at": "2026-10-03T11:52:27.989Z",
+  "measured_at": "2026-10-03T12:51:12.968Z",
   "scope": "Real Bridge handlers, in-process; mocked LINE network; zero live customers. NOT real network p95.",
   "routes": {
     "greeting": {
       "samples": 60,
-      "mean_ms": 1.4018149999999991,
-      "p95_ms": 2.072800000000001,
+      "mean_ms": 1.9720599999999968,
+      "p95_ms": 3.410199999999989,
       "input_tokens": 0,
       "final_LINE_payload": [
         {
@@ -16,8 +16,8 @@
     },
     "lookup": {
       "samples": 60,
-      "mean_ms": 1.0887333333333307,
-      "p95_ms": 1.4934000000000083,
+      "mean_ms": 1.7709100000000035,
+      "p95_ms": 2.6792000000000087,
       "input_tokens": 0,
       "final_LINE_payload": [
         {
@@ -28,8 +28,8 @@
     },
     "package": {
       "samples": 60,
-      "mean_ms": 1.029036666666672,
-      "p95_ms": 1.450999999999965,
+      "mean_ms": 1.7974083333333293,
+      "p95_ms": 2.6195999999999913,
       "input_tokens": 0,
       "final_LINE_payload": [
         {

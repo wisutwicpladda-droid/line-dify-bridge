@@ -1,5 +1,6 @@
 'use strict';
 const {normalize,useful}=require('./catalog');
+const {compatible}=require('./external_evidence');
 const same=(a,b)=>!!a&&!!b&&normalize(a)===normalize(b);
 function cropMatch(u,crop) {
   if(!crop)return false;
@@ -14,9 +15,10 @@ function stageMatch(stage,ctx) {
     if(months)return ctx.age_months==null?'unknown':ctx.age_months>=+months[1]&&ctx.age_months<=+months[2]?'match':'mismatch';
     const month=stage.match(/^(\d+)\s*เดือน/);
     if(month)return ctx.age_months==null?'unknown':ctx.age_months===+month[1]?'match':'mismatch';
-    // First crop-age interval only; later "hold water 10 days" is not crop age.
-    const range=stage.match(/^(\d+)\s*[-–]\s*(\d+)\s*(?:วัน|หลังหว่าน)/);
-    if(range)return ctx.age_days>=+range[1]&&ctx.age_days<=+range[2]?'match':'mismatch';
+    // Include every explicit crop-age interval, excluding standalone water-holding durations.
+    const ranges=[...stage.matchAll(/(\d+)\s*[-–]\s*(\d+)\s*(?:วัน\s*(?:หลังหว่าน(?:ข้าว)?)?|หลังหว่าน(?:ข้าว)?)/g)]
+      .filter(r=>!/(?:กักน้ำ|รักษาระดับน้ำ)[^\d]*$/.test(stage.slice(0,r.index)));
+    if(ranges.length)return ranges.some(range=>ctx.age_days>=+range[1]&&ctx.age_days<=+range[2])?'match':'mismatch';
     return ctx.stage&&stage.includes(ctx.stage)?'match':'unknown';
   }
   return ctx.stage&&stage.includes(ctx.stage)?'match':'missing';
@@ -24,7 +26,8 @@ function stageMatch(stage,ctx) {
 function evidenceMatch(e,p,ctx) {
   // Evidence is an approved adapter result, never a model's invented source URL.
   return e.verified===true && e.scope==='active_ingredient' && !!e.source && !!e.retrieved_at && !!e.claim &&
-    same(e.active_ingredient,p.active_ingredient) && same(e.formulation,p.physical_form) &&
+    (e.evidence_id?compatible(e,p):same(e.active_ingredient,p.active_ingredient) && same(e.formulation,p.physical_form)) &&
+    (!e.valid_until || Date.parse(e.valid_until)>Date.now()) &&
     same(e.crop,ctx.crop) && same(e.target,ctx.target) && e.confidence==='high';
 }
 function selectCandidates(catalog,ctx,evidence=[]) {
@@ -43,16 +46,20 @@ function selectCandidates(catalog,ctx,evidence=[]) {
     if(p.issues.includes('missing_formula')||p.rank===99){excluded.push({product_id:p.product_id,reason:'incomplete_product_truth'});continue;}
     const item={product_id:p.product_id,rank:p.rank,usage_refs:stageRows.filter(s=>s.state!=='mismatch').map(s=>s.u.ref),
       warnings:useful(p.additional_precautions)?[p.additional_precautions]:[],evidence_refs:ext.map(e=>e.id),
-      reason:direct.length?'company_usage_match':'external_active_evidence',conditional:!direct.length};
+      reason:direct.length?'company_usage_match':'external_active_evidence',conditional:!direct.length,
+      active_evidence_supported:ext.length>0,product_label_verified:false,company_rate_available:direct.some(u=>u.rate_verified)};
+    if(ctx.near_harvest || ctx.stage==='ดอก') {
+      pending.push({...item,reason:ctx.near_harvest?'phi_verification_required':'pollinator_review_required'});continue;
+    }
     if(!direct.length){
       conditional.push(item);
       // Ingredient evidence alone is not enough: its stage/safety scope must also be reviewed.
-      if(ext.some(e=>e.stage_verified===true && e.safety_reviewed===true &&
+      if(ext.some(e=>(!e.evidence_id||e.technical_owner_approved===true)&&e.stage_verified===true && e.safety_reviewed===true &&
         (e.stage==='all' || (ctx.stage && same(e.stage,ctx.stage))))) eligible.push(item);
-      else pending.push(item);
+      else pending.push({...item,reason:'external_stage_safety_review_required'});
       continue;
     }
-    if(!stageRows.some(s=>s.state==='match')){pending.push(item);continue;}
+    if(!stageRows.some(s=>s.state==='match')){pending.push({...item,reason:'stage_unconfirmed'});continue;}
     eligible.push(item);
   }
   const rank=(a,b)=>a.rank-b.rank||a.product_id.localeCompare(b.product_id);
@@ -60,7 +67,9 @@ function selectCandidates(catalog,ctx,evidence=[]) {
   // An unresolved higher-priority candidate must not be silently skipped.
   const needsStage=pending.some(p=>!eligible[0]||p.rank<=eligible[0].rank);
   const primary=ctx.diagnosis_uncertain||needsStage?null:eligible[0]?.product_id||null;
-  return {eligible,pending,conditional,excluded,primary_product_id:primary,missing_fields:needsStage?['crop_stage']:[],
+  const blockers=needsStage?pending.filter(p=>!eligible[0]||p.rank<=eligible[0].rank):[];
+  const missing=[...new Set(blockers.map(p=>p.reason==='stage_unconfirmed'?'crop_stage':p.reason==='phi_verification_required'?'verified_phi':p.reason==='pollinator_review_required'?'pollinator_review':'external_stage_safety_review'))];
+  return {eligible,pending,conditional,excluded,primary_product_id:primary,missing_fields:missing,
     reason:ctx.diagnosis_uncertain?'diagnosis_unresolved':needsStage?'confirm_stage_before_final_choice':'suitability_then_strategy'};
 }
 module.exports={selectCandidates,cropMatch,stageMatch,evidenceMatch};

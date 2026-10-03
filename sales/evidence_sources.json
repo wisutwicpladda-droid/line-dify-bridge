@@ -1,0 +1,70 @@
+[
+  {
+    "evidence_id": "doa-corn-whitehopper-pymetrozine-20261003",
+    "source_type": "thai_government",
+    "source_name": "กรมวิชาการเกษตร ศูนย์วิจัยพืชไร่นครสวรรค์",
+    "source_url": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+    "reviewed_sha256": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+    "review_valid_until": "2026-11-03T00:00:00Z",
+    "claim_type": "active_crop_target",
+    "active_ingredient": "PYMETROZINE 50% WG",
+    "formulation": "WG",
+    "concentration": [
+      "50%"
+    ],
+    "crop": "ข้าวโพด",
+    "target": "เพลี้ยกระโดดท้องขาว",
+    "stage": "unspecified",
+    "claim": "เอกสารแนะนำไพมีโทซีน 50% WG เป็นหนึ่งในสารสำหรับเพลี้ยกระโดดท้องขาวในข้าวโพดเมื่อระบาดรุนแรง ยังไม่ใช่หลักฐานทะเบียนหรืออัตราของสินค้า ICP",
+    "jurisdiction": "TH",
+    "confidence": "high",
+    "technical_owner_approved": false,
+    "section_start": "การป้องกันกำจัด หมั่นสำรวจ",
+    "section_end": "Post navigation"
+  },
+  {
+    "evidence_id": "doa-corn-whitehopper-thiamethoxam-wp-20261003",
+    "source_type": "thai_government",
+    "source_name": "กรมวิชาการเกษตร ศูนย์วิจัยพืชไร่นครสวรรค์",
+    "source_url": "https://www.doa.go.th/fc/nakhonsawan/?p=3947",
+    "reviewed_sha256": "1381be52f68e9db957750c3a433822b2bdf352d5728cf81f3b05507c0e17575d",
+    "review_valid_until": "2026-11-03T00:00:00Z",
+    "claim_type": "active_crop_target",
+    "active_ingredient": "THIAMETHOXAM 25% WP",
+    "formulation": "WP",
+    "concentration": [
+      "25%"
+    ],
+    "crop": "ข้าวโพด",
+    "target": "เพลี้ยกระโดดท้องขาว",
+    "stage": "unspecified",
+    "claim": "เอกสารใช้คำว่าไทอะมีโทแซม 25% WP ต้องไม่เทียบเป็น WG โดยอัตโนมัติ",
+    "jurisdiction": "TH",
+    "confidence": "high",
+    "technical_owner_approved": false,
+    "section_start": "การป้องกันกำจัด หมั่นสำรวจ",
+    "section_end": "Post navigation"
+  },
+  {
+    "evidence_id": "doa-durian-batocera-20261003",
+    "source_type": "thai_government",
+    "source_name": "กรมวิชาการเกษตร เอกสารวิชาการแมลง-ไรศัตรูทุเรียน หน้า 39",
+    "source_url": "https://www.doa.go.th/oard6/wp-content/uploads/2025/01/เอกสารวิชาการ-แมลง-ไร-ศัตรูทุเรียน.pdf",
+    "reviewed_sha256": "efc265dd3ac1c0918e13286895d91acf162f66f86a90866a8f8777c6eb52a83f",
+    "review_valid_until": "2026-11-03T00:00:00Z",
+    "claim_type": "historical_active_crop_target",
+    "active_ingredient": "THIAMETHOXAM 14.1% + LAMBDA-CYHALOTHRIN 10.6% ZC",
+    "formulation": "ZC",
+    "concentration": [
+      "14.1%",
+      "10.6%"
+    ],
+    "crop": "ทุเรียน",
+    "target": "ด้วงหนวดยาวเจาะลำต้น",
+    "stage": "unspecified",
+    "claim": "มีหลักฐานเฉพาะการป้องกันด้วงหนวดยาวเจาะลำต้นในบริเวณต้นและกิ่งใหญ่เมื่อระบาดรุนแรง ไม่ครอบคลุมแมลงปีกแข็งทุกชนิดหรือการพ่นดอก เอกสารมีคำแนะนำเก่าจึงไม่ใช้ยืนยันทะเบียนปัจจุบัน",
+    "jurisdiction": "TH",
+    "confidence": "high",
+    "technical_owner_approved": false
+  }
+]

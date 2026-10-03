@@ -1,11 +1,9 @@
 'use strict';
 const {normalize,companyFacts}=require('./catalog');
+const evidenceSources=require('./evidence_sources.json');
 const EMPTY={product_ids_recommended:[],primary_product_id:null,warnings_required:[],question_required:[],rate_refs:[],evidence_refs:[],image_product_ids:[],uncertainty:'',handoff_action:'none'};
 const result=(answer_text,intent,extra={})=>({...EMPTY,answer_text,intent,...extra});
-function isExposure(text) {
-  return /(?:สาร|ยา|น้ำยา|ยาฆ่าแมลง|ยาฆ่าหญ้า).{0,20}(?:เข้าตา|เข้าปาก|โดนผิว|โดนตัว|หกรด|สูด|กลืน|กินเข้า)|(?:กิน|กลืน|สูดดม|เผลอกิน).{0,15}(?:สาร|ยาฆ่า|น้ำยา)|(?:ฉีดยา|พ่นยา).{0,25}(?:เวียนหัว|หายใจไม่ออก|แน่นหน้าอก)|(?:สาร|ยา)เข้าตา/.test(text);
-}
-const SAFETY='หยุดสัมผัสสารและขอความช่วยเหลือทันทีค่ะ หากหายใจลำบาก ชัก หรือหมดสติ โทร 1669 และติดต่อศูนย์พิษวิทยา 1367 พร้อมชื่อสารหรือฉลาก ห้ามทำให้อาเจียนเอง';
+const {isExposure,SAFETY,exposureAnswer}=require('./safety');
 function extract(text,catalog,previous={}) {
   if(previous.updated_at && Date.now()-previous.updated_at>1800000)previous={};
   const t=String(text||'').trim(), hits=catalog?catalog.index.mentions(t):[];
@@ -18,13 +16,17 @@ function extract(text,catalog,previous={}) {
     previous={};
   }
   ctx.crop=explicitCrop||previous.crop||null;
-  const age=t.match(/(?:อายุ|ข้าว|อ้อย|ปลูก|หว่าน)?\s*(\d+)\s*(วัน|เดือน)/);
+  const harvest=t.match(/(?:อีก\s*)?(\d+)\s*วัน.{0,8}เก็บเกี่ยว/);
+  const age=t.replace(/(?:อีก\s*)?\d+\s*วัน.{0,8}เก็บเกี่ยว/g,'').match(/(?:อายุ|ข้าว|อ้อย|ปลูก|หว่าน)\s*(\d+)\s*(วัน|เดือน)/)
+    || (/^\d+\s*(?:วัน|เดือน)(?:ค่ะ|ครับ|คะ)?$/.test(t)?t.match(/(\d+)\s*(วัน|เดือน)/):null);
+  ctx.near_harvest=/ใกล้เก็บเกี่ยว|ก่อนเก็บเกี่ยว/.test(t)||!!harvest;
+  if(harvest)ctx.days_to_harvest=+harvest[1];
   if(age){ctx.age_days=Number(age[1])*(age[2]==='เดือน'?30:1);ctx.age_months=age[2]==='เดือน'?+age[1]:null;ctx.age_unit=age[2];}
   if(/ก่อนปลูก|เตรียมดิน/.test(t))ctx.stage='ก่อนปลูก';
   if(/ช่วงดอก|ดอกบาน|ออกดอก/.test(t))ctx.stage='ดอก';
   if(catalog){
     const targets=[...new Set([...catalog.products.values()].flatMap(p=>p.usage.flatMap(u=>u.target_name.split(/[,\n:：]/).map(x=>x.trim()).filter(x=>x.length>=4))))].sort((a,b)=>b.length-a.length);
-    ctx.target=targets.find(x=>t.includes(x))||previous.target||null;
+    ctx.target=[...targets,...evidenceSources.map(e=>e.target)].sort((a,b)=>b.length-a.length).find(x=>t.includes(x))||previous.target||null;
   }
   const rate=/อัตรา|กี่(?:กระสอบ|ขวด|ซีซี|กรัม|ถัง)|ผสมเท่า|ใช้น้ำ|น้ำ\s*\d+\s*ลิตร/.test(t);
   let intent='general_agriculture';
@@ -39,16 +41,20 @@ function extract(text,catalog,previous={}) {
   else if(/เริ่มปลูก.*เก็บเกี่ยว|ทั้งฤดู|ทุกช่วง/.test(t))intent='season_program';
   else if(rate)intent='rate';
   else if(hits.length)intent=/ขนาด|บรรจุ|กระสอบละ|ขวดละ/.test(t)?'package':'product';
-  else if(/ใบเหลือง|เหี่ยว|โคนเน่า|รากเน่า|ยอดหงิก|ปลายใบไหม้|ไม่ออกผล|ไม่ติดผล/.test(t) && !/ยืนยันแล้ว|ตรวจพบเชื้อ/.test(t))intent='symptom';
+  else if(/ใบเหลือง|เหี่ยว|โคนเน่า|รากเน่า|รากดำ|มีกลิ่น|ยอดหงิก|ปลายใบไหม้|ไม่ออกผล|ไม่ติดผล/.test(t) && !/ยืนยันแล้ว|ตรวจพบเชื้อ/.test(t))intent='symptom';
   else if(ctx.target)intent='known_problem';
   else if(/เหลือง|เหี่ยว|เน่า|จุด|หงิก|ไหม้|แห้ง|ไม่ออกผล|ไม่ติดผล/.test(t))intent='symptom';
   ctx.intent=intent;ctx.rate_requested=intent==='rate';ctx.diagnosis_uncertain=intent==='symptom';
+  if(!['exposure','rate','package','regulatory'].includes(intent)&&/หรือ.{0,25}(?:โรค|ขาดธาตุ|เชื้อรา)|ไม่แน่ใจ.*(?:โรค|เชื้อ)|หลัง(?:ฉีด|พ่น).*(?:ไหม้|เหลือง)|น้ำขัง.*(?:เหี่ยว|เหลือง|เน่า)/.test(t)) {
+    ctx.intent='symptom';ctx.diagnosis_uncertain=true;
+  }
   ctx.needs_web=['regulatory','competitor'].includes(intent)||/IRAC|FRAC|HRAC|ผ่าดอก|ผสมเกสร|แมลงปีกแข็ง/i.test(t);
+  if(ctx.near_harvest)ctx.needs_web=true;
   ctx.updated_at=Date.now();return ctx;
 }
 function fastAnswer(ctx,catalog) {
   const t=ctx.query||'';
-  if(ctx.intent==='exposure')return result(SAFETY,'exposure',{warnings_required:[SAFETY]});
+  if(ctx.intent==='exposure'){const answer=exposureAnswer(t);return result(answer,'exposure',{warnings_required:[answer]});}
   if(ctx.intent==='greeting')return result('สวัสดีค่ะ น้องลัดดาช่วยเรื่องพืชและสินค้าเกษตรได้ วันนี้อยากปรึกษาเรื่องไหนคะ','greeting');
   if(ctx.intent==='acknowledgement')return result('ยินดีค่ะ มีเรื่องไหนอยากคุยต่อ บอกน้องลัดดาได้เลย','acknowledgement');
   if(ctx.intent==='admin')return result('รับเรื่องให้ทีมงานแล้วค่ะ น้องลัดดาจะพักการตอบระหว่างแอดมินดูแล','admin',{handoff_action:'request'});
@@ -67,4 +73,4 @@ function boundedContext(history,summary='') {
     .slice(-6).map(h=>({role:h.role||h.r,text:String(h.text||h.t||'').slice(0,800)}));
   return {admin_summary:String(summary).slice(0,1500),recent};
 }
-module.exports={extract,fastAnswer,result,isExposure,SAFETY,boundedContext};
+module.exports={extract,fastAnswer,result,isExposure,SAFETY,exposureAnswer,boundedContext};

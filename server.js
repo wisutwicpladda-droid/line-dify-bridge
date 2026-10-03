@@ -122,7 +122,9 @@ let salesEvents = new EventLedger();
 const SALES_V2 = process.env.AI_SALES_PIPELINE === 'on';
 const salesCatalog = new CatalogStore();
 const {StagingKnowledgeSync} = require('./sales/knowledge_sync');
-const {learningEvent} = require('./sales/foundation');
+const {learningEvent,evaluationExport} = require('./sales/foundation');
+const {EvidenceProvider} = require('./sales/external_evidence');
+const salesEvidence = new EvidenceProvider({enabled:SALES_V2 && process.env.AI_SALES_EXTERNAL_EVIDENCE==='on'});
 const salesTraceLog=[],salesLearningEvents=[];
 let stagingAppIdentityVerified=false;
 const salesKnowledge = new StagingKnowledgeSync({enabled:SALES_V2 && process.env.AI_SALES_KB_SYNC==='on' && !!process.env.DIFY_DATASET_KEY,
@@ -528,6 +530,7 @@ async function askDify(sessionId, text, files) {
       ownership:ownership.ensure(session),preference:session.communication_preference,
       strictKnowledgeVersion:true,knowledgeRelease:salesKnowledge.state,
       difyVersion:process.env.AI_SALES_DIFY_VERSION||'staging-draft',
+      releaseId:process.env.AI_SALES_RELEASE_ID||'unversioned-staging',evidenceProvider:salesEvidence,
       generate:async input=>{
         if(!stagingAppIdentityVerified) {
           const info=await request('GET',DIFY_BASE+'/info',{Authorization:'Bearer '+DIFY_KEY});
@@ -543,8 +546,8 @@ async function askDify(sessionId, text, files) {
         return {answer:r.data.answer,usage:r.data.metadata?.usage||null};
       },observe:metric=>{
         salesTraceLog.push(metric);if(salesTraceLog.length>200)salesTraceLog.shift();
-        for(const type of ['customer_input','bot_output','latency','recommendation'])
-          salesLearningEvents.push(learningEvent(type,{trace_id:metric.trace_id,product_ids:metric.primary_product_id?[metric.primary_product_id]:[]}));
+        for(const type of ['customer_message','bot_response','latency',...(metric.primary_product_id?['recommendation_event']:[]),...(metric.failures.length?['failure']:[])])
+          salesLearningEvents.push(learningEvent(type,{trace_id:metric.trace_id,product_ids:metric.primary_product_id?[metric.primary_product_id]:[],version_refs:{release_id:metric.release_id,catalog:metric.catalog_version,kb:metric.kb_version}}));
         if(salesLearningEvents.length>1000)salesLearningEvents.splice(0,salesLearningEvents.length-1000);
         console.log('[sales-trace]',JSON.stringify(metric));
       }});
@@ -2320,7 +2323,7 @@ async function handleEvent(ev) {
 
   // Critical safety takes precedence over registration and optional providers.
   if (SALES_V2 && salesRouter.isExposure(text)) {
-    await sendAnswer(s, ev, pushTarget, salesRouter.SAFETY, {system:true});
+    await sendAnswer(s, ev, pushTarget, salesRouter.exposureAnswer(text), {system:true});
     return;
   }
 
@@ -3389,6 +3392,8 @@ function handleAdmin(req, res, path, body) {
   if (!authed) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
 
   if(path==='/admin/api/sales/health' && req.method==='GET')return sendJson(res,200,{
+    release_id:process.env.AI_SALES_RELEASE_ID||'unversioned-staging',
+    external_evidence:salesEvidence.enabled?'reviewed-source-index':'disabled',
     enabled:SALES_V2,environment:process.env.AI_SALES_ENVIRONMENT||'legacy',
     catalog_version:salesCatalog.current?.version||null,catalog_fresh:!!salesCatalog.get(),
     catalog_loaded_at:salesCatalog.current?.loaded_at||null,catalog_issues:salesCatalog.current?.issues||[],
@@ -3396,6 +3401,11 @@ function handleAdmin(req, res, path, body) {
     jev:'disabled',knowledge:salesKnowledge.state
   });
   if(path==='/admin/api/sales/traces' && req.method==='GET')return sendJson(res,200,{traces:salesTraceLog,events:salesLearningEvents});
+  if(path==='/admin/api/sales/evaluation-export' && req.method==='GET') {
+    const params=new URL(req.url,'http://x').searchParams;
+    try{return sendJson(res,200,evaluationExport(salesLearningEvents,{from:params.get('from'),to:params.get('to')}));}
+    catch(e){return sendJson(res,400,{error:e.message});}
+  }
   if(path==='/admin/api/sales/copilot' && req.method==='GET') {
     const id=new URL(req.url,'http://x').searchParams.get('id'),s=sessions.get(id);
     if(!s)return sendJson(res,404,{error:'chat not found'});
