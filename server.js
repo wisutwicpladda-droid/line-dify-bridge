@@ -108,6 +108,7 @@ const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไ�
 const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
+const { MORE_IMAGES_TEXT, productImageButtonPage } = require('./product_image_buttons');
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -740,9 +741,10 @@ function productImageMsg(answer) {
 }
 
 // v3.14: ส่งรูปสินค้าไม่ให้รก (ผู้ใช้กำหนด 30 ก.ย.)
-// - คำตอบที่แนะนำสินค้า (มีบรรทัด "ใช้กับ:") ส่งรูปอัตโนมัติ 1 รูป = ตัวแรกที่แนะนำ ตัวอื่นเป็นปุ่ม quick reply "📷 ชื่อ"
+// - คำตอบที่แนะนำสินค้า (มีบรรทัด "ใช้กับ:") ส่งรูปอัตโนมัติ 1 รูป = ตัวแรกที่แนะนำ
 // - พูดชื่อสินค้าผ่าน ๆ ไม่ส่งรูป มีแต่ปุ่ม · รูปสินค้าเดิมไม่ส่งซ้ำในแชทเดียวกันภายใน PRODUCT_IMG_DEDUP_H ชม.
 // - ลูกค้าขอรูปเอง ส่งทันที (สูงสุด PRODUCT_IMG_MAX รูป) · กดปุ่ม "ขอรูป ชื่อ" bridge ส่งรูปเองไม่เรียก Dify
+// - ทุกสินค้าที่พบในคำตอบมีปุ่มดูรูปเสมอ รวมรูปที่เคยส่ง/ส่งในรอบนี้; มากกว่า 13 ปุ่มแบ่งหน้า
 const PIMG_DEDUP_MS = (parseFloat(process.env.PRODUCT_IMG_DEDUP_H || '24') || 24) * 3600000;
 const PIMG_ASK_RX = /(ขอ|ส่ง|มี|ดู|อยากเห็น|โชว์|เห็น).{0,8}(รูป|ภาพ)|(รูป|ภาพ)\s*(สินค้า|ขวด|ยา|หน่อย|ของ|ไหม)|หน้าตา(เป็น)?\s*(ยัง|อย่าง)ไง|แพ็คเกจ|ฉลาก/;
 function pimgBuild(names) {
@@ -771,7 +773,7 @@ function pimgPlan(s, userText, answer) {
   else if (named.length) send = [named[0]];
   else if (/(^|\n)\s*(\d+[.)]\s*)?ใช้กับ\s*[:：]/.test(answer) && !s.pimgSent[PIMG[names[0]]]) send = [names[0]];
   send.forEach((n) => { s.pimgSent[PIMG[n]] = now; });
-  const buttons = names.filter((n) => !send.includes(n) && !s.pimgSent[PIMG[n]]).slice(0, 4);
+  const buttons = names; // Image deduplication must not hide an on-demand image button.
   if (send.length) console.log(`[pimg] ${asked ? 'asked' : 'auto'} ${send.join(', ')} · buttons ${buttons.length}`);
   return { images: pimgBuild(send), buttons };
 }
@@ -810,23 +812,39 @@ async function sendAllProductImages(s, ev, pushTarget, names) {
   }
   return true;
 }
-function pimgAttachButtons(msgs, names) {
-  if (!names || !names.length || !msgs.length) return;
-  const items = names.map((n) => ({ type: 'action', action: { type: 'message', label: ('📷 ' + n).slice(0, 20), text: 'ขอรูป ' + n } }));
+function pimgAttachButtons(s, msgs, names, page = 0) {
+  const valid = [...new Set((names || []).filter((n) => PIMG[n]))];
+  if (!valid.length || !msgs.length) { delete s.pimgMenu; return; }
+  const menu = productImageButtonPage(valid, page);
+  s.pimgMenu = { names: valid, page: menu.page };
+  const items = menu.items;
   const i = msgs.length - 1;
   if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i].slice(0, 4900), quickReply: { items } };
   else if (msgs[i] && typeof msgs[i] === 'object') msgs[i].quickReply = { items };
 }
 // ข้อความจากปุ่ม "ขอรูป ชื่อสินค้า" (ชื่อตรงกับรายการรูป) -> ตอบเป็นรูปทันที
 function pimgTap(s, userText) {
-  const m = String(userText || '').trim().match(/^ขอรูป\s*(.+)$/);
-  if (!m || !PIMG_ON || !PUBLIC_URL) return null;
+  if (!PIMG_ON || !PUBLIC_URL) return null;
+  const text = String(userText || '').trim();
+  if (text === MORE_IMAGES_TEXT && s.pimgMenu) {
+    const names = s.pimgMenu.names.filter((n) => PIMG[n]);
+    if (!names.length) { delete s.pimgMenu; return null; }
+    const menu = productImageButtonPage(names, s.pimgMenu.page + 1);
+    const msgs = [`เลือกสินค้าที่ต้องการดูรูปค่ะ (หน้า ${menu.page + 1}/${menu.pages})`];
+    pimgAttachButtons(s, msgs, names, menu.page);
+    return msgs;
+  }
+  const m = text.match(/^ขอรูป\s*(.+)$/);
+  if (!m) return null;
   const n = m[1].trim();
   if (!PIMG[n]) return null;
   s.pimgSent = s.pimgSent || {};
   s.pimgSent[PIMG[n]] = Date.now();
   console.log('[pimg] tap ' + n);
-  return pimgBuild([n]);
+  const msgs = pimgBuild([n]);
+  const menu = s.pimgMenu;
+  pimgAttachButtons(s, msgs, menu && menu.names.includes(n) ? menu.names : [n], menu && menu.names.includes(n) ? menu.page : 0);
+  return msgs;
 }
 
 
@@ -2398,7 +2416,7 @@ async function handleEvent(ev) {
       markDirty();
     }
   }
-  pimgAttachButtons(msgs, pplan.buttons);
+  pimgAttachButtons(s, msgs, pplan.buttons);
   await sendAnswer(s, ev, pushTarget, msgs);
 }
 
@@ -3546,7 +3564,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.28', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.28.1', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
