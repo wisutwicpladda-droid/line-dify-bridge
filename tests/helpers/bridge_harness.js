@@ -5,20 +5,20 @@ const {createRequire}=require('node:module'),crypto=require('node:crypto');
 const root=path.resolve(__dirname,'../..'),localRequire=createRequire(path.join(root,'server.js'));
 const fixture=require('../fixtures/company-snapshot.json');
 // Execute the real handlers with all external transport and background jobs replaced.
-function harness({answer,register='off',knowledgeVersion,appName='น้องลัดดา AI Sales STAGING 20261003',onGenerate}={}) {
+function harness({answer,register='off',knowledgeVersion,appName='น้องลัดดา AI Sales STAGING 20261003',onGenerate,recovery=false}={}) {
   const sent=[],calls=[],logs=[];let httpHandler;
   const network={request(options,callback){
     const req=new EventEmitter();let bytes='';
     req.write=b=>bytes+=b;req.setTimeout=()=>req;req.destroy=e=>req.emit('error',e);
     req.end=()=>queueMicrotask(async()=>{
-      const host=options.hostname||options.host;calls.push({host,path:options.path});
+      const host=options.hostname||options.host;calls.push({host,path:options.path,body:bytes});
       let data={};const payload=bytes?JSON.parse(bytes):{};
       if(host==='api.line.me' && /message\/(reply|push)/.test(options.path))sent.push(payload.messages);
       else if(host==='api.line.me' && /profile/.test(options.path))data={displayName:'staging-test'};
       else if(host==='api.dify.ai' && options.path==='/v1/info')data={name:appName};
       else if(host==='api.dify.ai' && /chat-messages/.test(options.path)){
-        if(onGenerate)await onGenerate();
-        data={answer:JSON.stringify(answer||localRequire('./sales/router').result('ยังต้องแยกสาเหตุค่ะ น้ำขังหรือเริ่มเป็นตรงไหนคะ','symptom'))};
+        const generated=onGenerate?await onGenerate(payload):null;
+        data=generated||{answer:JSON.stringify(answer||localRequire('./sales/router').result('ยังต้องแยกสาเหตุค่ะ น้ำขังหรือเริ่มเป็นตรงไหนคะ','symptom'))};
       }
       else throw Error('Network not permitted in test: '+host+options.path);
       const res=new EventEmitter();res.statusCode=200;res.headers={};callback(res);
@@ -30,6 +30,7 @@ function harness({answer,register='off',knowledgeVersion,appName='น้อง�
     AI_SALES_PIPELINE:'on',AI_SALES_ENVIRONMENT:'staging',AI_SALES_DIFY_APP_ID:'ed28c981-1c94-4547-9003-aefa5e98aaf4',
     OWNERSHIP_V2:'on',REGISTER:register,PRODUCT_IMAGES:'on',PUBLIC_URL:'https://staging.invalid',ADMIN_KEY:'test-fixture-only',
     AI_SALES_KB_VERSION:knowledgeVersion,
+    AI_SALES_RECOVERY:recovery?'on':'off',
     LINE_CHANNEL_SECRET:'test-fixture-only',LINE_CHANNEL_ACCESS_TOKEN:'test-fixture-only',DIFY_API_KEY:'test-fixture-only'
   },on(){}},setTimeout:()=>({unref(){}}),setInterval:()=>({unref(){}}),clearTimeout(){},clearInterval(){},
     __dirname:root,module:{exports:{}},exports:{},queueMicrotask,
@@ -38,7 +39,7 @@ function harness({answer,register='off',knowledgeVersion,appName='น้อง�
   };
   let code=fs.readFileSync(path.join(root,'server.js'),'utf8');
   code=code.slice(0,code.lastIndexOf('\ninitPersist();'));
-  code+='\nmodule.exports={handleEvent,refreshProductMaster,sessions,salesCatalog,handleAdmin};';
+  code+='\nmodule.exports={handleEvent,refreshProductMaster,sessions,salesCatalog,handleAdmin,stateJson,initPersist};';
   vm.runInNewContext(code,sandbox,{filename:'server.js'});
   const api=sandbox.module.exports;
   const event=(text,id='event-'+crypto.randomUUID())=>({type:'message',webhookEventId:id,replyToken:'test-reply',source:{type:'user',userId:'staging-only-user'},message:{type:'text',id, text}});

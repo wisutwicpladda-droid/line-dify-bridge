@@ -121,20 +121,24 @@ const salesImages = require('./sales/images');
 const {EventLedger} = require('./sales/event_ledger');
 let salesEvents = new EventLedger();
 const SALES_V2 = process.env.AI_SALES_PIPELINE === 'on';
+const RECOVERY = process.env.AI_SALES_RECOVERY === 'on';
+const recoveryPipeline = require('./sales/recovery');
+const recoveryState = require('./sales/recovery_state');
+const recoveryTools = require('./sales/recovery_tools');
+const recoveryPending = new Map();
+if(RECOVERY && !SALES_V2)throw new Error('Recovery requires isolated staging sales pipeline');
 const salesCatalog = new CatalogStore();
 const {StagingKnowledgeSync} = require('./sales/knowledge_sync');
 const {learningEvent,evaluationExport} = require('./sales/foundation');
 const {EvidenceProvider} = require('./sales/external_evidence');
-const salesEvidence = new EvidenceProvider({enabled:SALES_V2 && process.env.AI_SALES_EXTERNAL_EVIDENCE==='on'});
+const salesEvidence = new EvidenceProvider({enabled:SALES_V2 && !RECOVERY && process.env.AI_SALES_EXTERNAL_EVIDENCE==='on'});
 const salesTraceLog=[],salesLearningEvents=[];
 let stagingAppIdentityVerified=false;
 const salesKnowledge = new StagingKnowledgeSync({enabled:SALES_V2 && process.env.AI_SALES_KB_SYNC==='on' && !!process.env.DIFY_DATASET_KEY,
   api:(method,path,body)=>request(method,'https://api.dify.ai/v1'+path,{Authorization:'Bearer '+process.env.DIFY_DATASET_KEY},body)});
 if(SALES_V2 && process.env.AI_SALES_KB_VERSION)
   salesKnowledge.state={status:'ready',catalogVersion:process.env.AI_SALES_KB_VERSION,source:'reviewed_release_manifest'};
-if (SALES_V2 && (process.env.AI_SALES_ENVIRONMENT !== 'staging' || process.env.AI_SALES_DIFY_APP_ID !== 'ed28c981-1c94-4547-9003-aefa5e98aaf4')) {
-  throw new Error('AI Sales refactor is staging-only; isolated Dify app must be configured');
-}
+if(SALES_V2)stagingIdentity.expectedIdentity(process.env);
 if(SALES_V2 && !OWNERSHIP_V2)throw new Error('AI Sales requires versioned conversation ownership');
 
 
@@ -211,6 +215,7 @@ function initPersist() {
     if (fs.existsSync(STATE_FILE)) {
       const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
       if(SALES_V2 && Array.isArray(raw.salesEvents))salesEvents=new EventLedger(raw.salesEvents);
+      if(RECOVERY && Array.isArray(raw.salesLearningEvents))salesLearningEvents.push(...raw.salesLearningEvents.slice(-1000));
       if (raw && Array.isArray(raw.sessions)) {
         for (const [id, s] of raw.sessions) {
           if (!id || !s) continue;
@@ -221,6 +226,7 @@ function initPersist() {
             lastText: s.lastText || '', lastAt: s.lastAt || 0,
             mutedUntil: s.mutedUntil || 0, handoff: !!s.handoff,
             ownership: s.ownership || null, communication_preference: s.communication_preference || null, salesContext:s.salesContext||null,salesImagesSent:s.salesImagesSent||{},
+            recovery:s.recovery||null,
             history: s.history.slice(-HIST_MAX), bf: !!s.bf,
             cb: (s.cb && typeof s.cb === 'object') ? s.cb : null,
             cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
@@ -243,7 +249,7 @@ function initPersist() {
 }
 
 function stateJson() {
-  return JSON.stringify({ v: 2, savedAt: Date.now(), salesEvents:salesEvents.snapshot(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()] });
+  return JSON.stringify({ v: 2, savedAt: Date.now(), salesEvents:salesEvents.snapshot(), salesLearningEvents:salesLearningEvents.slice(-1000), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()] });
 }
 
 function saveNow() {
@@ -313,7 +319,7 @@ function touchSession(id, type, text) {
 }
 
 function pushHist(s, role, text) {
-  s.history.push({ r: role, t: String(text).slice(0, 600), at: Date.now() });
+  s.history.push({ id:crypto.randomUUID(),r: role, t: RECOVERY?String(text):String(text).slice(0, 600), at: Date.now() });
   if (s.history.length > HIST_MAX) s.history.splice(0, s.history.length - HIST_MAX);
   markDirty();
   broadcast();
@@ -524,7 +530,68 @@ async function uploadLineImageToDify(messageId, sessionId) {
   return { type: 'image', transfer_method: 'local_file', upload_file_id: String(id) };
 }
 
-async function askDify(sessionId, text, files) {
+async function askRecovery(sessionId,text,files,ev) {
+  const session=sessions.get(sessionId);if(!session)return '';
+  const snap=recoveryState.snapshot(session,{appId:process.env.AI_SALES_DIFY_APP_ID,releaseId:process.env.AI_SALES_RELEASE_ID});
+  if(ev?._ownershipTicket)snap.ticket=ev._ownershipTicket;
+  const current=()=>ownership.canSend(session,snap.ticket);
+  if(!current())return '';
+  // A concurrent call can still write to Dify's remote memory after local
+  // cancellation. Give the newest overlapping turn a fresh native conversation;
+  // canonical state and delivered raw history remain available for continuity.
+  const overlapping=recoveryPending.has(sessionId),pendingToken=crypto.randomUUID();
+  if(overlapping)snap.conversation_id='';
+  recoveryPending.set(sessionId,pendingToken);
+  const team={verified_at:teamSheet.at||null,records:teamSheet.at?Object.entries(ZONE_TEAM).map(([id,text])=>({id,text,provinces:Object.keys(ZONE_OF).filter(p=>ZONE_OF[p]===id)})):[],status:teamSheet.ok?'fresh':'unavailable_or_cached'};
+  const result=await recoveryPipeline.run(text,{catalog:salesCatalog.get(),previous:snap.state,history:session.history,
+    ownership:{...ownership.ensure(session)},fileCount:files?.length||0,crm:crmSummary(sessionId),team,
+    conversationId:snap.conversation_id,knowledgeRelease:salesKnowledge.state,isCurrent:current,
+    releaseId:process.env.AI_SALES_RELEASE_ID,difyVersion:process.env.AI_SALES_DIFY_VERSION,
+    promptVersion:process.env.AI_SALES_PROMPT_VERSION,bridgeCommit:process.env.RAILWAY_GIT_COMMIT_SHA||null,
+    generate:async input=>{
+      if(!current())throw Error('stale_generation');
+      if(!stagingAppIdentityVerified) {
+        const info=await request('GET',DIFY_BASE+'/info',{Authorization:'Bearer '+DIFY_KEY});
+        const expected=stagingIdentity.expectedIdentity(process.env);
+        if(info.status!==200||info.data?.name!==expected.name||(info.data?.id&&info.data.id!==expected.id))throw Error('isolated_recovery_api_key_required');
+        stagingAppIdentityVerified=true;
+      }
+      if(!current())throw Error('stale_generation');
+      const payload={inputs:{prepared_context:input.prepared_context,trace_id:input.trace_id},query:input.query,
+        response_mode:'blocking',user:sessionId,conversation_id:input.conversation_id,auto_generate_name:false};
+      if(files?.length)payload.files=files;
+      const r=await request('POST',DIFY_BASE+'/chat-messages',{Authorization:'Bearer '+DIFY_KEY},payload);
+      if(r.status!==200||!r.data?.answer)throw Error('recovery_generation_failed');
+      return {answer:r.data.answer,conversation_id:r.data.conversation_id,usage:r.data.metadata?.usage||null};
+    }}).finally(()=>{if(recoveryPending.get(sessionId)===pendingToken)recoveryPending.delete(sessionId);});
+  const metric=result.metrics;
+  metric.continuity={scope:snap.scope,input_conversation_id:snap.conversation_id,reason:overlapping?'overlap_isolation':'app_release_ownership_scope'};
+  // Protected evidence contains the complete contract; console output is metadata only.
+  salesTraceLog.push(metric);if(salesTraceLog.length>200)salesTraceLog.shift();
+  if(ev){ev._salesTrace=metric.trace_id;ev._salesResponse=result.response;ev._catalogVersion=metric.catalog_version;}
+  const event=(type,extra={})=>salesLearningEvents.push(learningEvent(type,{trace_id:metric.trace_id,product_ids:result.response.product_ids_recommended||[],version_refs:metric.lineage,...extra}));
+  event('customer_message');event('bot_generated');event('latency');
+  if(metric.state_delta?.updates?.length)event('state_delta',{delta_fields:metric.state_delta.updates.map(u=>u.field)});
+  if(metric.semantic?.requires_redecision)event('customer_correction');
+  if(metric.failures.length)event('failure',{failure_tags:metric.failures});
+  if(salesLearningEvents.length>1000)salesLearningEvents.splice(0,salesLearningEvents.length-1000);
+  console.log('[recovery-generated]',JSON.stringify({trace_id:metric.trace_id,intent:metric.intent,total_ms:metric.total_ms,failures:metric.failures,lineage:metric.lineage}));
+  if(!recoveryState.commit(session,snap,result)) {metric.delivery_status='dropped_stale';markDirty();return '';}
+  session.salesLastResult=result.response;session.salesTrace=metric.trace_id;
+  if(result.response.handoff_action==='request') {
+    ownership.transition(session,'HUMAN_REQUESTED',{expectedVersion:snap.ticket.version});
+    session.handoff=true;
+    if(ev){ev._ownershipTicket=ownership.ticket(session);ev._recoveryHandoff=true;}
+    flagCallback(sessionId,session,'semantic',{note:'ลูกค้าร้องขอทีมงานโดยชัดแจ้ง',topic:text});
+    event('handoff_event');
+    // No native history created before this ownership epoch may be reused after resume.
+    markDirty();saveNow();broadcast();
+  }
+  markDirty();return result.response.answer_text;
+}
+
+async function askDify(sessionId, text, files, ev) {
+  if(RECOVERY)return askRecovery(sessionId,text,files,ev);
   if (SALES_V2) {
     const session=sessions.get(sessionId)||{};
     const generationTicket=ownership.ticket(session);
@@ -2241,8 +2308,9 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const canSend = () => {
     if(OWNERSHIP_V2 && !ownership.canSend(s, token, { handoffAcknowledgement: !!opts?.handoffAcknowledgement }))return false;
     if(SALES_V2 && !opts?.system) {
-      const latest=salesCatalog.get(),response=s.salesLastResult;
+      const latest=salesCatalog.get(),response=ev._salesResponse||s.salesLastResult;
       const ids=[...(response?.product_ids_recommended||[]),...(response?.image_product_ids||[])];
+      if(RECOVERY && response?.claim_refs?.length && latest?.version!==ev._catalogVersion)return false;
       if(ids.some(id=>!latest?.products.get(id)?.open))return false;
       if(latest && raw.some(m=>latest.index.mentions(typeof m==='string'?m:m.text||'').some(p=>!p.open)))return false;
     }
@@ -2255,14 +2323,23 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
       if(SALES_V2)renderedPayload.push(m);
       const ht = m.text || m.altText || (m.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)');
       pushHist(s, 'b', ht);
-      if (!opts?.system) detectBotPromise(fallbackTo || 'unknown', s, ht);
+      if (!opts?.system && !RECOVERY) detectBotPromise(fallbackTo || 'unknown', s, ht);
     })
   });
   console.log('[send]', JSON.stringify({...result,trace_id:s.salesTrace||null,state_version:s.ownership?.version}));
   if(SALES_V2&&!opts?.system){
-    const metric=salesTraceLog.find(m=>m.trace_id===s.salesTrace);
+    const metric=salesTraceLog.find(m=>m.trace_id===(ev._salesTrace||s.salesTrace));
     if(metric){metric.network={webhook_received_at:ev._receivedAt||null,line_send_start_at:lineSendStart,line_send_end_at:lineSendEnd,line_api_ms:lineApiMs,delivery_render_ms:Date.now()-sendStarted-lineApiMs,total_ms:ev._receivedAt?Date.now()-ev._receivedAt:null,status:result.status,state_version:s.ownership?.version};metric.final_line_payload=renderedPayload;
       console.log('[sales-delivery]',JSON.stringify({trace_id:metric.trace_id,route:metric.route,network:metric.network}));
+      if(RECOVERY){
+        metric.delivery_status=result.status;
+        salesLearningEvents.push(learningEvent(result.status==='sent'?'bot_delivered':'bot_delivery_failed',{
+          trace_id:metric.trace_id,version_refs:metric.lineage,delivery_status:result.status,
+          product_ids:metric.candidate_ids||[],failure_tags:result.status==='sent'?[]:[result.status]}));
+        if(salesLearningEvents.length>1000)salesLearningEvents.splice(0,salesLearningEvents.length-1000);
+        if(result.status==='sent'&&s.recovery)for(const c of s.recovery.state.last_recommendation||[])if(c.trace_id===metric.trace_id)c.delivered=true;
+        markDirty();
+      }
     }
   }
   return result;
@@ -2330,12 +2407,33 @@ async function handleEvent(ev) {
   fetchProfile(s, userId);
   // ลูกค้าทิ้งเบอร์ -> ธงรอติดต่อกลับ + เก็บเบอร์ (ยกเว้นตอนกำลังตอบแบบฟอร์มลงทะเบียน — เบอร์นั้นไม่ใช่การขอให้โทรกลับ)
   const inReg = stype === 'user' && REG_MODE === 'on' && (!!s.reg || regNeeded(crmGet(sessionId)));
-  if (ev.message.type === 'text' && !inReg) detectPhone(sessionId, s, text);
-  if (stype === 'user') crmTouch(sessionId, s, ev.message.type === 'text' ? text : ''); // CRM: อัปเดตโปรไฟล์อัตโนมัติ
+  if (ev.message.type === 'text' && !inReg && !RECOVERY) detectPhone(sessionId, s, text);
+  if (stype === 'user') crmTouch(sessionId, s, !RECOVERY && ev.message.type === 'text' ? text : ''); // Recovery keeps derived CRM hints separate from AI-interpreted current facts.
   // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
   if (isNewChat && !SALES_V2) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
 
   const now = Date.now();
+
+  // Recovery enters before every legacy semantic/keyword branch (including
+  // handoff, exposure, team lookup, image request and registration guessing).
+  // Explicit member/admin/LIFF APIs remain available and unchanged.
+  if(RECOVERY) {
+    if(!ownership.canSend(s,ev._ownershipTicket))return;
+    let files;
+    if(ev.message.type==='image') {
+      try{files=[await uploadLineImageToDify(ev.message.id,sessionId)];}
+      catch{
+        await sendAnswer(s,ev,pushTarget,'ตอนนี้น้องลัดดายังเปิดดูภาพไม่ได้ค่ะ รบกวนพิมพ์สิ่งที่ต้องการถามเป็นข้อความ',{system:true});return;
+      }
+      if(!ownership.canSend(s,ev._ownershipTicket))return;
+      text=shown;
+    }
+    const answer=await askDify(sessionId,text,files,ev);
+    if(!answer)return;
+    const response=ev._salesResponse||{},images=recoveryTools.images({catalog:salesCatalog.get(),ids:response.image_product_ids,publicUrl:PUBLIC_URL});
+    await sendAnswer(s,ev,pushTarget,[answer,...images],{handoffAcknowledgement:!!ev._recoveryHandoff});
+    return;
+  }
 
   // Critical safety takes precedence over registration and optional providers.
   if (SALES_V2 && salesRouter.isExposure(text)) {
@@ -3454,6 +3552,7 @@ function handleAdmin(req, res, path, body) {
 
   if(path==='/admin/api/sales/health' && req.method==='GET')return sendJson(res,200,{
     release_id:process.env.AI_SALES_RELEASE_ID||'unversioned-staging',
+    recovery_contract:RECOVERY?'recovery-v1':null,prompt_version:RECOVERY?(process.env.AI_SALES_PROMPT_VERSION||'recovery-v1'):null,
     external_evidence:salesEvidence.enabled?'reviewed-source-index':'disabled',
     enabled:SALES_V2,environment:process.env.AI_SALES_ENVIRONMENT||'legacy',
     catalog_version:salesCatalog.current?.version||null,catalog_fresh:!!salesCatalog.get(),
@@ -3470,7 +3569,7 @@ function handleAdmin(req, res, path, body) {
   if(path==='/admin/api/sales/copilot' && req.method==='GET') {
     const id=new URL(req.url,'http://x').searchParams.get('id'),s=sessions.get(id);
     if(!s)return sendJson(res,404,{error:'chat not found'});
-    return sendJson(res,200,{ownership:ownership.ensure(s),context:s.salesContext||{},last_response:s.salesLastResult||null,
+    return sendJson(res,200,{ownership:ownership.ensure(s),context:RECOVERY?s.recovery?.state||{}:s.salesContext||{},last_response:s.salesLastResult||null,
       delivery_allowed:false,note:'Read-only admin context; never sends to customer'});
   }
   if(path==='/admin/api/sales/ownership' && req.method==='POST') {

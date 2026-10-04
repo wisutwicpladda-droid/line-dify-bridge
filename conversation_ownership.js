@@ -4,17 +4,24 @@ function ensure(s) {
   if (!s.ownership) s.ownership = { state: s.handoff || s.mutedUntil > Date.now() ? 'HUMAN_ACTIVE' : 'BOT_ACTIVE', version: 1, turn: 0, summary: '', updated_at: Date.now() };
   return s.ownership;
 }
-function transition(s,state,{expectedVersion,summary,actor='system'}={}) {
+function transition(s,state,{expectedVersion,summary,actor='system',beginResumeTurn=false}={}) {
   const o=ensure(s); if(!STATES.includes(state)) throw new Error('invalid_ownership_state');
   if(expectedVersion != null && expectedVersion!==o.version) throw new Error('ownership_conflict');
   if(state==='BOT_RESUME' && actor!=='admin') throw new Error('admin_resume_required');
-  if(state==='BOT_RESUME' && typeof summary!=='string') throw new Error('resume_summary_required');
+  if(state==='BOT_RESUME' && (typeof summary!=='string'||!summary.trim())) throw new Error('resume_summary_required');
+  // Only beginTurn consumes an already authorized resume. Direct API state jumps
+  // must not bypass the mandatory fresh summary, even for authenticated admins.
+  if(state==='BOT_ACTIVE' && !(o.state==='BOT_RESUME'&&beginResumeTurn&&actor==='system'&&o.summary?.trim()))
+    throw new Error('legal_resume_required');
+  if(state==='BOT_RESUME' && !['HUMAN_REQUESTED','HUMAN_ACTIVE','BOT_ASSIST_ONLY'].includes(o.state))
+    throw new Error('invalid_resume_edge');
+  if(['HUMAN_ACTIVE','BOT_ASSIST_ONLY'].includes(state)&&actor!=='admin')throw new Error('admin_claim_required');
   s.ownership={...o,state,version:o.version+1,updated_at:Date.now(),summary:summary==null?o.summary:summary};
   return s.ownership;
 }
 function beginTurn(s) {
   let o=ensure(s);
-  if(o.state==='BOT_RESUME')o=transition(s,'BOT_ACTIVE',{expectedVersion:o.version});
+  if(o.state==='BOT_RESUME')o=transition(s,'BOT_ACTIVE',{expectedVersion:o.version,beginResumeTurn:true});
   o.turn++; return {version:o.version,turn:o.turn};
 }
 function ticket(s) { const o=ensure(s);return {version:o.version,turn:o.turn}; }
