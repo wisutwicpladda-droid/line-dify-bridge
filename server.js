@@ -102,13 +102,10 @@ const fs = require('fs');
 const pathmod = require('path');
 const zlib = require('zlib');
 const kbSync = require('./kb_sync'); // v3.8: sync ข้อมูลสินค้าจาก Google Sheet เข้า Dify KB
-const orderFix = require('./order_fix'); // v3.16: แก้ประโยค "เริ่มจาก..." ให้ตรงกับลำดับที่ guardOrder จัดใหม่
-const sheetContext = require('./sheet_context'); // v3.24: แนบข้อมูลจากชีตตามพืช-ศัตรูพืช-ระยะใช้ รวมถึงทุเรียนช่วงดอก
-const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไม่แสดงแหล่งอ้างอิงให้ลูกค้า
-const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
-const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
 const { MORE_IMAGES_TEXT, productImageButtonPage } = require('./product_image_buttons');
+
+const { decodeDifyAnswer, lineMessages, deliveryIsCurrent } = require('./dify_delivery');
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -493,181 +490,40 @@ async function uploadLineImageToDify(messageId, sessionId) {
   return { type: 'image', transfer_method: 'local_file', upload_file_id: String(id) };
 }
 
-async function askDify(sessionId, text, files) {
-  if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
-  const conversationId = await findConversation(sessionId);
-  const difyQuery = sheetContext.enrichQuery(text, productMaster.master, productMaster.usage, kbSync.levels);
-  if (difyQuery !== text) console.log(`[sheet-context] ${String(sessionId).slice(0, 8)} attached verified sugarcane herbicide matches`);
-  try {
-    const payload = {
-      inputs: {},
-      query: difyQuery,
-      response_mode: 'blocking',
-      user: sessionId,
-      conversation_id: conversationId,
-      auto_generate_name: true
-    };
-    if (Array.isArray(files) && files.length) payload.files = files;
-    const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') {
-      const guarded = guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
-      const visible = stripVisibleCitations(guarded);
-      const safe = guardUnreleasedProducts(visible, productMaster.master, sessionId, (msg) => console.log(msg));
-      return compactResponse(safe, text, PIMG_NAMES);
+// Serialize each Dify conversation; retain its native conversation_id.
+const difyQueues = new Map();
+const difyConversationIds = new Map();
+function askDify(sessionId, text, files) {
+  const s = sessions.get(sessionId);
+  const epoch = s ? (s.responseEpoch || 0) : 0;
+  const job = (difyQueues.get(sessionId) || Promise.resolve()).catch(() => {}).then(async () => {
+    if (!deliveryIsCurrent(s, epoch)) return null;
+    try {
+      const conversationId = difyConversationIds.get(sessionId) || await findConversation(sessionId);
+      const payload = { inputs: { line_channel: 'v1' }, query: text, response_mode: 'blocking',
+        user: sessionId, conversation_id: conversationId, auto_generate_name: true };
+      if (Array.isArray(files) && files.length) payload.files = files;
+      const r = process.env.FAKE_DIFY_ANSWER
+        ? { status: 200, data: { answer: process.env.FAKE_DIFY_ANSWER } }
+        : await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
+      if (r.status !== 200 || !r.data || typeof r.data.answer !== 'string') throw new Error('Dify response status ' + r.status);
+      if (r.data.conversation_id) difyConversationIds.set(sessionId, r.data.conversation_id);
+      if (!deliveryIsCurrent(s, epoch)) return null;
+      return { ...decodeDifyAnswer(r.data.answer), epoch };
+    } catch (e) {
+      console.log('[dify] request/delivery contract failed:', e.message);
+      if (!deliveryIsCurrent(s, epoch)) return null;
+      return { text: 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ', images: [], buttons: [], handoff: false, epoch };
     }
-    console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
-  } catch (e) { console.log('dify fetch error:', e.message); }
-  return '';
+  });
+  difyQueues.set(sessionId, job);
+  job.finally(() => { if (difyQueues.get(sessionId) === job) difyQueues.delete(sessionId); }).catch(() => {});
+  return job;
 }
 
 // ---------- LINE ----------
-// กันเบอร์โทรที่บอทแต่งเอง: เบอร์ในคำตอบต้องเป็นเบอร์ทีมขายใน ZONE_TEAM เท่านั้น ถ้าไม่ใช่ ตัดบรรทัดนั้นออก
-function knownPhones() {
-  const set = new Set();
-  for (const t of Object.values(ZONE_TEAM)) for (const m of String(t).match(/0\d[\d-]{7,11}/g) || []) set.add(m.replace(/\D/g, ''));
-  (process.env.EXTRA_PHONES || '').split(',').map((x) => x.replace(/\D/g, '')).filter(Boolean).forEach((x) => set.add(x));
-  return set;
-}
-const GUARD_PHONE_RX = /0\d{1,2}[-\s.]?\d{3}[-\s.]?\d{3,4}/g;
-function guardPhones(answer, sessionId) {
-  const ok = knownPhones();
-  const bad = [];
-  const lines = String(answer).split('\n').filter((line) => {
-    const found = (line.match(GUARD_PHONE_RX) || []).map((p) => p.replace(/\D/g, '')).filter((p) => p.length >= 9 && p.length <= 10);
-    const unknown = found.filter((p) => !ok.has(p));
-    if (unknown.length) { bad.push(...unknown); return false; }
-    return true;
-  });
-  if (!bad.length) return answer;
-  console.log(`[guard] ${String(sessionId).slice(0, 8)} removed unknown phone(s): ${bad.join(',')}`);
-  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n\nเบอร์ทีมงานที่ถูกต้อง พิมพ์ "ทีมงานในพื้นที่" หรือบอกจังหวัดของคุณลูกค้าได้เลยนะคะ';
-}
-
-
-// v3.10: เรียงสินค้าในคำตอบตามระดับแนะนำภายใน (Expand > Skyrocket > Natural > Cosmic-Star > Standard)
-// LLM เรียงเองไม่ตรงทุกครั้ง จึงจัดใหม่ก่อนส่ง: ย้ายเฉพาะก้อนสินค้าที่ติดกัน ข้อความเปิด หัวข้อคั่น และคำแนะนำท้ายอยู่ที่เดิม
-const ORDER_CONT_RX = /^(ใช้กับ|อัตรา|วิธีใช้|ระยะ|พ่น|หว่าน|คนพ่น|โดรน|ผสม|ขนาด|บรรจุ|กลุ่ม|สารกลุ่ม|\(|[-•])/;
-const ORDER_NUM_RX = /^(\s*)(\d+)([.)]\s*)/;
-function orderProductAt(par) {
-  const first = String(par).split('\n')[0].replace(/^\s*(\d+[.)]\s*)?[-•*_\s]*/, '');
-  return kbSync.levels.names.find((n) => first.startsWith(n)) || '';
-}
-function guardOrder(answer, sessionId) {
-  const L = kbSync.levels;
-  if (!L.names.length) return answer;
-  const pars = String(answer).split(/\n[ \t]*\n/);
-  const out = [];
-  const fixes = [];
-  let moved = false, i = 0;
-  while (i < pars.length) {
-    if (!orderProductAt(pars[i])) { out.push(pars[i]); i++; continue; }
-    const run = [];
-    while (i < pars.length) {
-      const name = orderProductAt(pars[i]);
-      if (name) { run.push({ name, level: L.map[name], parts: [pars[i]] }); i++; continue; }
-      if (ORDER_CONT_RX.test(pars[i].trim())) { run[run.length - 1].parts.push(pars[i]); i++; continue; }
-      break;
-    }
-    let sorted = run;
-    if (run.length > 1 && run.every((b) => b.level)) {
-      sorted = run.map((b, k) => ({ b, k })).sort((x, y) => x.b.level - y.b.level || x.k - y.k).map((x) => x.b);
-      if (sorted.some((b, k) => b !== run[k])) {
-        moved = true;
-        const nums = run.map((b) => (b.parts[0].match(ORDER_NUM_RX) || [])[2]).filter(Boolean).map(Number);
-        if (nums.length === run.length) sorted.forEach((b, k) => { b.parts[0] = b.parts[0].replace(ORDER_NUM_RX, (m, sp, n, dot) => sp + (nums[0] + k) + dot); });
-        if (sorted[0] !== run[0]) fixes.push({ at: -1, oldFirst: run[0].name, first: sorted[0].name, others: sorted.slice(1).map((b) => b.name) });
-      }
-    }
-    sorted.forEach((b) => out.push(...b.parts));
-    if (fixes.length && fixes[fixes.length - 1].at === -1) fixes[fixes.length - 1].at = out.length;
-  }
-  if (!moved) return answer;
-  let fixed = 0;
-  for (const f of fixes) {
-    for (let k = f.at; k < out.length; k++) {
-      if (orderProductAt(out[k])) break; // ถึงก้อนสินค้าชุดถัดไปแล้ว
-      const nw = orderFix.fixClosing(out[k], f, kbSync.levels.moa);
-      if (nw != null) { out[k] = nw; fixed++; break; }
-    }
-  }
-  console.log(`[order] ${String(sessionId).slice(0, 8)} reordered products by level${fixed ? ', fixed start sentence' : ''}`);
-  return out.join('\n\n');
-}
-
-
-
-
-
-// v3.13: บอกอัตราใช้เฉพาะเมื่อลูกค้าถาม (P-57) ถ้าข้อความลูกค้าไม่ได้ถามอัตรา/ปริมาณ/วิธีผสม ตัดบรรทัดอัตราออกก่อนส่ง
-const RATE_ASK_RX = /อัตรา|เท่า(ไหร่|ไร|ไร)|กี่\s*(ซีซี|cc|มล|ลิตร|กรัม|กิโล|ขวด|ถุง|กระสอบ|ไร่|ช้อน|ฝา|ถัง)|ผสม|วิธีใช้|ใช้(ยัง|อย่าง)ไง|ฉีด(ยัง|อย่าง)ไง|พ่น(ยัง|อย่าง)ไง|หว่าน(ยัง|อย่าง)ไง|ปริมาณ|ถัง|\d+\s*ไร่|ทำ.*(ยัง|อย่าง)ไง|ขั้นตอน/i;
-const RATE_LABEL_RX = /^\s*(\d+[.)]\s*)?[-•]?\s*(อัตรา\s*[:：]|(พ่นด้วย(คน|โดรน)|คนพ่น|โดรน|ใช้โดรน|หว่านด้วย(คน|โดรน))\s*[:：]?\s*(ผสม|ใช้|หว่าน|อัตรา)?\s*\d)/;
-// Gemini often formats the label in Markdown and writes set rates as 50+50.
-// Remove that whole rate line when the customer did not ask for a rate so a
-// partial value such as "50+" cannot remain visible.
-const RATE_MARKED_LINE_RX = /^\s*(?:\d+[.)]\s*)?[-•]?\s*(?:\*\*)?\s*(อัตรา|พ่นด้วย(คน|โดรน)|คนพ่น|โดรน|ใช้โดรน|หว่านด้วย(คน|โดรน))\s*(?:\*\*)?\s*[:：]/;
-const U = '(ซีซี|cc|มล\\.?|ลิตร|กรัม|กิโลกรัม|กก\\.?)';
-const N = '[\\d.,]+(\\s*[-–]\\s*[\\d.,]+)?';
-const RATE_PHRASES = [
-  new RegExp('(ใน|ใช้|ที่)?\\s*อัตรา\\s*' + N + '\\s*' + U + '(\\s*(ต่อ|\\/)\\s*(น้ำ\\s*' + N + '\\s*ลิตร|ไร่|ต้น))?(\\s*(พ่น|ฉีด)ได้\\s*' + N + '\\s*ไร่)?', 'g'),
-  new RegExp('ผสม\\s*' + N + '\\s*' + U + '\\s*(กับ|ต่อ)\\s*น้ำ\\s*' + N + '\\s*ลิตร(\\s*(ต่อ\\s*ไร่|(พ่น|ฉีด)ได้\\s*' + N + '\\s*ไร่))?', 'g'),
-  new RegExp(N + '\\s*' + U + '\\s*(ต่อ|\\/)\\s*(น้ำ\\s*' + N + '\\s*ลิตร|ไร่|ต้น)', 'g'),
-  new RegExp('\\(?\\s*\\d+\\s*(ขวด|ถุง|กระสอบ|ชุด)[^\\n()]{0,30}?ใช้ได้(ประมาณ)?\\s*' + N + '\\s*ไร่\\s*\\)?', 'g')
-];
-// v3.15: ชีท QA 1 ต.ค. ทีมต้องการให้บอกอัตราเมื่อแนะนำสินค้า และตัวกรองนี้ทำให้เหลือเลขค้าง เช่น "ขวดละ 50+" จึงปิดเป็นค่าเริ่มต้น
-// เปิดคืนได้ด้วยตัวแปร RATE_ONLY_WHEN_ASKED=on
-// Safe default: do not expose application rates unless the customer asks for
-// rate/volume/mixing details. Set RATE_ONLY_WHEN_ASKED=off only for a QA
-// environment that intentionally wants the legacy always-show behavior.
-const RATE_GUARD_ON = process.env.RATE_ONLY_WHEN_ASKED !== 'off';
-function guardRate(answer, userText, sessionId) {
-  if (!RATE_GUARD_ON) return answer;
-  if (RATE_ASK_RX.test(String(userText || ''))) return answer;
-  let n = 0;
-  const out = [];
-  for (const line of String(answer).split('\n')) {
-    if (RATE_LABEL_RX.test(line) || RATE_MARKED_LINE_RX.test(line)) { n++; continue; }
-    let l = line;
-    for (const rx of RATE_PHRASES) l = l.replace(rx, () => { n++; return ' '; });
-    if (l !== line) {
-      l = l.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.)])/g, '$1').trim();
-      if (!l || /^[\s\-–•:,.()]*$/.test(l)) continue;
-    }
-    out.push(l);
-  }
-  if (!n) return answer;
-  console.log(`[rate] ${String(sessionId).slice(0, 8)} removed ${n} rate part(s) (not asked)`);
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-
-// v3.12: ตัวคิดเลขให้บอท (รายการทีมข้อ 8) LLM เขียนสูตร ⟦250*10⟧ จากตัวเลขในข้อมูล แล้ว bridge คิดให้ กันเลขผิด
-// รับเฉพาะตัวเลข + - * / ( ) และ ceil() · ผลปัดทศนิยม 2 ตำแหน่ง ใส่คอมมาหลักพัน · สูตรผิดรูปแบบจะตัดวงเล็บทิ้ง
-function evalCalcExpr(expr) {
-  const e = String(expr).replace(/[×x]/g, '*').replace(/÷/g, '/').replace(/,/g, '').trim();
-  if (!/^[\d\s.+\-*/()]*(ceil\([\d\s.+\-*/()]*\)[\d\s.+\-*/()]*)*$/.test(e) || e.length > 120) return null;
-  try {
-    const v = Function('"use strict";const ceil=Math.ceil;return (' + e + ');')();
-    return typeof v === 'number' && isFinite(v) ? v : null;
-  } catch (err) { return null; }
-}
-function guardCalc(answer, sessionId) {
-  if (!/⟦/.test(answer)) return answer;
-  let bad = 0;
-  const out = String(answer).replace(/⟦([^⟦⟧]{1,120})⟧/g, (m, expr) => {
-    const v = evalCalcExpr(expr);
-    if (v == null) { bad++; return expr.trim(); }
-    return (Math.round(v * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
-  }).replace(/[⟦⟧]/g, '');
-  console.log(`[calc] ${String(sessionId).slice(0, 8)} computed${bad ? ' (' + bad + ' bad)' : ''}`);
-  return out;
-}
-
-
-// v3.11: รูปสินค้า (product_images/ + index.json ชื่อสินค้า -> ไฟล์) แนบเป็นการ์ดพื้นเขียวอ่อนต่อท้ายคำตอบ
-// รูปเป็น PNG พื้นโปร่งใส จึงวางบนพื้นการ์ดสีเขียวอ่อน ไม่มีพื้นขาว · สินค้าที่ยังไม่เปิดตัวไม่มีรูปในโฟลเดอร์นี้
 const PIMG_DIR = pathmod.join(__dirname, 'product_images');
 const PIMG_ON = (process.env.PRODUCT_IMAGES || 'on') !== 'off';
-const PIMG_MAX = Math.min(10, Math.max(1, parseInt(process.env.PRODUCT_IMG_MAX || '3', 10) || 3));
 const PIMG_BG = process.env.PRODUCT_IMG_BG || '#00000000'; // v3.11.1: พื้นโปร่งใส เห็นแค่ตัวสินค้า
 const PIMG_MODE = process.env.PRODUCT_IMG_MODE === 'flex' ? 'flex' : 'image'; // v3.11.2: ค่าเริ่มต้นส่งเป็นรูปภาพธรรมดา (PNG โปร่งใสแสดงบนพื้นแชทตรง ๆ) · flex = การ์ด (LINE ใส่พื้นขาวให้เสมอ)
 let PIMG = {};
@@ -707,144 +563,60 @@ async function refreshProductMaster() {
 setTimeout(() => { refreshProductMaster().catch(() => {}); }, 1500);
 setInterval(() => { refreshProductMaster().catch(() => {}); }, Math.max(5, parseInt(process.env.PRODUCT_MASTER_SYNC_MIN || '60', 10) || 60) * 60000);
 const pimgMsgs = new WeakSet();
-function productsInAnswer(answer) {
-  let t = String(answer);
-  const hits = [];
-  for (const n of PIMG_NAMES) {
-    let i = t.indexOf(n);
-    while (i >= 0) { hits.push({ n, i }); t = t.slice(0, i) + ' '.repeat(n.length) + t.slice(i + n.length); i = t.indexOf(n); }
-  }
-  hits.sort((a, b) => a.i - b.i);
-  return [...new Set(hits.map((h) => h.n))];
-}
-function productImageMsg(answer) {
-  if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return null;
-  if (/1669|โรงพยาบาล/.test(answer)) return null; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
-  const seen = new Set();
-  const names = productsInAnswer(answer).filter((n) => !seen.has(PIMG[n]) && seen.add(PIMG[n])).slice(0, PIMG_MAX);
-  if (!names.length) return null;
-  if (PIMG_MODE === 'image') {
-    const imgs = names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
-    return imgs;
-  }
-  // แสดงเฉพาะรูปสินค้า ไม่มีข้อความ และพื้นการ์ดโปร่งใส
-  const bubbles = names.map((n) => ({
-    type: 'bubble', size: 'kilo',
-    styles: { body: { backgroundColor: PIMG_BG } },
-    body: { type: 'box', layout: 'vertical', paddingAll: '0px', backgroundColor: PIMG_BG, contents: [
-      { type: 'image', url: PUBLIC_URL + '/img/p/' + PIMG[n], size: 'full', aspectRatio: '3:4', aspectMode: 'fit', backgroundColor: PIMG_BG }
-    ] }
-  }));
-  const msg = { type: 'flex', altText: 'รูปสินค้า: ' + names.join(', '), contents: bubbles.length === 1 ? bubbles[0] : { type: 'carousel', contents: bubbles } };
-  pimgMsgs.add(msg);
-  return msg;
-}
-
-// v3.14: ส่งรูปสินค้าไม่ให้รก (ผู้ใช้กำหนด 30 ก.ย.)
-// - คำตอบที่แนะนำสินค้า (มีบรรทัด "ใช้กับ:") ส่งรูปอัตโนมัติ 1 รูป = ตัวแรกที่แนะนำ
-// - พูดชื่อสินค้าผ่าน ๆ ไม่ส่งรูป มีแต่ปุ่ม · รูปสินค้าเดิมไม่ส่งซ้ำในแชทเดียวกันภายใน PRODUCT_IMG_DEDUP_H ชม.
-// - ลูกค้าขอรูปเอง ส่งทันที (สูงสุด PRODUCT_IMG_MAX รูป) · กดปุ่ม "ขอรูป ชื่อ" bridge ส่งรูปเองไม่เรียก Dify
-// - ทุกสินค้าที่พบในคำตอบมีปุ่มดูรูปเสมอ รวมรูปที่เคยส่ง/ส่งในรอบนี้; มากกว่า 13 ปุ่มแบ่งหน้า
-const PIMG_DEDUP_MS = (parseFloat(process.env.PRODUCT_IMG_DEDUP_H || '24') || 24) * 3600000;
-const PIMG_ASK_RX = /(ขอ|ส่ง|มี|ดู|อยากเห็น|โชว์|เห็น).{0,8}(รูป|ภาพ)|(รูป|ภาพ)\s*(สินค้า|ขวด|ยา|หน่อย|ของ|ไหม)|หน้าตา(เป็น)?\s*(ยัง|อย่าง)ไง|แพ็คเกจ|ฉลาก/;
+// Render only explicit Dify asset references. No answer/name/intent matching.
 function pimgBuild(names) {
-  if (!names.length) return [];
-  if (PIMG_MODE === 'image') return names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
-  const m = productImageMsg(names.join('\n'));
-  return m ? [].concat(m) : [];
-}
-function pimgPlan(s, userText, answer) {
-  const none = { images: [], buttons: [] };
-  if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return none;
-  if (/1669|โรงพยาบาล/.test(answer)) return none; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
-  const seenFile = new Set();
-  const names = productsInAnswer(answer).filter((n) => !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
-  if (!names.length) return none;
-  const now = Date.now();
-  s.pimgSent = s.pimgSent || {};
-  for (const f of Object.keys(s.pimgSent)) if (now - s.pimgSent[f] > PIMG_DEDUP_MS) delete s.pimgSent[f];
-  const asked = PIMG_ASK_RX.test(String(userText || ''));
-  // v3.14.1: ลูกค้าพิมพ์ชื่อสินค้ามาถามเอง (เช่น "ไบเตอร์" "โมเดิน" "กล่องม่วง") ส่งรูปตัวนั้นเลย 1 รูป
-  const named = pimgNamedInText(userText, names).filter((n) => !s.pimgSent[PIMG[n]]);
-  let send = [];
-  // Explicit product image requests must return only the named product, even when the answer mentions related products.
-  if (asked && named.length) send = [named[0]];
-  else if (asked) send = names.slice(0, PIMG_MAX);
-  else if (named.length) send = [named[0]];
-  else if (/(^|\n)\s*(\d+[.)]\s*)?ใช้กับ\s*[:：]/.test(answer) && !s.pimgSent[PIMG[names[0]]]) send = [names[0]];
-  send.forEach((n) => { s.pimgSent[PIMG[n]] = now; });
-  const buttons = names; // Image deduplication must not hide an on-demand image button.
-  if (send.length) console.log(`[pimg] ${asked ? 'asked' : 'auto'} ${send.join(', ')} · buttons ${buttons.length}`);
-  return { images: pimgBuild(send), buttons };
-}
-const pimgCore = (x) => String(x || '').replace(/[\s\-–.%()0-9]/g, '').replace(/ดับเบิ้?ลยู.*$/, '').toLowerCase();
-function pimgNamedInText(userText, names) {
-  const u = pimgCore(userText);
-  if (u.length < 3) return [];
-  return names.filter((n) => { const c = pimgCore(n); return c.length >= 3 && (u.includes(c) || (u.length >= 4 && c.includes(u))); });
-}
-// v3.17: คำขอรูป "ทั้งหมด" ต้องใช้รายการสินค้าจาก Product master ที่ kb_sync
-// โหลดจาก Google Sheet ไม่ใช้รายชื่อที่ LLM ดึงมาได้เพียงบาง chunk
-const PIMG_ALL_RX = /(?:ทั้งหมด|ทุกตัว|ทุกรายการ).*(?:กำจัดแมลง|ยาฆ่าแมลง|ยาแมลง)|(?:กำจัดแมลง|ยาฆ่าแมลง|ยาแมลง).*(?:ทั้งหมด|ทุกตัว|ทุกรายการ)/;
-function pimgAllCategoryNames(userText) {
-  if (!PIMG_ALL_RX.test(String(userText || ''))) return [];
-  const cats = kbSync.levels.categories || {};
-  const sts = kbSync.levels.status || {};
-  const lv = kbSync.levels.map || {};
-  return Object.keys(cats)
-    .filter((n) => /^Insecticide$/i.test(String(cats[n] || '')) && /ขาย/.test(String(sts[n] || '')) && !/รอเปิด|ปิด|ไม่พร้อม/.test(String(sts[n] || '')))
-    .sort((a, b) => (lv[a] || 99) - (lv[b] || 99) || a.localeCompare(b, 'th'));
-}
-async function sendAllProductImages(s, ev, pushTarget, names) {
-  if (!names.length) return false;
-  const withImages = names.filter((n) => PIMG[n]);
-  const missingImages = names.filter((n) => !PIMG[n]);
-  const suffix = missingImages.length ? `\nยังไม่มีรูปในระบบ: ${missingImages.join(', ')}` : '';
-  const text = `รูปสินค้ากำจัดแมลงที่เปิดขาย (${names.length} รายการ, มีรูป ${withImages.length} รายการ)\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}${suffix}`;
-  const imgs = pimgBuild(withImages);
-  // LINE รับได้ไม่เกิน 5 ข้อความต่อ request: ใช้ reply แรกเป็นข้อความ + รูป 4 รูป
-  await sendAnswer(s, ev, pushTarget, [text].concat(imgs.slice(0, 4)));
-  for (let i = 4; i < imgs.length; i += 5) {
-    const batch = imgs.slice(i, i + 5);
-    const ok = await linePush(pushTarget, batch);
-    batch.forEach(() => pushHist(s, 'b', '(รูปสินค้า)'));
-    console.log(`[pimg] all-category push ${i + 1}-${Math.min(i + batch.length, imgs.length)} ok=${ok}`);
+  if (!PIMG_ON || !PUBLIC_URL) return [];
+  const result = [], files = new Set(), missing = [];
+  for (const name of names) {
+    const file = PIMG[name];
+    if (!file) { console.log('[pimg] missing Dify asset reference:', name); missing.push(name); continue; }
+    if (files.has(file)) continue;
+    files.add(file);
+    const u = PUBLIC_URL + '/img/p/' + file;
+    const msg = { type: 'image', originalContentUrl: u, previewImageUrl: u };
+    pimgMsgs.add(msg); result.push(msg);
   }
-  return true;
+  const errors = missing.length ? [{ type: 'text', text: 'ระบบยังส่งไฟล์รูปของ ' + missing.map(n => '"' + n + '"').join(', ') + ' ไม่ได้ค่ะ' }] : [];
+  if (PIMG_MODE !== 'flex') return result.concat(errors);
+  const cards = [];
+  for (let i = 0; i < result.length; i += 10) {
+    const bubbles = result.slice(i, i + 10).map(m => ({ type: 'bubble', size: 'kilo',
+      styles: { body: { backgroundColor: PIMG_BG } },
+      body: { type: 'box', layout: 'vertical', paddingAll: '0px', backgroundColor: PIMG_BG,
+        contents: [{ type: 'image', url: m.originalContentUrl, size: 'full', aspectRatio: '3:4', aspectMode: 'fit', backgroundColor: PIMG_BG }] } }));
+    const card = { type: 'flex', altText: 'รูปสินค้าที่ขอ', contents: bubbles.length === 1 ? bubbles[0] : { type: 'carousel', contents: bubbles } };
+    pimgMsgs.add(card); cards.push(card);
+  }
+  return cards.concat(errors);
+}
+function difyMessages(s, packet) {
+  const messages = [packet.text, ...pimgBuild(packet.images)];
+  pimgAttachButtons(s, messages, packet.buttons);
+  return messages;
 }
 function pimgAttachButtons(s, msgs, names, page = 0) {
-  const valid = [...new Set((names || []).filter((n) => PIMG[n]))];
+  const valid = PIMG_ON && PUBLIC_URL ? [...new Set(names || [])] : [];
   if (!valid.length || !msgs.length) { delete s.pimgMenu; return; }
   const menu = productImageButtonPage(valid, page);
   s.pimgMenu = { names: valid, page: menu.page };
   const items = menu.items;
   const i = msgs.length - 1;
-  if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i].slice(0, 4900), quickReply: { items } };
+  if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i], quickReply: { items } };
   else if (msgs[i] && typeof msgs[i] === 'object') msgs[i].quickReply = { items };
 }
-// ข้อความจากปุ่ม "ขอรูป ชื่อสินค้า" (ชื่อตรงกับรายการรูป) -> ตอบเป็นรูปทันที
+// Only cached button-page navigation is local. Product requests go to Dify.
 function pimgTap(s, userText) {
   if (!PIMG_ON || !PUBLIC_URL) return null;
   const text = String(userText || '').trim();
   if (text === MORE_IMAGES_TEXT && s.pimgMenu) {
-    const names = s.pimgMenu.names.filter((n) => PIMG[n]);
+    const names = s.pimgMenu.names;
     if (!names.length) { delete s.pimgMenu; return null; }
     const menu = productImageButtonPage(names, s.pimgMenu.page + 1);
     const msgs = [`เลือกสินค้าที่ต้องการดูรูปค่ะ (หน้า ${menu.page + 1}/${menu.pages})`];
     pimgAttachButtons(s, msgs, names, menu.page);
     return msgs;
   }
-  const m = text.match(/^ขอรูป\s*(.+)$/);
-  if (!m) return null;
-  const n = m[1].trim();
-  if (!PIMG[n]) return null;
-  s.pimgSent = s.pimgSent || {};
-  s.pimgSent[PIMG[n]] = Date.now();
-  console.log('[pimg] tap ' + n);
-  const msgs = pimgBuild([n]);
-  const menu = s.pimgMenu;
-  pimgAttachButtons(s, msgs, menu && menu.names.includes(n) ? menu.names : [n], menu && menu.names.includes(n) ? menu.page : 0);
-  return msgs;
+  return null; // Product image requests go through Dify and fresh status validation.
 }
 
 
@@ -859,30 +631,12 @@ function servePimg(res, path) {
 }
 
 
-// text = string หรือ array ของ string (ส่งได้สูงสุด 5 ข้อความต่อ reply/push)
-// v3.9: ชื่อกลุ่มสินค้าภายใน (Expand, Skyrocket, Natural, Standard, Cosmic-Star) และระดับแนะนำ ห้ามหลุดถึงลูกค้า
-// Natural/Standard เป็นคำทั่วไป จึงตัดเฉพาะเมื่ออยู่หลังคำว่า กลุ่ม/ระดับ
-const INTERNAL_RX = /\b(expand|skyrocket|cosmic[\s-]?star)\b|(กลุ่ม|ระดับ)\s*(สินค้า\s*)?(natural|standard)\b|ระดับแนะนำ|ลำดับแนะนำภายใน/i;
-const INTERNAL_REPLY = 'เรื่องนี้เป็นข้อมูลภายในของบริษัท น้องลัดดาให้ข้อมูลไม่ได้ค่ะ';
-function guardInternal(answer, sessionId) {
-  const lines = String(answer).split('\n');
-  const kept = lines.filter((line) => !INTERNAL_RX.test(line));
-  if (kept.length === lines.length) return answer;
-  console.log(`[guard] ${String(sessionId).slice(0, 8)} removed ${lines.length - kept.length} line(s) with internal group names`);
-  const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return out || INTERNAL_REPLY;
-}
-
-function lineMsgs(text) {
-  return (Array.isArray(text) ? text : [text])
-    .filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()))
-    .slice(0, 5)
-    .map((t) => (typeof t === 'object' ? t : { type: 'text', text: String(t).slice(0, 4900) }));
-}
+// Only LINE payload sizing/serialization lives here; text is lossless.
+const lineMsgs = lineMessages;
 async function lineReply(replyToken, text) {
   if (!replyToken) return false;
   const messages = lineMsgs(text);
-  if (!messages.length) return false;
+  if (!messages.length || messages.length > 5) return false;
   try {
     const r = await request('POST', LINE_API + '/v2/bot/message/reply',
       { Authorization: `Bearer ${CH_TOKEN}` },
@@ -892,16 +646,19 @@ async function lineReply(replyToken, text) {
   } catch (e) { console.log('reply fetch error:', e.message); return false; }
 }
 
-async function linePush(to, text) {
+async function linePush(to, text, canSend = () => true, onDelivered = () => {}) {
   const messages = lineMsgs(text);
   if (!messages.length) return false;
-  try {
-    const r = await request('POST', LINE_API + '/v2/bot/message/push',
-      { Authorization: `Bearer ${CH_TOKEN}` },
-      { to, messages });
-    if (r.status !== 200) console.log('push error:', r.status, JSON.stringify(r.data).slice(0, 300));
-    return r.status === 200;
-  } catch (e) { console.log('push fetch error:', e.message); return false; }
+  for (let i = 0; i < messages.length; i += 5) {
+    if (!canSend()) return false;
+    try {
+      const r = await request('POST', LINE_API + '/v2/bot/message/push',
+        { Authorization: `Bearer ${CH_TOKEN}` }, { to, messages: messages.slice(i, i + 5) });
+      if (r.status !== 200) { console.log('push error:', r.status); return false; }
+      onDelivered(messages.slice(i, i + 5));
+    } catch (e) { console.log('push fetch error:', e.message); return false; }
+  }
+  return true;
 }
 
 // ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
@@ -1977,10 +1734,12 @@ async function liffConfirmPush(id) {
   const s = sessions.get(id);
   if (!c || !c.auto || !c.auto.reg || !c.auto.reg.msg) return { ok: false, err: 'ยังไม่ได้ลงทะเบียน' };
   if (c.auto.reg.confirmed) return { ok: true, already: true };
+  const formEpoch = s ? (s.responseEpoch || 0) : 0;
   const msgs = [c.auto.reg.msg];
-  if (s && s.regPending) { const ans = await askDify(id, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
-  const ok = await linePush(id, msgs);
-  if (ok) { c.auto.reg.confirmed = true; if (s) { for (const m of msgs) pushHist(s, 'b', m); s.lastText = String(msgs[0]).slice(0, 120); s.lastAt = Date.now(); } markDirty(); broadcast(); }
+  let handoff = false;
+  if (s && s.regPending) { const ans = await askDify(id, s.regPending); if (!ans || !deliveryIsCurrent(s, ans.epoch)) return { ok: false, stale: true }; msgs.push(...difyMessages(s, ans)); handoff = ans.handoff; s.regPending = ''; }
+  const ok = s ? await sendAnswer(s, { replyToken: null }, id, msgs, { epoch: formEpoch, handoff }) : await linePush(id, msgs);
+  if (ok) { c.auto.reg.confirmed = true; if (s) { s.lastText = String(msgs[0]).slice(0, 120); s.lastAt = Date.now(); } markDirty(); broadcast(); }
   return { ok };
 }
 // หน้า LIFF (liff.html วางคู่กับ server.js) + ข้อมูลจังหวัด/อำเภอ/ตำบล (thai_locations.json — จาก kongvut/thai-province-data, MIT)
@@ -2030,17 +1789,6 @@ async function richMenuCreate() {
   console.log(`[richmenu] created ${id} (${spec.name}) default=true removed_old=${removed}`);
   return { ok: true, richMenuId: id, name: spec.name, liff: !!LIFF_URL, removed };
 }
-// ทีมงานในพื้นที่ (จากปุ่มเมนู) -> ตอบจากจังหวัดในโปรไฟล์ ไม่ต้องผ่าน Dify
-const TEAM_CMD_RX = /^(ขอ|ดู|อยากรู้)?(ทีมงาน|ทีมขาย|เจ้าหน้าที่|ผู้ดูแล|ผู้แทน)(ใน|ประจำ)?(พื้นที่|เขต)(ของฉัน|ของผม|ของหนู|ของเรา)?[\s.!]*$/;
-function teamReply(c) {
-  const prov = c && (c.province || (c.auto && c.auto.province)) || '';
-  if (!prov) return null;
-  const z = zoneInfo(prov);
-  if (!z) return `ขออภัยค่ะ ยังไม่พบข้อมูลทีมงานสำหรับ จ.${prov} 🙏 พิมพ์ "คุยกับแอดมิน" ได้เลยนะคะ เดี๋ยวเจ้าหน้าที่ติดต่อกลับค่ะ`;
-  const rows = zoneTeamRows(z);
-  return `📍 ทีมงานดูแลพื้นที่ จ.${prov} (เขต ${z.zone})\n` + rows.map((r) => `• ${r.name} ${r.phone}`).join('\n') + '\n\nโทรหรือทัก LINE ทีมงานได้เลยนะคะ 🌾';
-}
-
 let liffHtmlCache = null;
 function liffPage() {
   if (liffHtmlCache === null) {
@@ -2111,7 +1859,6 @@ async function handleLiff(req, res, path, body) {
 
 // ---------- ธง "รอติดต่อกลับ" (callback) ----------
 // (ก) บอทรับปาก: "ติดต่อกลับ / โทรกลับ / ส่งเรื่องให้…แล้ว / ประสาน…แล้ว / เจ้าหน้าที่จะรีบติดต่อ ฯลฯ"
-const CB_BOT_RX = /ติดต่อกลับ|โทรกลับ|(ส่งเรื่อง|ส่งต่อ|ประสาน|แจ้ง|บันทึกข้อมูล)[^\n]{0,40}?(เรียบร้อย|ให้แล้ว|แล้วนะ|แล้วค่ะ|แล้วจ้ะ)|(เจ้าหน้าที่|ทีมงาน|แอดมิน|ฝ่ายขาย|พี่ ?ๆ|ผู้แทน)[^\n]{0,24}?จะ(รีบ)?(ติดต่อ|โทร|เข้ามา|ตอบ|ประสาน)/;
 // (ข) ลูกค้าทิ้งเบอร์โทร (มือถือ 10 หลัก / บ้าน 9 หลัก มีหรือไม่มีขีด/ช่องว่างก็ได้)
 const PHONE_RX = /(?<!\d)0\d{1,2}[- ]?\d{3}[- ]?\d{3,4}(?!\d)/;
 
@@ -2143,13 +1890,6 @@ function clearCallback(s) {
   broadcast();
 }
 
-function detectBotPromise(id, s, text) {
-  const m = CB_BOT_RX.exec(String(text || ''));
-  if (!m) return;
-  const i = Math.max(0, m.index - 40);
-  flagCallback(id, s, 'bot', { note: String(text).slice(i, m.index + 80).replace(/\s+/g, ' ') });
-}
-
 function detectPhone(id, s, text) {
   const m = PHONE_RX.exec(String(text || ''));
   if (!m) return;
@@ -2170,36 +1910,39 @@ function notifyAdmins(id, s, isNew) {
   }
 }
 
-// opts.system = ข้อความระบบของ bridge เอง (เช่น แบบฟอร์มลงทะเบียน) -> ไม่ต้องตรวจ "บอทรับปากติดต่อกลับ" (ตรวจเฉพาะคำตอบจาก Dify)
-async function sendAnswer(s, ev, fallbackTo, text, opts) {
-  const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
-  const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)')) : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
-  let ok = await lineReply(ev.replyToken, arr);
-  if (!ok && arr.some((m) => pimgMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ
-    console.log('[pimg] reply with images failed, retry text only');
-    text = arr.filter((m) => !pimgMsgs.has(m)).map((m) => (m && typeof m === 'object' && m.quickReply ? Object.assign({}, m, { quickReply: undefined }) : m));
-    ok = await lineReply(ev.replyToken, text);
+// Delivery/ownership only. No semantic inspection of Dify output.
+async function sendAnswer(s, ev, fallbackTo, text, opts = {}) {
+  const canSend = () => opts.epoch === undefined || deliveryIsCurrent(s, opts.epoch);
+  const messages = lineMsgs(text);
+  if (!messages.length || !canSend()) return false;
+  const first = messages.slice(0, 5);
+  const record = batch => { for (const msg of batch) pushHist(s, 'b', msg.text || msg.altText || '(รูปสินค้า)'); };
+  let ok = await lineReply(ev.replyToken, first);
+  if (ok) record(first);
+  if (ok && messages.length > 5) ok = await linePush(fallbackTo, messages.slice(5), canSend, record);
+  else if (!ok && fallbackTo && fallbackTo !== 'unknown') ok = await linePush(fallbackTo, messages, canSend, record);
+  // Callback decisions come from Dify metadata, never from scanning its prose.
+  if (ok && opts.handoff && canSend()) {
+    s.responseEpoch = (s.responseEpoch || 0) + 1;
+    s.mutedUntil = Date.now() + MUTE_MINUTES * 60000; s.handoff = true;
+    flagCallback(fallbackTo, s, 'dify', { note: 'Dify requested human handoff' });
   }
-  if (!ok && fallbackTo && fallbackTo !== 'unknown') {
-    const pushed = await linePush(fallbackTo, text);
-    console.log(`[send] reply=failed push=${pushed}`);
-  } else {
-    console.log(`[send] reply=${ok}`);
-  }
+  markDirty(); broadcast();
+  console.log(`[send] ok=${ok} messages=${messages.length}`);
+  return ok;
 }
 
 // ---------- คีย์เวิร์ดปิด/เปิดเสียง ----------
-const MUTE_WORDS = ['คุยกับแอดมิน', 'ติดต่อแอดมิน', 'ขอสายแอดมิน', 'ขอแอดมิน', 'แอดมินตอบ', 'ต่อแอดมิน', 'หาแอดมิน'];
+const MUTE_WORDS = ['คุยกับแอดมิน']; // Exact rich-menu ownership command only
 const UNMUTE_WORDS = ['คุยกับบอท', 'คุยกับน้องลัดดา', 'เปิดบอท', '/bot'];
 
 function wantsAdmin(t) {
   const x = (t || '').trim();
-  return x === 'แอดมิน' || x === 'admin' || MUTE_WORDS.some((w) => x.includes(w));
+  return MUTE_WORDS.includes(x);
 }
 function wantsBot(t) {
   const x = (t || '').trim();
-  return UNMUTE_WORDS.some((w) => x.includes(w));
+  return UNMUTE_WORDS.includes(x);
 }
 
 // ---------- Event processing ----------
@@ -2238,12 +1981,13 @@ async function handleEvent(ev) {
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
-  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
-  else if (ev.message.type === 'sticker') text = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
+  else if (ev.message.type === 'image') text = '(รูปภาพจากลูกค้า)';
+  else if (ev.message.type === 'sticker') text = '(สติกเกอร์จากลูกค้า)';
   else return;
 
   const shown = ev.message.type === 'text' ? text : (ev.message.type === 'image' ? '(รูปภาพจากลูกค้า)' : '(สติกเกอร์)');
   const s = touchSession(sessionId, stype, shown);
+  s.responseEpoch = (s.responseEpoch || 0) + 1;
   const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
   fetchProfile(s, userId);
@@ -2292,21 +2036,13 @@ async function handleEvent(ev) {
     // ลูกค้ากด "ลงทะเบียนเรียบร้อยแล้ว ✅" จากหน้า LIFF (liff.sendMessages) -> ตอบยืนยัน + ตอบคำถามที่ค้างไว้ (ใช้ Reply ไม่กินโควต้า)
     if (ev.message.type === 'text' && /^ลงทะเบียนเรียบร้อยแล้ว/.test(text.trim()) && regDone(c)) {
       c.auto = c.auto || {};
+      const formEpoch = s.responseEpoch || 0;
+      let pendingHandoff = false;
       const msgs = [(c.auto.reg && c.auto.reg.msg) || `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณค่ะ 🙏 (${regSummaryText(c)})\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾`];
-      if (s.regPending) { const ans = await askDify(sessionId, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
+      if (s.regPending) { const ans = await askDify(sessionId, s.regPending); if (!ans || !deliveryIsCurrent(s, ans.epoch)) return; msgs.push(...difyMessages(s, ans)); pendingHandoff = ans.handoff; s.regPending = ''; }
       if (c.auto.reg) c.auto.reg.confirmed = true;
       markDirty();
-      await sendAnswer(s, ev, pushTarget, msgs, { system: 1 });
-      return;
-    }
-    // ปุ่มเมนู "ทีมงานในพื้นที่" -> ตอบทีม ME/MR ตามจังหวัดที่ลงทะเบียน (ยังไม่ลงทะเบียน -> ชวนลงทะเบียน)
-    if (ev.message.type === 'text' && TEAM_CMD_RX.test(text.trim())) {
-      const tr = teamReply(c);
-      if (tr) { await sendAnswer(s, ev, pushTarget, tr, { system: true }); return; }
-      const ask = 'น้องลัดดายังไม่ทราบจังหวัดของคุณลูกค้าค่ะ 🙏 ลงทะเบียนสั้นๆ ก่อนนะคะ แล้วจะบอกทีมงานที่ดูแลพื้นที่ของคุณให้ทันที';
-      if (liffOn) { await sendAnswer(s, ev, pushTarget, [ask].concat(liffButtonMsg('gate')), { system: true }); return; }
-      if (!s.reg) { regStart(s, ''); }
-      await sendAnswer(s, ev, pushTarget, [ask, regPrompt(s.reg.step, s)], { system: true });
+      await sendAnswer(s, ev, pushTarget, msgs, { system: 1, epoch: formEpoch, handoff: pendingHandoff });
       return;
     }
     // "ลงทะเบียนผ่านแชท" = ขอกรอกในแชทแทนฟอร์ม (สำรองเมื่อเปิด LIFF ไม่ได้)
@@ -2340,7 +2076,7 @@ async function handleEvent(ev) {
       if (!s.reg && liffOn) {
         // โหมด LIFF: ส่งปุ่มเปิดฟอร์ม (จำคำถามแรกไว้ ตอบให้หลังลงทะเบียน) — ส่งซ้ำไม่เกินทุก 2 นาทีเพื่อไม่รบกวน
         const t = isText ? String(text).trim() : '';
-        if (t && t.length >= 6 && !REG_GREET_RX.test(t) && REG_QUESTION_RX.test(t)) s.regPending = t.slice(0, 500);
+        if (t && t.length >= 6 && !REG_GREET_RX.test(t) && REG_QUESTION_RX.test(t)) s.regPending = text;
         c.auto = c.auto || {}; c.auto.reg_asked = true;
         const recent = s.regGateAt && Date.now() - s.regGateAt < 120000;
         s.regGateAt = Date.now();
@@ -2363,12 +2099,15 @@ async function handleEvent(ev) {
           s.reg = null; markDirty(); // ไม่บังคับ: ลูกค้าไม่ตอบคำถามลงทะเบียน -> เลิกถาม ตอบคำถามปกติ (ระบบยังเก็บเบอร์/จังหวัดจากแชทให้เอง)
         } else {
           const fin = await regFinish(sessionId, s, c);
+          const formEpoch = s.responseEpoch || 0;
+          let pendingHandoff = false;
           const msgs = [fin.doneMsg];
           if (fin.pending) {
             const ans = await askDify(sessionId, fin.pending);
-            if (ans) msgs.push(ans.slice(0, 4900));
+            if (!ans || !deliveryIsCurrent(s, ans.epoch)) return; msgs.push(...difyMessages(s, ans));
+            pendingHandoff = ans.handoff;
           }
-          await sendAnswer(s, ev, pushTarget, msgs, { system: 1 }); // ข้อความแรก = ระบบ, ข้อความถัดไป = คำตอบ Dify
+          await sendAnswer(s, ev, pushTarget, msgs, { system: 1, epoch: formEpoch, handoff: pendingHandoff }); // ข้อความแรก = ระบบ, ข้อความถัดไป = คำตอบ Dify
           return;
         }
       }
@@ -2378,46 +2117,25 @@ async function handleEvent(ev) {
   const tapImgs = ev.message.type === 'text' ? pimgTap(s, text) : null; // v3.14: ปุ่มดูรูปสินค้า
   if (tapImgs && tapImgs.length) { markDirty(); await sendAnswer(s, ev, pushTarget, tapImgs, { system: true }); return; }
 
-  // คำขอรายการรูปสินค้าทั้งหมวดต้องตอบจาก Product master โดยตรง เพื่อไม่ให้
-  // retrieval ของ Dify ตัดเหลือเพียงบางรายการ และส่งรูปครบผ่านหลาย batch ของ LINE
-  const allCategoryNames = pimgAllCategoryNames(text);
-  if (allCategoryNames.length) {
-    markDirty();
-    await sendAllProductImages(s, ev, pushTarget, allCategoryNames);
-    return;
-  }
-
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
 
-  let answer = '';
+  let packet;
+  const epoch = s.responseEpoch;
   if (ev.message.type === 'image') {
     try {
       const imageFile = await uploadLineImageToDify(ev.message.id, sessionId);
-      answer = await askDify(sessionId, text, [imageFile]);
+      if (!deliveryIsCurrent(s, epoch)) return;
+      packet = await askDify(sessionId, text, [imageFile]);
     } catch (e) {
-      console.log(`[image] ${sessionId.slice(0, 8)} failed:`, e.message);
-      answer = 'น้องลัดดารับรูปแล้วค่ะ แต่ตอนนี้ระบบยังเปิดดูรูปนี้ไม่ได้ รบกวนพิมพ์อาการหรือสิ่งที่พบในแปลงเป็นข้อความก่อนนะคะ';
+      console.log('[image] upload failed:', e.message);
+      if (!deliveryIsCurrent(s, epoch)) return;
+      await sendAnswer(s, ev, pushTarget, 'ตอนนี้ระบบยังเปิดดูรูปนี้ไม่ได้ค่ะ รบกวนพิมพ์สิ่งที่ต้องการสอบถามเป็นข้อความก่อนนะคะ', { epoch });
+      return;
     }
-  } else {
-    answer = await askDify(sessionId, text);
-  }
-  if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
-  const msgs = [answer.slice(0, 4900)];
-  const pplan = pimgPlan(s, text, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
-  if (pplan.images.length) msgs.push(...pplan.images);
-  // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
-  if (stype === 'user' && REG_MODE === 'soft') {
-    const c = crmGet(sessionId);
-    c.auto = c.auto || {};
-    if (!regDone(c) && !s.reg && !c.auto.reg_asked) {
-      c.auto.reg_asked = true;
-      if (REG_UI === 'liff' && LIFF_URL) { msgs.push(...liffButtonMsg('invite')); }
-      else { regStart(s, ''); msgs.push('📝 ถ้าสะดวก น้องลัดดาขอข้อมูลสั้นๆ เพื่อให้ทีมงานในพื้นที่ดูแลได้ตรงจุดนะคะ\n' + regPrompt('name', s)); }
-      markDirty();
-    }
-  }
-  pimgAttachButtons(s, msgs, pplan.buttons);
-  await sendAnswer(s, ev, pushTarget, msgs);
+  } else packet = await askDify(sessionId, text);
+  if (!packet || !deliveryIsCurrent(s, packet.epoch)) return;
+  await sendAnswer(s, ev, pushTarget, difyMessages(s, packet), { epoch: packet.epoch, handoff: packet.handoff });
+
 }
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
@@ -3497,6 +3215,7 @@ function handleAdmin(req, res, path, body) {
     const id = data.id;
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     const s = sessions.get(id);
+    s.responseEpoch = (s.responseEpoch || 0) + 1;
     const m = data.minutes;
     if (m === 0) { s.mutedUntil = 0; s.handoff = false; }
     else if (m === -1) s.mutedUntil = FOREVER;
@@ -3517,6 +3236,9 @@ function handleAdmin(req, res, path, body) {
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     if (!text) return sendJson(res, 400, { ok: false, error: 'empty text' });
     const s = sessions.get(id);
+    s.responseEpoch = (s.responseEpoch || 0) + 1;
+    s.mutedUntil = Date.now() + MUTE_MINUTES * 60000; s.handoff = true;
+    markDirty(); broadcast();
     linePush(id, text).then((ok) => {
       if (ok) {
         pushHist(s, 'a', text);
@@ -3564,7 +3286,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.28.1', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.29.0-candidate', dialogueOwner: 'dify', deliverySchema: 'ladda.line.v1', conciseReplies: false, citations: false, visibleCitations: false, sheetContext: false, rateGuard: false, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
