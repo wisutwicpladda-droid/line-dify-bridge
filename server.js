@@ -895,6 +895,16 @@ async function linePush(to, text, token) {
   } catch (e) { console.log('push fetch error:', e.message); return false; }
 }
 
+// v3.34: จุด "กำลังพิมพ์" ใน LINE ระหว่างรอ Dify (แชท 1:1 เท่านั้น; หายเองเมื่อบอทตอบ)
+// LINE_LOADING_SECONDS = 5-60 (ปัดเป็นทีละ 5), 0 = ปิด
+const LOADING_SEC = (() => { const n = parseInt(process.env.LINE_LOADING_SECONDS || '20', 10); return n > 0 ? Math.min(60, Math.max(5, Math.round(n / 5) * 5)) : 0; })();
+function lineLoading(userId) {
+  if (!LOADING_SEC || !CH_TOKEN || !/^U[0-9a-f]{32}$/.test(userId || '')) return;
+  request('POST', LINE_API + '/v2/bot/chat/loading/start', { Authorization: `Bearer ${CH_TOKEN}` }, { chatId: userId, loadingSeconds: LOADING_SEC })
+    .then((r) => { if (r.status !== 202 && r.status !== 200) console.log('loading error:', r.status, JSON.stringify(r.data).slice(0, 200)); })
+    .catch((e) => console.log('loading fetch error:', e.message));
+}
+
 // ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
 const CRM_FIELDS = ['real_name', 'phone', 'province', 'district', 'crops', 'farm_rai', 'shop', 'status', 'tags', 'note'];
 const CRM_STATUS = ['new', 'interested', 'quoted', 'customer', 'inactive'];
@@ -2434,6 +2444,7 @@ async function handleEvent(ev) {
   }
 
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
+  if (stype === 'user') lineLoading(userId); // v3.34: ให้ลูกค้าเห็นว่าบอทกำลังพิมพ์ระหว่างรอ Dify
 
   let answer = '';
   if (ev.message.type === 'image') {
@@ -3610,7 +3621,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.33', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.34', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
