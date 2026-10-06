@@ -41,23 +41,64 @@ function thaiTime(ms) {
   return p(d.getUTCDate()) + '/' + p(d.getUTCMonth() + 1) + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ' น.';
 }
 
-function buildCard(x) {
-  const lines = ['🛒 เคสลูกค้าสนใจซื้อ — รบกวนฝ่ายขายติดต่อกลับ'];
-  lines.push('ลูกค้า: ' + (x.name || '-'));
-  lines.push('โทร: ' + x.phone);
-  if (x.phoneNote) lines.push('ข้อความตอนให้เบอร์: ' + x.phoneNote);
-  lines.push('พื้นที่: ' + (x.province ? 'จ.' + x.province + (x.zone ? ' (เขต ' + x.zone + ')' : '') : 'ยังไม่ทราบจังหวัด'));
-  if (x.crops) lines.push('พืช: ' + x.crops);
-  if (x.products && x.products.length) lines.push('สินค้าที่คุยถึง: ' + x.products.join(', '));
-  if (x.questions && x.questions.length) {
-    lines.push('ลูกค้าถาม:');
-    x.questions.forEach((q) => lines.push('• ' + q));
+// ชื่อแรกที่ใช้ได้ (ข้ามค่าว่าง, '…' และชื่อที่มีอักขระเสีย U+FFFD จาก encoding เพี้ยน)
+function cleanName(...names) {
+  for (const n of names) {
+    const t = String(n || '').trim();
+    if (t && t !== '…' && !t.includes('\uFFFD')) return t;
   }
-  if (x.promised) lines.push('สถานะ: บอทแจ้งลูกค้าแล้วว่าจะมีเจ้าหน้าที่ติดต่อกลับ');
-  lines.push('ทีมเขตที่ควรติดต่อ: ' + (x.team || 'ยังไม่ทราบเขต รบกวนแอดมินช่วยกระจายเคส'));
-  lines.push('เวลา: ' + thaiTime(x.at));
-  if (x.adminUrl) lines.push('ดูแชทเต็ม: ' + x.adminUrl);
+  return '';
+}
+
+// 'ME ก (x) 06x · MR ข (y) 06y / ค (z)' -> ['ME ก (x) 06x', 'MR ข (y) 06y', 'MR ค (z)']
+function teamLines(team) {
+  const out = [];
+  for (const part of String(team || '').split(/\s+·\s+/)) {
+    const m = /^(ME|MR)\s+(.*)$/.exec(part.trim());
+    const role = m ? m[1] + ' ' : '';
+    for (const p of (m ? m[2] : part).split(/\s+\/\s+/)) if (p.trim()) out.push(role + p.trim());
+  }
+  return out;
+}
+
+function place(province, zone) {
+  return province ? 'จ.' + province + (zone ? ' (เขต ' + zone + ')' : '') : '';
+}
+
+function buildCard(x) {
+  const questions = (x.questions || []).filter(Boolean);
+  const lines = ['🛒 เคสใหม่: ลูกค้าสนใจซื้อ', 'รบกวนทีมเขตโทรกลับลูกค้าด้วยค่ะ', ''];
+
+  lines.push('👤 ข้อมูลลูกค้า');
+  lines.push('• ชื่อ: ' + (x.name || '-'));
+  lines.push('• โทร: ' + x.phone);
+  lines.push('• จังหวัด: ' + (place(x.province, x.zone) || 'ยังไม่ทราบ'));
+  if (x.chatProvince && x.chatProvince !== x.province) {
+    lines.push('• ในแชทลูกค้าพิมพ์ว่าอยู่: ' + place(x.chatProvince, x.chatZone));
+  }
+  if (x.crops) lines.push('• พืช: ' + x.crops);
+  if (x.phoneNote && !questions.some((q) => q.includes(x.phoneNote))) lines.push('• ข้อความตอนให้เบอร์: ' + x.phoneNote);
+
+  if (x.products && x.products.length) {
+    lines.push('', '🧴 สินค้าที่คุยถึง');
+    x.products.forEach((p) => lines.push('• ' + p));
+  }
+
+  if (questions.length) {
+    lines.push('', '💬 ข้อความล่าสุดของลูกค้า');
+    questions.forEach((q, i) => lines.push((i + 1) + '. ' + q));
+  }
+
+  const team = teamLines(x.team);
+  lines.push('', '📞 ทีมที่ควรติดต่อ' + (x.zone ? ' (เขต ' + x.zone + ')' : ''));
+  if (team.length) team.forEach((t) => lines.push('• ' + t));
+  else lines.push('• ยังไม่ทราบเขต รบกวนแอดมินช่วยกระจายเคส');
+
+  lines.push('');
+  if (x.promised) lines.push('✅ บอทแจ้งลูกค้าแล้วว่าจะมีเจ้าหน้าที่ติดต่อกลับ');
+  lines.push('🕒 ' + thaiTime(x.at));
+  if (x.adminUrl) lines.push('🔗 แอดมินดูแชทเต็ม: ' + x.adminUrl);
   return lines.join('\n').slice(0, 4900);
 }
 
-module.exports = { PHONE_RX, INTEREST_RX, leadInterest, shouldSend, buildCard, thaiTime };
+module.exports = { PHONE_RX, INTEREST_RX, leadInterest, shouldSend, buildCard, thaiTime, cleanName, teamLines };
