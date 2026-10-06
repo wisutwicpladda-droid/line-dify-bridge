@@ -53,5 +53,6 @@ assert(server.includes('maybeSendLead(sessionId, s, leadPhone[0])'), 'ยัง�
 assert(server.includes('LEAD_TARGETS.includes(pushTarget)'), 'บอทยังตอบแชทในกลุ่มรับเคส');
 assert(server.includes("ev.type === 'join'"), 'ยังไม่ log groupId ตอน OA เข้ากลุ่ม');
 assert(server.includes('lead: (s.lead && typeof s.lead'), 'สถานะเคสที่ส่งแล้วยังหายหลัง restart');
+assert(server.includes('linePush(to, card, LEAD_LINE_TOKEN)'), 'การ์ดเคสยังไม่ส่งผ่าน OA แจ้งเตือนแยก');
 
 console.log('PASS: sales lead cards — interest detection, 48h window, 24h dedup, card fields, group silence');

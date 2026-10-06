@@ -127,6 +127,8 @@ const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
 const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
 // v3.31: ปลายทางรับเคสลูกค้า (groupId C..., roomId R... หรือ userId U...) คั่นด้วย , — บอทจะไม่ตอบแชทในกลุ่มเหล่านี้
+// v3.32: ส่งการ์ดเคสด้วย OA แจ้งเตือนแยก (เช่น น้องเซลล์ม่อน) ถ้าตั้ง LEAD_LINE_TOKEN; ไม่ตั้ง = ใช้ OA น้องลัดดา
+const LEAD_LINE_TOKEN = process.env.LEAD_LINE_TOKEN || '';
 const LEAD_TARGETS = (process.env.SALES_LEAD_TARGETS || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
 const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
 // CRM: เชื่อม Supabase (ถ้าตั้งค่า) ไม่งั้นเก็บใน state file บน Volume
@@ -881,12 +883,12 @@ async function lineReply(replyToken, text) {
   } catch (e) { console.log('reply fetch error:', e.message); return false; }
 }
 
-async function linePush(to, text) {
+async function linePush(to, text, token) {
   const messages = lineMsgs(text);
   if (!messages.length) return false;
   try {
     const r = await request('POST', LINE_API + '/v2/bot/message/push',
-      { Authorization: `Bearer ${CH_TOKEN}` },
+      { Authorization: `Bearer ${token || CH_TOKEN}` },
       { to, messages });
     if (r.status !== 200) console.log('push error:', r.status, JSON.stringify(r.data).slice(0, 300));
     return r.status === 200;
@@ -2169,7 +2171,7 @@ function maybeSendLead(id, s, phone) {
   });
   s.lead = { phone, at: now };
   markDirty();
-  for (const to of LEAD_TARGETS) linePush(to, card).then((ok) => console.log(`[lead] ${id.slice(0, 8)} -> ${to.slice(0, 8)} ok=${ok}`)).catch(() => {});
+  for (const to of LEAD_TARGETS) linePush(to, card, LEAD_LINE_TOKEN).then((ok) => console.log(`[lead] ${id.slice(0, 8)} -> ${to.slice(0, 8)} ok=${ok}`)).catch(() => {});
   return true;
 }
 function sendPendingLeads() {
@@ -3603,7 +3605,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.31', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.32', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
