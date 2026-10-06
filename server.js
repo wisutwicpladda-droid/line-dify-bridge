@@ -108,7 +108,8 @@ const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไ�
 const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
-const imageButtons = require('./image_buttons'); // v3.29: ปุ่มดูรูปที่ยังไม่กดอยู่ต่อจนกว่าจะถามใหม่
+const imageButtons = require('./image_buttons');
+const leads = require('./leads'); // v3.31: ส่งเคสลูกค้าสนใจซื้อ + เบอร์ เข้ากลุ่ม LINE ฝ่ายขาย // v3.29: ปุ่มดูรูปที่ยังไม่กดอยู่ต่อจนกว่าจะถามใหม่
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -125,6 +126,8 @@ const LINE_DATA_API = (process.env.LINE_DATA_API_BASE || process.env.LINE_API_BA
 const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
 const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
+// v3.31: ปลายทางรับเคสลูกค้า (groupId C..., roomId R... หรือ userId U...) คั่นด้วย , — บอทจะไม่ตอบแชทในกลุ่มเหล่านี้
+const LEAD_TARGETS = (process.env.SALES_LEAD_TARGETS || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
 const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
 // CRM: เชื่อม Supabase (ถ้าตั้งค่า) ไม่งั้นเก็บใน state file บน Volume
 const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -195,7 +198,8 @@ function initPersist() {
             cbDone: (s.cbDone && typeof s.cbDone === 'object') ? s.cbDone : null,
             cbCount: s.cbCount || 0,
             reg: (s.reg && typeof s.reg === 'object' && s.reg.step) ? s.reg : null, // ลงทะเบียนค้างอยู่ -> ถามต่อจากขั้นเดิม
-            regPending: s.regPending || '', regInvitedAt: s.regInvitedAt || 0
+            regPending: s.regPending || '', regInvitedAt: s.regInvitedAt || 0,
+            lead: (s.lead && typeof s.lead === 'object') ? s.lead : null // v3.31: เคสที่ส่งฝ่ายขายแล้ว ไม่ส่งซ้ำหลัง restart
           });
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
@@ -2147,6 +2151,38 @@ function detectPhone(id, s, text) {
   flagCallback(id, s, 'phone', { contact: String(text).trim().slice(0, 80), topic: lastUserText(s) });
 }
 
+// v3.31: ลูกค้าทิ้งเบอร์ + มีสัญญาณสนใจซื้อ -> สรุปเป็นเคสส่งกลุ่ม LINE ฝ่ายขาย (ทีมเขตตามจังหวัดใน CRM)
+function maybeSendLead(id, s, phone) {
+  if (!LEAD_TARGETS.length || !s || s.type !== 'user' || !phone) return false;
+  const now = Date.now();
+  const info = leads.leadInterest(s.history, productsInAnswer, now);
+  if (!info.interested) { console.log(`[lead] ${id.slice(0, 8)} phone without purchase context — admin flag only`); return false; }
+  if (!leads.shouldSend(s, phone, now)) return false;
+  const c = crmGet(id);
+  const province = c.province || (c.auto && c.auto.province) || '';
+  const z = zoneInfo(province);
+  const card = leads.buildCard({
+    name: c.real_name || ((s.name && s.name !== '…') ? s.name : c.display_name || ''), phone,
+    phoneNote: (c.auto && c.auto.phone_ctx) || '', province, zone: z ? z.zone : '', team: z ? z.team : '',
+    crops: c.crops || (c.auto && c.auto.crops) || '', products: info.products, questions: info.questions,
+    promised: !!(s.cb && s.cb.src === 'bot'), at: now, adminUrl: PUBLIC_URL ? PUBLIC_URL + '/admin' : ''
+  });
+  s.lead = { phone, at: now };
+  markDirty();
+  for (const to of LEAD_TARGETS) linePush(to, card).then((ok) => console.log(`[lead] ${id.slice(0, 8)} -> ${to.slice(0, 8)} ok=${ok}`)).catch(() => {});
+  return true;
+}
+function sendPendingLeads() {
+  if (!LEAD_TARGETS.length) return;
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (!s || s.type !== 'user' || s.lead || !s.cb || !s.cb.contact || now - (s.cb.at || 0) > 72 * 3600000) continue;
+    const m = leads.PHONE_RX.exec(String(s.cb.contact));
+    if (m) maybeSendLead(id, s, m[0]);
+  }
+}
+setTimeout(sendPendingLeads, 15000); // เคสค้างก่อนตั้งกลุ่ม/ก่อน deploy
+
 function notifyAdmins(id, s, isNew) {
   if (!ADMIN_NOTIFY_IDS.length) return;
   const name = (s.name && s.name !== '…') ? s.name : id.slice(0, 10) + '…';
@@ -2203,6 +2239,10 @@ async function handleEvent(ev) {
   const stype = src.groupId ? 'group' : (src.roomId ? 'room' : 'user');
   const pushTarget = src.groupId || src.roomId || userId;
 
+  // v3.31: OA ถูกเชิญเข้ากลุ่ม -> log id ไว้ตั้ง SALES_LEAD_TARGETS; กลุ่มรับเคสบอทไม่ตอบแชท
+  if (ev.type === 'join') { console.log(`[group] OA joined ${stype} ${pushTarget} — ใส่ id นี้ใน SALES_LEAD_TARGETS เพื่อรับเคสลูกค้า`); return; }
+  if (stype !== 'user' && LEAD_TARGETS.includes(pushTarget)) return;
+
   // ลูกค้าแอดเพื่อน (follow) -> ทักทาย + เริ่มลงทะเบียน (ถ้ายังไม่เคย)
   if (ev.type === 'follow') {
     if (stype !== 'user' || userId === 'unknown') return;
@@ -2242,6 +2282,10 @@ async function handleEvent(ev) {
   const inReg = stype === 'user' && REG_MODE === 'on' && (!!s.reg || regNeeded(crmGet(sessionId)));
   if (ev.message.type === 'text' && !inReg) detectPhone(sessionId, s, text);
   if (stype === 'user') crmTouch(sessionId, s, ev.message.type === 'text' ? text : ''); // CRM: อัปเดตโปรไฟล์อัตโนมัติ
+  if (stype === 'user' && ev.message.type === 'text' && !inReg) { // v3.31: เบอร์ + สนใจซื้อ -> ส่งเคสฝ่ายขาย
+    const leadPhone = leads.PHONE_RX.exec(text);
+    if (leadPhone) maybeSendLead(sessionId, s, leadPhone[0]);
+  }
   // ลูกค้าเก่าทักครั้งแรกหลังระบบใหม่ -> ดึงประวัติเดิมจาก Dify ตามมาให้เอง
   if (isNewChat) setTimeout(() => backfillFromDify(sessionId, s).catch(() => {}), 50);
 
@@ -3559,7 +3603,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.30', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.31', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
