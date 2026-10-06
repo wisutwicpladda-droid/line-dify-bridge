@@ -905,6 +905,12 @@ function lineLoading(userId) {
     .catch((e) => console.log('loading fetch error:', e.message));
 }
 
+// v3.35: ลูกค้าส่งแต่รูป มักพิมพ์คำอธิบายตามมา -> พักรูปไว้ก่อน ถ้ามีข้อความตามมาให้ส่งรวมเป็นคำถามเดียว
+// LINE_IMAGE_WAIT_SECONDS (ค่าเริ่มต้น 8, 0 = ตอบรูปทันทีแบบเดิม)
+const IMG_WAIT_MS = Math.max(0, Math.min(30, parseFloat(process.env.LINE_IMAGE_WAIT_SECONDS || '8') || 0)) * 1000;
+const IMAGE_QUERY = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
+const pendingImgs = new Map(); // sessionId -> { ids, timer } (ไม่บันทึกลงไฟล์)
+
 // ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
 const CRM_FIELDS = ['real_name', 'phone', 'province', 'district', 'crops', 'farm_rai', 'shop', 'status', 'tags', 'note'];
 const CRM_STATUS = ['new', 'interested', 'quoted', 'customer', 'inactive'];
@@ -2286,7 +2292,7 @@ async function handleEvent(ev) {
 
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
-  else if (ev.message.type === 'image') text = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
+  else if (ev.message.type === 'image') text = IMAGE_QUERY;
   else if (ev.message.type === 'sticker') text = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
   else return;
 
@@ -2443,20 +2449,46 @@ async function handleEvent(ev) {
     return;
   }
 
-  console.log(`[msg] ${sessionId.slice(0, 8)}...: ${text.slice(0, 60)}`);
+  // v3.35: รูปอย่างเดียว -> รอข้อความอธิบาย; ข้อความที่ตามมาจะพารูปที่พักไว้ไปด้วย
+  if (ev.message.type === 'image' && stype === 'user' && IMG_WAIT_MS) {
+    const p = pendingImgs.get(sessionId) || { ids: [] };
+    p.ids.push(ev.message.id);
+    clearTimeout(p.timer);
+    p.timer = setTimeout(() => {
+      if (pendingImgs.get(sessionId) !== p) return;
+      pendingImgs.delete(sessionId);
+      if (s.handoff || (s.mutedUntil && s.mutedUntil > Date.now())) return; // แอดมินรับเรื่องระหว่างรอ
+      answerTurn(text, p.ids).catch((e) => console.log('[image] answer error:', e.message));
+    }, IMG_WAIT_MS);
+    pendingImgs.set(sessionId, p);
+    console.log(`[image] ${sessionId.slice(0, 8)} hold ${p.ids.length} image(s) ${IMG_WAIT_MS / 1000}s for caption`);
+    return;
+  }
+  const held = ev.message.type === 'text' ? pendingImgs.get(sessionId) : null;
+  if (held) {
+    clearTimeout(held.timer);
+    pendingImgs.delete(sessionId);
+    const q = text + '\n\n(ลูกค้าส่งรูปภาพ ' + held.ids.length + ' รูปมาก่อนพิมพ์ข้อความด้านบน ให้อ่านรูปประกอบกับข้อความนี้และตอบรวมในคำตอบเดียว) ' + IMAGE_QUERY;
+    console.log(`[image] ${sessionId.slice(0, 8)} caption joined ${held.ids.length} image(s)`);
+    return answerTurn(q, held.ids);
+  }
+  return answerTurn(text, ev.message.type === 'image' ? [ev.message.id] : []);
+
+  async function answerTurn(query, imageIds) {
+  console.log(`[msg] ${sessionId.slice(0, 8)}...: ${query.slice(0, 60)}`);
   if (stype === 'user') lineLoading(userId); // v3.34: ให้ลูกค้าเห็นว่าบอทกำลังพิมพ์ระหว่างรอ Dify
 
   let answer = '';
-  if (ev.message.type === 'image') {
+  if (imageIds.length) {
     try {
-      const imageFile = await uploadLineImageToDify(ev.message.id, sessionId);
-      answer = await askDify(sessionId, text, [imageFile]);
+      const files = await Promise.all(imageIds.slice(-3).map((id) => uploadLineImageToDify(id, sessionId))); // Dify รับสูงสุด 3 รูป
+      answer = await askDify(sessionId, query, files);
     } catch (e) {
       console.log(`[image] ${sessionId.slice(0, 8)} failed:`, e.message);
       answer = 'น้องลัดดารับรูปแล้วค่ะ แต่ตอนนี้ระบบยังเปิดดูรูปนี้ไม่ได้ รบกวนพิมพ์อาการหรือสิ่งที่พบในแปลงเป็นข้อความก่อนนะคะ';
     }
   } else {
-    answer = await askDify(sessionId, text);
+    answer = await askDify(sessionId, query);
   }
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
@@ -2475,6 +2507,7 @@ async function handleEvent(ev) {
   }
   pimgAttachButtons(msgs, pplan.buttons);
   await sendAnswer(s, ev, pushTarget, msgs);
+  }
 }
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
@@ -3621,7 +3654,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.34', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.35', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
