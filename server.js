@@ -110,6 +110,13 @@ const { validateProductData } = require('./product_validator'); // p112: ตร�
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
 const imageButtons = require('./image_buttons');
 const leads = require('./leads'); // v3.31: ส่งเคสลูกค้าสนใจซื้อ + เบอร์ เข้ากลุ่ม LINE ฝ่ายขาย // v3.29: ปุ่มดูรูปที่ยังไม่กดอยู่ต่อจนกว่าจะถามใหม่
+const leadScore = require('./lead_score'); // v3.37 (ทดลอง V.2): คะแนนความสนใจซื้อในหน้า /admin
+const referral = require('./referral'); // v3.37 (ทดลอง V.2): ส่งลูกค้าที่ยืนยันแล้วไปหาร้านตัวแทนทาง LINE
+const LEAD_SCORE_ON = process.env.LEAD_SCORE === 'on';
+const REFERRAL_ON = process.env.REFERRAL === 'on';
+const DEALER_CFG = referral.parseDealers(process.env.DEALERS);
+const DEALERS = DEALER_CFG.dealers;
+if (DEALER_CFG.error) console.log('[referral] ' + DEALER_CFG.error);
 
 const PORT = process.env.PORT || 3000;
 const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
@@ -201,7 +208,8 @@ function initPersist() {
             cbCount: s.cbCount || 0,
             reg: (s.reg && typeof s.reg === 'object' && s.reg.step) ? s.reg : null, // ลงทะเบียนค้างอยู่ -> ถามต่อจากขั้นเดิม
             regPending: s.regPending || '', regInvitedAt: s.regInvitedAt || 0,
-            lead: (s.lead && typeof s.lead === 'object') ? s.lead : null // v3.31: เคสที่ส่งฝ่ายขายแล้ว ไม่ส่งซ้ำหลัง restart
+            lead: (s.lead && typeof s.lead === 'object') ? s.lead : null, // v3.31: เคสที่ส่งฝ่ายขายแล้ว ไม่ส่งซ้ำหลัง restart
+            ref: (s.ref && typeof s.ref === 'object') ? s.ref : null // v3.37: ขั้นตอนส่งต่อร้าน
           });
         }
         console.log(`[persist] loaded ${sessions.size} chats from disk`);
@@ -213,12 +221,15 @@ function initPersist() {
       if (raw && Array.isArray(raw.crmNotes)) {
         for (const [id, arr] of raw.crmNotes) if (id && Array.isArray(arr)) crmNotes.set(id, arr.slice(-200));
       }
+      if (raw && Array.isArray(raw.dealerBind)) { // v3.37: ร้านที่พิมพ์ "ร้านค้า <รหัส>" ไว้แล้ว
+        for (const [did, uid] of raw.dealerBind) { const d = DEALERS.find((x) => x.id === did); if (d && !d.userId && uid) d.userId = uid; }
+      }
     }
   } catch (e) { console.log('[persist] load error:', e.message); }
 }
 
 function stateJson() {
-  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()] });
+  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()], dealerBind: DEALERS.filter((d) => d.userId).map((d) => [d.id, d.userId]) });
 }
 
 function saveNow() {
@@ -620,6 +631,23 @@ function guardRate(answer, userText, sessionId) {
   if (!removed) return answer;
   console.log(`[rate] ${String(sessionId).slice(0, 8)} removed ${removed} rate part(s) (not asked)`);
   return text;
+}
+
+// v3.37 (ทดลอง V.2): คะแนนความสนใจซื้อ + ข้อมูลประกอบการส่งต่อร้าน
+function scoreFor(id, s) {
+  if (!LEAD_SCORE_ON || !s) return null;
+  const c = crm.get(id) || {};
+  return leadScore.scoreLead({ history: s.history, productsOf: productsInAnswer, asksRate: rateGuard.asksRate, province: c.province || '', phone: c.phone || '', referral: s.ref });
+}
+function recentProducts(s, extra) {
+  const now = Date.now();
+  const recent = (s.history || []).filter((h) => h && (!h.at || now - h.at <= 48 * 3600000)).slice(-8).map((h) => String(h.t || ''));
+  const found = productsInAnswer(recent.concat(extra ? [extra] : []).join('\n'));
+  return found.slice(-3);
+}
+function recentQuestions(s) {
+  return (s.history || []).filter((h) => h && h.r === 'u' && h.t && !/^\(/.test(h.t) && !referral.START_RX.test(String(h.t).trim()) && !/^(ยืนยัน|ยกเลิก|ไม่เป็นไร|ร้านค้า )/.test(String(h.t).trim()))
+    .slice(-3).map((h) => String(h.t).replace(/\s+/g, ' ').slice(0, 90));
 }
 
 
@@ -2409,6 +2437,34 @@ async function handleEvent(ev) {
     }
   }
 
+  // v3.37 (ทดลอง V.2): ร้านลงทะเบียนรับเคส + ขั้นตอนส่งต่อร้านที่ลูกค้ายืนยันเอง
+  if (REFERRAL_ON && stype === 'user' && ev.message.type === 'text') {
+    const jr = referral.joinDealer(DEALERS, text, userId);
+    if (jr) {
+      if (jr.ok) { console.log(`[referral] dealer ${jr.dealer.id} bound to ${userId}`); markDirty(); }
+      await sendAnswer(s, ev, pushTarget, jr.reply, { system: true });
+      return;
+    }
+    const rc = crm.get(sessionId) || {};
+    const out = referral.handle(s.ref, text, { dealers: DEALERS, province: rc.province || '', products: recentProducts(s), now: Date.now() });
+    if (out) {
+      s.ref = out.ref; markDirty(); broadcast();
+      if (!out.dropped) {
+        await sendAnswer(s, ev, pushTarget, out.replies, { system: true });
+        if (out.notify) {
+          const card = referral.dealerCard(s.ref, out.notify.dealer, { customerName: rc.real_name || s.name || '', province: rc.province || '', questions: recentQuestions(s), score: scoreFor(sessionId, s) });
+          const ok = await linePush(out.notify.dealer.userId, card);
+          s.ref.notified = ok; markDirty();
+          console.log(`[referral] ${sessionId.slice(0, 8)} -> dealer ${out.notify.dealer.id} card push=${ok}`);
+        } else if (s.ref.step === 'sent') {
+          console.log(`[referral] ${sessionId.slice(0, 8)} -> dealer ${s.ref.dealerId} (ร้านยังไม่ได้ผูก LINE userId จึงไม่ได้ส่งการ์ด)`);
+        }
+        console.log(`[referral] ${sessionId.slice(0, 8)} step=${s.ref.step}`);
+        return;
+      }
+    }
+  }
+
   const tapImgs = ev.message.type === 'text' ? pimgTap(s, text) : null; // v3.14: ปุ่มดูรูปสินค้า
   if (tapImgs && tapImgs.length) {
     pimgAttachButtons(tapImgs, imageButtons.remainingButtons(s, (n) => PIMG[n])); // v3.29: ปุ่มที่ยังไม่กดอยู่ต่อ
@@ -2482,6 +2538,16 @@ async function handleEvent(ev) {
     }
   }
   pimgAttachButtons(msgs, pplan.buttons);
+  // v3.37 (ทดลอง V.2): ลูกค้าพูดถึงการซื้อ -> เสนอส่งต่อร้านตัวแทน (ต้องกดยืนยันเองอีกขั้น)
+  if (REFERRAL_ON && stype === 'user' && DEALERS.length && msgs.length < 5 && ev.message.type === 'text') {
+    const prods = recentProducts(s, answer);
+    if (referral.shouldOffer(s.ref, text, prods, Date.now())) {
+      msgs.push(referral.offerMessage(prods));
+      s.ref = { step: 'offered', products: prods, offeredAt: Date.now(), at: Date.now() };
+      markDirty();
+      console.log(`[referral] ${sessionId.slice(0, 8)} offer ${prods.join(',')}`);
+    }
+  }
   await sendAnswer(s, ev, pushTarget, msgs);
   }
 }
@@ -2542,6 +2608,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .itag.st-quoted { background: #fff1dd; color: #d97706; }
   .itag.st-interested { background: #eef4fb; color: #3b6db3; }
   .itag.st-inactive { background: #f1f3f5; color: #98a2ad; }
+  .itag.sc-hot { background: #ffe8e6; color: #d33a41; } .itag.sc-warm { background: #fff1dd; color: #d97706; } .itag.sc-cold { background: #f1f3f5; color: #98a2ad; }
   .crmbtn { border-radius: 9px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; flex: none; margin-right: 6px; background: #eef4fb; color: #2f5fa3; }
   .crmbtn.on { background: #2f5fa3; color: #fff; }
   .body { flex: 1; min-height: 0; display: flex; }
@@ -2842,7 +2909,7 @@ function findSel() {
 function matchQ(s) {
   if (!q) return true;
   var c = s.crm || {};
-  var hay = [s.name, s.id, s.lastText, c.real_name, c.phone, c.province, c.crops, (c.tags || []).join(' '), STATUS_TH[c.status] || '', s.cb && s.cb.contact, c.pos ? 'pos ' + c.pos : '', c.posc ? 'รอยืนยัน pos' : ''].join(' ').toLowerCase();
+  var hay = [s.name, s.id, s.lastText, c.real_name, c.phone, c.province, c.crops, (c.tags || []).join(' '), STATUS_TH[c.status] || '', s.cb && s.cb.contact, c.pos ? 'pos ' + c.pos : '', c.posc ? 'รอยืนยัน pos' : '', s.score ? s.score.levelTh : '', s.ref && s.ref.step === 'sent' ? 'ส่งร้าน' : ''].join(' ').toLowerCase();
   return hay.indexOf(q) !== -1;
 }
 
@@ -2856,6 +2923,13 @@ function crmBadge(s) {
   if (c.status && c.status !== 'new') h += '<span class="itag st-' + c.status + '">' + esc(STATUS_TH[c.status] || c.status) + '</span>';
   var tg = (c.tags || []).filter(function(t) { return t !== 'ลูกค้า POS'; }); // แท็ก POS แสดงเป็น 🔗POS แล้ว
   if (tg.length) h += '<span class="itag">' + esc(tg[0]) + (tg.length > 1 ? ' +' + (tg.length - 1) : '') + '</span>';
+  return h;
+}
+
+function scoreBadge(s) {
+  var h = '';
+  if (s.score) h += '<span class="itag sc-' + s.score.level + '" title="' + esc((s.score.reasons || []).join(' · ')) + '">' + s.score.icon + ' ' + s.score.value + '</span>';
+  if (s.ref && s.ref.step === 'sent') h += '<span class="itag sc-hot" title="ลูกค้ายืนยันให้ส่งต่อร้านแล้ว">🛒 ' + esc(s.ref.dealerName || 'ส่งร้านแล้ว') + '</span>';
   return h;
 }
 
@@ -2883,7 +2957,7 @@ function renderList() {
     h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isCb ? ' cb' : (isHo ? ' ho' : '')) + '" data-id="' + s.id + '">'
       + av
       + '<div class="icol">'
-      + '<div class="irow1"><span class="iname">' + esc((s.crm && s.crm.real_name) || dispName(s)) + crmBadge(s) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
+      + '<div class="irow1"><span class="iname">' + esc((s.crm && s.crm.real_name) || dispName(s)) + crmBadge(s) + scoreBadge(s) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
       + '<div class="ilast' + (isCb ? ' cbtxt' : (isHo ? ' hotxt' : '')) + '">' + last + '</div>'
       + '</div></div>';
   }
@@ -3154,6 +3228,8 @@ function renderHead() {
   if (s.cb) st += '<span class="pill cb">📞 รอติดต่อกลับ</span>';
   if (s.crm && s.crm.pos) st += '<span class="pill pos" title="ผูกกับรายชื่อ POS แล้ว">🔗 POS: ' + esc(s.crm.pos) + '</span>';
   else if (s.crm && s.crm.posc) st += '<span class="pill o" title="มีรายชื่อ POS ที่น่าจะใช่ รอยืนยันในแผงโปรไฟล์">🔗 POS รอยืนยัน</span>';
+  if (s.score) st += '<span class="pill ' + (s.score.level === 'hot' ? 'r' : 'o') + '" title="' + esc((s.score.reasons || []).join(' · ')) + '">' + s.score.icon + ' สนใจซื้อ ' + s.score.value + '/100 · ' + esc((s.score.reasons || []).slice(0, 3).join(' · ')) + '</span>';
+  if (s.ref && s.ref.step === 'sent') st += '<span class="pill g">🛒 ส่งต่อ ' + esc(s.ref.dealerName || 'ร้าน') + ' แล้ว</span>';
   document.getElementById('hstat').innerHTML = st;
   var b = document.getElementById('tglbtn');
   if (muted) { b.className = 'tgl start'; b.textContent = '▶ เปิดบอทตอบต่อ'; b.dataset.m = '0'; }
@@ -3385,7 +3461,7 @@ function handleAdmin(req, res, path, body) {
     const now = Date.now();
     const rank = (x) => (x.cb ? 2 : 0) + ((x.handoff && x.mutedUntil > now) ? 1 : 0);
     const list = [...sessions.entries()]
-      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none') }))
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none'), score: scoreFor(id, s), ref: s.ref ? { step: s.ref.step, dealerName: s.ref.dealerName || '' } : null }))
       // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
       .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
@@ -3630,7 +3706,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.36', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.37', leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
