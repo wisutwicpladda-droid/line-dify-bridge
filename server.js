@@ -605,45 +605,21 @@ function guardOrder(answer, sessionId) {
 
 
 
-// v3.13: บอกอัตราใช้เฉพาะเมื่อลูกค้าถาม (P-57) ถ้าข้อความลูกค้าไม่ได้ถามอัตรา/ปริมาณ/วิธีผสม ตัดบรรทัดอัตราออกก่อนส่ง
-const RATE_ASK_RX = /อัตรา|เท่า(ไหร่|ไร|ไร)|กี่\s*(ซีซี|cc|มล|ลิตร|กรัม|กิโล|ขวด|ถุง|กระสอบ|ไร่|ช้อน|ฝา|ถัง)|ผสม|วิธีใช้|ใช้(ยัง|อย่าง)ไง|ฉีด(ยัง|อย่าง)ไง|พ่น(ยัง|อย่าง)ไง|หว่าน(ยัง|อย่าง)ไง|ปริมาณ|ถัง|\d+\s*ไร่|ทำ.*(ยัง|อย่าง)ไง|ขั้นตอน/i;
-const RATE_LABEL_RX = /^\s*(\d+[.)]\s*)?[-•]?\s*(อัตรา\s*[:：]|(พ่นด้วย(คน|โดรน)|คนพ่น|โดรน|ใช้โดรน|หว่านด้วย(คน|โดรน))\s*[:：]?\s*(ผสม|ใช้|หว่าน|อัตรา)?\s*\d)/;
-// Gemini often formats the label in Markdown and writes set rates as 50+50.
-// Remove that whole rate line when the customer did not ask for a rate so a
-// partial value such as "50+" cannot remain visible.
-const RATE_MARKED_LINE_RX = /^\s*(?:\d+[.)]\s*)?[-•]?\s*(?:\*\*)?\s*(อัตรา|พ่นด้วย(คน|โดรน)|คนพ่น|โดรน|ใช้โดรน|หว่านด้วย(คน|โดรน))\s*(?:\*\*)?\s*[:：]/;
-const U = '(ซีซี|cc|มล\\.?|ลิตร|กรัม|กิโลกรัม|กก\\.?)';
-const N = '[\\d.,]+(\\s*[-–]\\s*[\\d.,]+)?';
-const RATE_PHRASES = [
-  new RegExp('(ใน|ใช้|ที่)?\\s*อัตรา\\s*' + N + '\\s*' + U + '(\\s*(ต่อ|\\/)\\s*(น้ำ\\s*' + N + '\\s*ลิตร|ไร่|ต้น))?(\\s*(พ่น|ฉีด)ได้\\s*' + N + '\\s*ไร่)?', 'g'),
-  new RegExp('ผสม\\s*' + N + '\\s*' + U + '\\s*(กับ|ต่อ)\\s*น้ำ\\s*' + N + '\\s*ลิตร(\\s*(ต่อ\\s*ไร่|(พ่น|ฉีด)ได้\\s*' + N + '\\s*ไร่))?', 'g'),
-  new RegExp(N + '\\s*' + U + '\\s*(ต่อ|\\/)\\s*(น้ำ\\s*' + N + '\\s*ลิตร|ไร่|ต้น)', 'g'),
-  new RegExp('\\(?\\s*\\d+\\s*(ขวด|ถุง|กระสอบ|ชุด)[^\\n()]{0,30}?ใช้ได้(ประมาณ)?\\s*' + N + '\\s*ไร่\\s*\\)?', 'g')
-];
-// v3.15: ชีท QA 1 ต.ค. ทีมต้องการให้บอกอัตราเมื่อแนะนำสินค้า และตัวกรองนี้ทำให้เหลือเลขค้าง เช่น "ขวดละ 50+" จึงปิดเป็นค่าเริ่มต้น
-// เปิดคืนได้ด้วยตัวแปร RATE_ONLY_WHEN_ASKED=on
+// v3.13: บอกอัตราใช้เฉพาะเมื่อลูกค้าถาม (P-57) ตัวตรวจคำถามและตัวตัดอัตราอยู่ใน rate_guard.js
+// v3.36: นับ "ใช้ในนาข้าวยังไง" (มีคำแทรก) คำพูดถึงวิธีพ่น (คน/โดรน) และข้อความสั้นที่ตอบต่อจากคำถามอัตราภายใน 20 นาที ว่าถามอัตราแล้ว
 // Safe default: do not expose application rates unless the customer asks for
 // rate/volume/mixing details. Set RATE_ONLY_WHEN_ASKED=off only for a QA
 // environment that intentionally wants the legacy always-show behavior.
+const rateGuard = require('./rate_guard');
 const RATE_GUARD_ON = process.env.RATE_ONLY_WHEN_ASKED !== 'off';
 function guardRate(answer, userText, sessionId) {
   if (!RATE_GUARD_ON) return answer;
-  if (RATE_ASK_RX.test(String(userText || ''))) return answer;
-  let n = 0;
-  const out = [];
-  for (const line of String(answer).split('\n')) {
-    if (RATE_LABEL_RX.test(line) || RATE_MARKED_LINE_RX.test(line)) { n++; continue; }
-    let l = line;
-    for (const rx of RATE_PHRASES) l = l.replace(rx, () => { n++; return ' '; });
-    if (l !== line) {
-      l = l.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.)])/g, '$1').trim();
-      if (!l || /^[\s\-–•:,.()]*$/.test(l)) continue;
-    }
-    out.push(l);
-  }
-  if (!n) return answer;
-  console.log(`[rate] ${String(sessionId).slice(0, 8)} removed ${n} rate part(s) (not asked)`);
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const s = sessions.get(sessionId);
+  if (rateGuard.rateAsked(userText, s && s.history)) return answer;
+  const { text, removed } = rateGuard.stripRates(answer);
+  if (!removed) return answer;
+  console.log(`[rate] ${String(sessionId).slice(0, 8)} removed ${removed} rate part(s) (not asked)`);
+  return text;
 }
 
 
@@ -3654,7 +3630,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.35', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.36', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
