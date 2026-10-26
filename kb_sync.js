@@ -238,4 +238,4 @@ function setLevels(lv, mo, categories, status) {
   levels.at = Date.now();
 }
 
-module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels, isOpenForSale };
+module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels, isOpenForSale, api, DATASET_ID, DOC_NAME, hasKey: () => !!KEY };

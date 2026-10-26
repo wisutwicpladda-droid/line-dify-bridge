@@ -66,6 +66,8 @@
 //     - เรียก Dify แบบ streaming (กันถูกตัดที่ 100 วินาที) ถ้าหลุดจะดึงคำตอบที่เสร็จแล้วจาก /messages และลองใหม่ 1 ครั้งเมื่อล้มเร็ว
 //     - ขอทีมขาย/ทีมงานในพื้นที่ทุกรูปแบบตอบจากตารางทีมขายโดยตรง ใช้ชื่อเขตตามรหัส (A04) ไม่รู้จังหวัดถามจังหวัดข้อความเดียว
 //     - คำตอบที่บอกว่ายังไม่มีคำแนะนำ แนบปุ่ม "ทีมขายในพื้นที่" · ประวัติแชทบอกชื่อสินค้าของรูปที่ส่ง · ดาวน์โหลดรูปจาก LINE ลองใหม่ 1 ครั้ง
+// 17. v3.39 (26 ต.ค. 2569): แจ้ง LINE เมื่อเครดิต OpenAI หมดจน Knowledge ของ Dify ใช้ไม่ได้ (kb_health.js)
+//     เช็กทุก KB_HEALTH_MIN นาที และทันทีที่ Dify ตอบ error เรื่องเครดิต · แจ้งอีกครั้งเมื่อกลับมาใช้ได้
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -81,6 +83,8 @@
 //  ADMIN_NOTIFY_IDS           (ไม่บังคับ) LINE userId ของแอดมิน คั่นด้วย , — เมื่อมีลูกค้า
 //                             รอติดต่อกลับ ระบบจะ Push แจ้งเตือนเข้า LINE แอดมินทันที
 //                             (ใช้โควต้า Push 1 ข้อความ/คน/ครั้ง) ดู userId ตัวเองได้จากหน้า /admin
+//  OPENAI_ALERT_TO            (ไม่บังคับ) LINE userId/groupId คั่นด้วย , ที่รับแจ้งเมื่อเครดิต OpenAI หมด (ไม่ตั้ง = ส่งถึง ADMIN_NOTIFY_IDS)
+//  KB_HEALTH_MIN              (ไม่บังคับ) นาทีต่อการเช็กเครดิต OpenAI ผ่าน Knowledge ค่าเริ่ม 60 (ต้องมี DIFY_DATASET_KEY)
 //  SUPABASE_URL               (ไม่บังคับ) https://xxxx.supabase.co  — เปิดใช้ CRM บน Supabase
 //  SUPABASE_SERVICE_KEY       (ไม่บังคับ) service_role key ของโปรเจกต์ (เก็บฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใส่ในหน้าเว็บ)
 //  POS_TABLE                  (ไม่บังคับ) ชื่อตารางเกษตรกรจาก POS ใน Supabase เดียวกัน เช่น customers -> เปิดระบบจับคู่ POS
@@ -138,6 +142,17 @@ const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).fi
 // v3.32: ส่งการ์ดเคสด้วย OA แจ้งเตือนแยก (เช่น น้องเซลล์ม่อน) ถ้าตั้ง LEAD_LINE_TOKEN; ไม่ตั้ง = ใช้ OA น้องลัดดา
 const LEAD_LINE_TOKEN = process.env.LEAD_LINE_TOKEN || '';
 const LEAD_TARGETS = (process.env.SALES_LEAD_TARGETS || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
+// v3.39: ผู้รับแจ้งเตือนเครดิต OpenAI หมด (kb_health.js) ไม่ตั้ง = ADMIN_NOTIFY_IDS
+const OPENAI_ALERT_TO = (process.env.OPENAI_ALERT_TO || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
+const kbHealth = require('./kb_health').createKbHealth({
+  api: kbSync.api, datasetId: kbSync.DATASET_ID, sheetDocName: kbSync.DOC_NAME,
+  resync: () => kbSync.syncOnce(true),
+  notify: async (msg) => {
+    const to = OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS;
+    console.log(`[kb-health] ${msg.split('\n')[0]} -> ${to.length} LINE`);
+    for (const id of to) await linePush(id, msg);
+  }
+});
 const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
 // CRM: เชื่อม Supabase (ถ้าตั้งค่า) ไม่งั้นเก็บใน state file บน Volume
 const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -576,12 +591,13 @@ async function askDify(sessionId, text, files) {
       if (DIFY_MODE === 'blocking') {
         const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
         if (r.status === 200 && r.data && typeof r.data.answer === 'string') answer = r.data.answer;
-        else console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
+        else { console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300)); kbHealth.checkSoon(JSON.stringify(r.data)); }
       } else {
         const r = await streamChat({ base: DIFY_BASE, key: DIFY_KEY, payload, timeoutMs: DIFY_TIMEOUT_MS });
         if (r.answer.trim() && !r.error) answer = r.answer;
         else {
           console.log(`[dify] ${sid} stream failed after ${Math.round((Date.now() - t0) / 1000)}s: ${r.error || 'empty answer'}`);
+          kbHealth.checkSoon(r.error);
           if (r.conversationId) payload.conversation_id = r.conversationId;
           if (r.messageId) {
             answer = await recoverDifyAnswer(sessionId, r.conversationId || conversationId, r.messageId);
@@ -3733,7 +3749,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.38', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.39', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -3777,4 +3793,11 @@ if (SB_ON) {
 }
 setTimeout(bootBackfill, 3000);
 kbSync.start();
+if (kbSync.hasKey()) { // v3.39: เช็กเครดิต OpenAI ผ่าน Knowledge
+  const KB_HEALTH_MIN = Math.max(10, parseInt(process.env.KB_HEALTH_MIN || '60', 10) || 60);
+  const alertTo = OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS;
+  console.log(`[kb-health] ON every ${KB_HEALTH_MIN} min -> ${alertTo.map((x) => x.slice(0, 8) + '…').join(', ') || 'no LINE recipient (set OPENAI_ALERT_TO)'}`);
+  setTimeout(() => kbHealth.check(), 90000);
+  setInterval(() => kbHealth.check(), KB_HEALTH_MIN * 60000);
+}
 server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
