@@ -68,6 +68,8 @@
 //     - คำตอบที่บอกว่ายังไม่มีคำแนะนำ แนบปุ่ม "ทีมขายในพื้นที่" · ประวัติแชทบอกชื่อสินค้าของรูปที่ส่ง · ดาวน์โหลดรูปจาก LINE ลองใหม่ 1 ครั้ง
 // 17. v3.39 (26 ต.ค. 2569): แจ้ง LINE เมื่อเครดิต OpenAI หมดจน Knowledge ของ Dify ใช้ไม่ได้ (kb_health.js)
 //     เช็กทุก KB_HEALTH_MIN นาที และทันทีที่ Dify ตอบ error เรื่องเครดิต · แจ้งอีกครั้งเมื่อกลับมาใช้ได้
+// 18. v3.40 (26 ต.ค. 2569): สร้างดัชนี dify_icpladda_index.md จาก Google Sheet และซิงก์เข้า Knowledge ทุกชั่วโมง (kb_index.js)
+//     เนื้อหาเปลี่ยนจึงอัปโหลดเป็นเอกสารใหม่ รอ Dify ทำดัชนีเสร็จแล้วค่อยลบตัวเก่า ถ้าตัวใหม่ล้มจะเก็บตัวเก่าไว้
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -85,6 +87,8 @@
 //                             (ใช้โควต้า Push 1 ข้อความ/คน/ครั้ง) ดู userId ตัวเองได้จากหน้า /admin
 //  OPENAI_ALERT_TO            (ไม่บังคับ) LINE userId/groupId คั่นด้วย , ที่รับแจ้งเมื่อเครดิต OpenAI หมด (ไม่ตั้ง = ส่งถึง ADMIN_NOTIFY_IDS)
 //  KB_HEALTH_MIN              (ไม่บังคับ) นาทีต่อการเช็กเครดิต OpenAI ผ่าน Knowledge ค่าเริ่ม 60 (ต้องมี DIFY_DATASET_KEY)
+//  KB_INDEX_SYNC              (ไม่บังคับ) off = ปิดการซิงก์ดัชนี dify_icpladda_index.md จากชีท (ต้องมี DIFY_DATASET_KEY)
+//  KB_INDEX_MIN               (ไม่บังคับ) นาทีต่อรอบซิงก์ดัชนี ค่าเริ่ม 60
 //  SUPABASE_URL               (ไม่บังคับ) https://xxxx.supabase.co  — เปิดใช้ CRM บน Supabase
 //  SUPABASE_SERVICE_KEY       (ไม่บังคับ) service_role key ของโปรเจกต์ (เก็บฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใส่ในหน้าเว็บ)
 //  POS_TABLE                  (ไม่บังคับ) ชื่อตารางเกษตรกรจาก POS ใน Supabase เดียวกัน เช่น customers -> เปิดระบบจับคู่ POS
@@ -153,6 +157,8 @@ const kbHealth = require('./kb_health').createKbHealth({
     for (const id of to) await linePush(id, msg);
   }
 });
+// v3.40: ดัชนี dify_icpladda_index.md สร้างจากชีทและซิงก์เอง (kb_index.js)
+const kbIndex = require('./kb_index').createKbIndex({ api: kbSync.api, datasetId: kbSync.DATASET_ID, fetchSheets: kbSync.fetchSheets });
 const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
 // CRM: เชื่อม Supabase (ถ้าตั้งค่า) ไม่งั้นเก็บใน state file บน Volume
 const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -3749,7 +3755,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.39', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.40', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -3800,4 +3806,5 @@ if (kbSync.hasKey()) { // v3.39: เช็กเครดิต OpenAI ผ่า
   setTimeout(() => kbHealth.check(), 90000);
   setInterval(() => kbHealth.check(), KB_HEALTH_MIN * 60000);
 }
+if (kbSync.hasKey()) kbIndex.start(); // v3.40: ซิงก์ดัชนีจากชีท
 server.listen(PORT, () => console.log(`line-dify-bridge v3.6 (register=${REG_MODE}+pos-link=${POS_ON}+crm+callback-flag+backfill+send+persist=${persistOK}+SSE, notify=${ADMIN_NOTIFY_IDS.length}, supabase=${SB_ON}) running on port ${PORT}`));
