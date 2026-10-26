@@ -4,13 +4,25 @@
 // ต่างจากเดิม: ใส่เฉพาะสินค้าที่เปิดขาย · ลำดับแนะนำตามที่กำหนด 29 ก.ย. (ชุดเดียวกับ kb_sync) · chunk ที่ยาวเกิน MAX_CHARS แบ่งเป็นส่วน
 // ทุก KB_INDEX_MIN นาที: เนื้อหาไม่เปลี่ยน = ไม่ทำอะไร · เปลี่ยน = อัปโหลดเป็นเอกสารใหม่ รอ Dify ทำดัชนีเสร็จ แล้วค่อยลบตัวเก่า
 // ถ้าตัวใหม่ทำดัชนีไม่สำเร็จ (เช่น เครดิต OpenAI หมด) ลบตัวใหม่ทิ้งและเก็บตัวเก่าไว้ บอทจึงค้นดัชนีได้ตลอด
-// เอกสารทุกตัวที่ชื่อ KB_INDEX_DOC ถือว่า bridge ดูแล ถ้าสั่ง Disable ทุกตัวใน Dify ระบบจะหยุดซิงก์ให้
+// ชื่อเอกสารมีรหัสเนื้อหา เช่น dify_icpladda_index_1a2b3c4d.md เพราะ Dify เขียนทับเอกสารที่ชื่อซ้ำแทนการสร้างใหม่
+// รหัสในชื่อจึงใช้บอกได้ด้วยว่าเนื้อหาใน Dify ตรงกับชีทหรือยัง
+// เอกสารชื่อ dify_icpladda_index.md และ dify_icpladda_index_<รหัส>.md ทุกตัว bridge เป็นคนดูแล ถ้าสั่ง Disable ทุกตัวใน Dify ระบบจะหยุดซิงก์ให้
 // ตัวแปร: KB_INDEX_SYNC=off ปิด · KB_INDEX_MIN นาทีต่อรอบ (ค่าเริ่ม 60) · KB_INDEX_DOC ชื่อเอกสาร (ค่าเริ่ม dify_icpladda_index.md)
 'use strict';
 const crypto = require('crypto');
 const kb = require('./kb_sync');
 
 const DOC = process.env.KB_INDEX_DOC || 'dify_icpladda_index.md';
+const DOT = DOC.lastIndexOf('.');
+const BASE = DOT > 0 ? DOC.slice(0, DOT) : DOC, EXT = DOT > 0 ? DOC.slice(DOT) : '';
+const docName = (hash) => BASE + '_' + hash.slice(0, 8) + EXT;
+// ชื่อเดิม หรือ ชื่อเดิม_<รหัส 8 ตัว>
+function isManaged(name) {
+  const n = String(name || '');
+  if (n === DOC) return true;
+  if (!n.startsWith(BASE + '_') || (EXT && !n.endsWith(EXT))) return false;
+  return /^[0-9a-f]{8}$/.test(n.slice(BASE.length + 1, n.length - EXT.length));
+}
 const MAX_CHARS = 2000; // chunk ยาวมากค้นด้วยความหมายไม่ค่อยเจอ (สคริปต์เดิมเจอที่ ~4,000 ตัวอักษร) และ Dify ตัดที่ 4,000 token
 const MIN_CHUNKS = 50; // ได้น้อยกว่านี้แปลว่าโหลดชีทไม่ครบ จะไม่อัปโหลด
 const UNRANKED = 9;
@@ -163,12 +175,7 @@ function buildIndex(sheets, opts) {
 function difyClean(t) {
   return t.replace(/<\|/g, '<').replace(/\|>/g, '>').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\xEF\xBF\xBE\uFFFE]/g, '');
 }
-// Dify ตัดสัญลักษณ์ที่ขึ้นต้น segment ออก (remove_leading_symbols) เช่น "##" ของ chunk แรก
-const LEADING_SYMBOLS = /^[\u2000-\u206F\u2E00-\u2E7F\u3000-\u303F!"#$%&'()*+,./:;<=>?@^_\x60~]+/;
-// ลายเซ็นเนื้อหาสำหรับเทียบกับ segment ใน Dify: ไม่สนช่องว่างและสัญลักษณ์หน้า segment ที่ Dify ปรับเอง
-const sig = (parts) => crypto.createHash('sha256')
-  .update(parts.map((p) => String(p).trim().replace(LEADING_SYMBOLS, '').replace(/\s+/g, '')).join(''))
-  .digest('hex').slice(0, 16);
+const hashOf = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 function createKbIndex(opts) {
   const { api, datasetId, fetchSheets } = opts;
@@ -177,10 +184,10 @@ function createKbIndex(opts) {
   const pollMs = opts.pollMs || 15000; // Knowledge API ของ Dify Cloud จำกัดจำนวนครั้งต่อนาที
   const timeoutMs = opts.timeoutMs || 15 * 60000;
   const enabled = opts.enabled != null ? !!opts.enabled : !/^(off|0|false|no)$/i.test(process.env.KB_INDEX_SYNC || '');
-  const state = { enabled, ok: null, at: 0, action: '', chunks: 0, products: 0, docId: '', hash: '', error: '', running: false };
+  const state = { enabled, ok: null, at: 0, action: '', name: '', chunks: 0, products: 0, docId: '', error: '', running: false };
   const base = '/datasets/' + datasetId;
 
-  async function listSame() {
+  async function listManaged() {
     const docs = [];
     for (let page = 1; page <= 10; page++) {
       const r = await api('GET', base + '/documents?page=' + page + '&limit=100');
@@ -189,21 +196,7 @@ function createKbIndex(opts) {
       docs.push(...d);
       if (!d.length || !(r.data && r.data.has_more)) break;
     }
-    return docs.filter((d) => d && d.name === DOC && !d.archived);
-  }
-
-  async function remoteSig(docId) {
-    const segs = [];
-    for (let page = 1; page <= 50; page++) {
-      const r = await api('GET', base + '/documents/' + docId + '/segments?page=' + page + '&limit=100');
-      if (r.status !== 200) throw new Error('segments ' + r.status + ' ' + String(r.text || '').slice(0, 200));
-      const d = (r.data && r.data.data) || [];
-      segs.push(...d);
-      const total = r.data && r.data.total;
-      if (!d.length || (total != null ? segs.length >= total : !(r.data && r.data.has_more))) break;
-    }
-    segs.sort((a, b) => (a.position || 0) - (b.position || 0));
-    return sig(segs.map((x) => x.content || ''));
+    return docs.filter((d) => d && isManaged(d.name) && !d.archived);
   }
 
   async function waitIndexed(batch) {
@@ -235,37 +228,38 @@ function createKbIndex(opts) {
     return state;
   }
 
-  async function syncOnce(force) {
+  async function syncOnce() {
     if (!state.enabled || state.running) return state;
     state.running = true;
     try {
       const built = buildIndex(await fetchSheets());
       if (built.chunks.length < MIN_CHUNKS) throw new Error('built only ' + built.chunks.length + ' chunks, skip');
-      const hash = sig(built.chunks);
-      const info = { hash, chunks: built.chunks.length, products: built.products };
-      const same = await listSame();
-      if (same.length && same.every((d) => d.enabled === false)) return done(Object.assign({ ok: true, action: 'disabled-in-dify' }, info));
-      const cur = same.filter((d) => d.enabled !== false && d.indexing_status === 'completed')
-        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0];
-      if (cur && !force && ((state.docId === cur.id && state.hash === hash) || (await remoteSig(cur.id)) === hash)) {
-        // เนื้อหาเหมือนเดิม เก็บกวาดตัวซ้ำที่ค้างจากรอบก่อน (ถ้ามี)
-        const stale = same.filter((d) => d.id !== cur.id && /^(completed|error)$/.test(d.indexing_status || ''));
+      const name = docName(hashOf(built.text));
+      const info = { name, chunks: built.chunks.length, products: built.products };
+      const managed = await listManaged();
+      if (managed.length && managed.every((d) => d.enabled === false)) return done(Object.assign({ ok: true, action: 'disabled-in-dify' }, info));
+      const cur = managed.find((d) => d.name === name && d.enabled !== false && d.indexing_status === 'completed');
+      if (cur) {
+        // เนื้อหาใน Dify ตรงกับชีทแล้ว เก็บกวาดตัวเก่าที่ค้าง (ไม่แตะตัวที่กำลังทำดัชนี)
+        const stale = managed.filter((d) => d.id !== cur.id && /^(completed|error)$/.test(d.indexing_status || ''));
         const failed = stale.length ? await remove(stale.map((d) => d.id)) : [];
         return done(Object.assign({ ok: !failed.length, action: stale.length ? 'unchanged+cleaned' : 'unchanged', docId: cur.id,
           removed: stale.length - failed.length, error: failed.length ? 'delete failed ' + failed.join(',') : '' }, info));
       }
-      const r = await api('POST', base + '/document/create-by-text', { name: DOC, text: built.text,
+      const before = new Set(managed.map((d) => d.id));
+      const r = await api('POST', base + '/document/create-by-text', { name, text: built.text,
         indexing_technique: 'high_quality', doc_form: 'text_model', doc_language: 'Thai', process_rule: PROCESS_RULE });
       if (r.status !== 200 || !r.data || !r.data.document) throw new Error('create ' + r.status + ' ' + String(r.text || '').slice(0, 300));
       const newId = r.data.document.id;
       const w = await waitIndexed(r.data.batch);
       if (!w.ok) {
-        await remove([newId]);
+        // ห้ามลบเอกสารที่มีอยู่ก่อน แม้ Dify จะเขียนทับตัวเดิมแทนการสร้างใหม่
+        if (!before.has(newId)) await remove([newId]);
         throw new Error(w.error + ' (kept the previous index)');
       }
-      const old = same.map((d) => d.id).filter((id) => id !== newId);
+      const old = managed.map((d) => d.id).filter((id) => id !== newId);
       const failed = old.length ? await remove(old) : [];
-      return done(Object.assign({ ok: !failed.length, action: cur ? 'replaced' : 'created', docId: newId, segments: w.segments,
+      return done(Object.assign({ ok: !failed.length, action: managed.length ? 'replaced' : 'created', docId: newId, segments: w.segments,
         removed: old.length - failed.length, error: failed.length ? 'delete failed ' + failed.join(',') : '' }, info));
     } catch (e) {
       Object.assign(state, { ok: false, at: now(), error: e.message });
@@ -286,11 +280,11 @@ function createKbIndex(opts) {
 
   function status() {
     if (!state.enabled) return 'off';
-    return { ok: state.ok, at: state.at, action: state.action, chunks: state.chunks, products: state.products,
+    return { ok: state.ok, at: state.at, action: state.action, name: state.name, chunks: state.chunks, products: state.products,
       docId: state.docId ? state.docId.slice(0, 8) : '', error: state.error ? state.error.slice(0, 200) : undefined };
   }
 
   return { state, syncOnce, start, status };
 }
 
-module.exports = { createKbIndex, buildIndex, sig, table, rateText, DOC, PROCESS_RULE, MAX_CHARS };
+module.exports = { createKbIndex, buildIndex, table, rateText, isManaged, docName, hashOf, DOC, PROCESS_RULE, MAX_CHARS };
