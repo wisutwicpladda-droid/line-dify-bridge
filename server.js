@@ -61,6 +61,11 @@
 //     CRM มีพืชแต่ POS ว่าง -> เติมให้ POS · POS มีพืชแต่ CRM ว่าง -> เติมให้ CRM (ไม่ทับค่าที่อีกฝั่งกรอกไว้)
 //     แอดมินแก้พืช/ไร่ในแผงโปรไฟล์ -> อัปเดตแถว POS ที่ผูกอยู่ทันที · ตรวจโครงสร้างตารางใหม่ทุกครั้งที่รีเฟรช (เพิ่ม column แล้วไม่ต้อง redeploy)
 // 15. ไม่ใช้ dependency ใดๆ (Node built-in ล้วน)
+// 16. v3.38 (รีวิว feedback 26 ต.ค. 2569):
+//     - ข้อความ/รูปที่ลูกค้าส่งติดกันรวมเป็นคำถามเดียว และแต่ละแชทตอบทีละคำถาม (LINE_TEXT_WAIT_SECONDS ค่าเริ่ม 4)
+//     - เรียก Dify แบบ streaming (กันถูกตัดที่ 100 วินาที) ถ้าหลุดจะดึงคำตอบที่เสร็จแล้วจาก /messages และลองใหม่ 1 ครั้งเมื่อล้มเร็ว
+//     - ขอทีมขาย/ทีมงานในพื้นที่ทุกรูปแบบตอบจากตารางทีมขายโดยตรง ใช้ชื่อเขตตามรหัส (A04) ไม่รู้จังหวัดถามจังหวัดข้อความเดียว
+//     - คำตอบที่บอกว่ายังไม่มีคำแนะนำ แนบปุ่ม "ทีมขายในพื้นที่" · ประวัติแชทบอกชื่อสินค้าของรูปที่ส่ง · ดาวน์โหลดรูปจาก LINE ลองใหม่ 1 ครั้ง
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -109,6 +114,9 @@ const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: ก�
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
 const imageButtons = require('./image_buttons');
+const { createTurnQueue, turnQuery } = require('./turn_queue'); // v3.38: รวมข้อความที่ส่งติดกัน + ตอบทีละคำถามต่อแชท (FB-02)
+const { teamAsk, provinceAnswer } = require('./team_ask'); // v3.38: ขอทีมขายตอบจากตารางทีมขายโดยตรง (FB-04, FB-11)
+const { streamChat } = require('./dify_stream'); // v3.38: Dify แบบ streaming กันถูกตัดที่ 100 วินาที (FB-09)
 const leads = require('./leads'); // v3.31: ส่งเคสลูกค้าสนใจซื้อ + เบอร์ เข้ากลุ่ม LINE ฝ่ายขาย // v3.29: ปุ่มดูรูปที่ยังไม่กดอยู่ต่อจนกว่าจะถามใหม่
 
 const PORT = process.env.PORT || 3000;
@@ -120,7 +128,7 @@ const MUTE_MINUTES = Math.max(1, parseInt(process.env.MUTE_MINUTES || '60', 10) 
 const RAILWAY_VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
 const STATE_DIR = process.env.STATE_DIR || RAILWAY_VOL || '/data';
 const HAS_VOLUME = !!RAILWAY_VOL && STATE_DIR.startsWith(RAILWAY_VOL); // ถาวรจริงเฉพาะเมื่อ Railway Attach Volume แล้ว (Railway ตั้ง RAILWAY_VOLUME_MOUNT_PATH ให้เอง) และ STATE_DIR ชี้เข้า Volume นั้น
-const DIFY_BASE = 'https://api.dify.ai/v1';
+const DIFY_BASE = (process.env.DIFY_API_BASE || 'https://api.dify.ai/v1').replace(/\/+$/, ''); // override ได้เฉพาะตอนเทส
 const LINE_API = (process.env.LINE_API_BASE || 'https://api.line.me').replace(/\/+$/, ''); // override ได้เฉพาะตอนเทส
 const LINE_DATA_API = (process.env.LINE_DATA_API_BASE || process.env.LINE_API_BASE || 'https://api-data.line.me').replace(/\/+$/, ''); // อัปโหลดรูป rich menu
 const FOREVER = 8640000000000000;
@@ -478,20 +486,38 @@ function imageExtension(contentType) {
 
 async function uploadLineImageToDify(messageId, sessionId) {
   if (!CH_TOKEN || !DIFY_KEY) throw new Error('missing LINE/Dify credentials');
-  const raw = await requestBuffer(
-    'GET',
-    `${LINE_DATA_API}/v2/bot/message/${encodeURIComponent(messageId)}/content`,
-    { Authorization: 'Bearer ' + CH_TOKEN },
-    10 * 1024 * 1024
-  );
-  if (raw.status !== 200 || !raw.body.length) throw new Error(`LINE image download failed (${raw.status})`);
+  const sid = String(sessionId).slice(0, 8);
+  // v3.38 (FB-10): ลองดาวน์โหลด/อัปโหลดซ้ำ 1 ครั้ง และ log ขนาด/ชนิดไฟล์ทุกครั้งเพื่อตามสาเหตุได้
+  let raw = null, lastErr = null;
+  for (let attempt = 1; attempt <= 2 && !raw; attempt++) {
+    try {
+      const r = await requestBuffer(
+        'GET',
+        `${LINE_DATA_API}/v2/bot/message/${encodeURIComponent(messageId)}/content`,
+        { Authorization: 'Bearer ' + CH_TOKEN },
+        10 * 1024 * 1024
+      );
+      if (r.status === 200 && r.body.length) raw = r;
+      else lastErr = new Error(`LINE image download failed (${r.status})`);
+    } catch (e) { lastErr = e; }
+    if (!raw) { console.log(`[image] ${sid} download attempt ${attempt} failed: ${lastErr && lastErr.message}`); if (attempt === 1) await new Promise((res) => setTimeout(res, 1500)); }
+  }
+  if (!raw) throw lastErr || new Error('LINE image download failed');
   const contentType = String(raw.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
   if (!contentType.startsWith('image/')) throw new Error(`LINE content is not an image (${contentType})`);
+  console.log(`[image] ${sid} ${messageId} ${contentType} ${Math.round(raw.body.length / 1024)}KB`);
   const form = multipartImageBody(raw.body, `line-${messageId}.${imageExtension(contentType)}`, contentType, sessionId);
-  const uploaded = await request('POST', `${DIFY_BASE}/files/upload`, {
-    Authorization: `Bearer ${DIFY_KEY}`,
-    'Content-Type': form.contentType
-  }, form.body);
+  let uploaded = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      uploaded = await request('POST', `${DIFY_BASE}/files/upload`, {
+        Authorization: `Bearer ${DIFY_KEY}`,
+        'Content-Type': form.contentType
+      }, form.body);
+    } catch (e) { uploaded = { status: 0, data: { message: e.message } }; }
+    if ([200, 201].includes(uploaded.status) && uploaded.data && (uploaded.data.id || uploaded.data.file_id)) break;
+    console.log(`[image] ${sid} Dify upload attempt ${attempt} failed (${uploaded.status}) ${JSON.stringify(uploaded.data).slice(0, 200)}`);
+  }
   const id = uploaded.data && (uploaded.data.id || uploaded.data.file_id);
   if (![200, 201].includes(uploaded.status) || !id) {
     throw new Error(`Dify image upload failed (${uploaded.status})`);
@@ -499,32 +525,80 @@ async function uploadLineImageToDify(messageId, sessionId) {
   return { type: 'image', transfer_method: 'local_file', upload_file_id: String(id) };
 }
 
+// v3.38 (FB-09): Dify Cloud ตัด request แบบ blocking ที่ราว 100 วินาที ทั้งที่ workflow ยังทำงานต่อจนเสร็จ
+// (21 ต.ค. "อะบา ชื่อว่าอะไร" ใช้ 134 วินาที ลูกค้าเห็น "ระบบขัดข้องชั่วคราว") -> ใช้ streaming เป็นค่าเริ่ม
+// ถ้า stream หลุดแต่รู้ message id แล้ว รอดึงคำตอบที่เสร็จจาก /messages · ล้มเร็ว (< 30 วิ) ลองใหม่ 1 ครั้ง
+// DIFY_RESPONSE_MODE=blocking = กลับไปใช้แบบเดิม
+const DIFY_MODE = process.env.DIFY_RESPONSE_MODE === 'blocking' ? 'blocking' : 'streaming';
+const DIFY_TIMEOUT_MS = Math.max(60, parseInt(process.env.DIFY_TIMEOUT_SEC || '240', 10) || 240) * 1000;
+const DIFY_RECOVER_MS = Math.max(0, parseInt(process.env.DIFY_RECOVER_SEC || '90', 10) || 0) * 1000;
+const LEGACY_POINTER = 'ส่วนตัวเลขอัตราหรือจำนวนที่ละไว้ รบกวนสอบถามทีมขายในพื้นที่เพื่อยืนยันอีกครั้งนะคะ';
+const RATE_POINTER = 'ส่วนอัตราใช้ที่แน่นอนสำหรับกรณีนี้ รบกวนสอบถามทีมขายในพื้นที่เพิ่มเติมนะคะ';
+
+async function recoverDifyAnswer(sessionId, conversationId, messageId) {
+  if (!conversationId || !messageId || !DIFY_RECOVER_MS) return '';
+  const t0 = Date.now();
+  while (Date.now() - t0 < DIFY_RECOVER_MS) {
+    await new Promise((res) => setTimeout(res, 6000));
+    try {
+      const r = await request('GET', `${DIFY_BASE}/messages?user=${encodeURIComponent(sessionId)}&conversation_id=${encodeURIComponent(conversationId)}&limit=5`, {
+        Authorization: `Bearer ${DIFY_KEY}`
+      });
+      const list = r.status === 200 && r.data && Array.isArray(r.data.data) ? r.data.data : [];
+      const m = list.find((x) => x && x.id === messageId);
+      if (m && typeof m.answer === 'string' && m.answer.trim()) return m.answer;
+      if (m && (m.status === 'error' || m.error)) return '';
+    } catch (e) { /* ลองรอบถัดไป */ }
+  }
+  return '';
+}
+
 async function askDify(sessionId, text, files) {
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
+  const sid = String(sessionId).slice(0, 8);
   const conversationId = await findConversation(sessionId);
   const difyQuery = sheetContext.enrichQuery(text, productMaster.master, productMaster.usage, kbSync.levels);
-  if (difyQuery !== text) console.log(`[sheet-context] ${String(sessionId).slice(0, 8)} attached verified sugarcane herbicide matches`);
-  try {
-    const payload = {
-      // v3.30: ส่งจังหวัดจากโปรไฟล์ CRM ให้ Dify เลือกทีมขายประจำเขตได้โดยไม่ต้องถามซ้ำ
-      inputs: { customer_province: crmProvince(sessionId) },
-      query: difyQuery,
-      response_mode: 'blocking',
-      user: sessionId,
-      conversation_id: conversationId,
-      auto_generate_name: true
-    };
-    if (Array.isArray(files) && files.length) payload.files = files;
-    const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
-    if (r.status === 200 && r.data && typeof r.data.answer === 'string') {
-      const guarded = guardOrder(guardInternal(guardPhones(guardRate(guardCalc(r.data.answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
-      const visible = stripVisibleCitations(guarded);
-      const safe = guardUnreleasedProducts(visible, productMaster.master, sessionId, (msg) => console.log(msg));
-      return compactResponse(safe, text, PIMG_NAMES);
-    }
-    console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
-  } catch (e) { console.log('dify fetch error:', e.message); }
-  return '';
+  if (difyQuery !== text) console.log(`[sheet-context] ${sid} attached verified sugarcane herbicide matches`);
+  const payload = {
+    // v3.30: ส่งจังหวัดจากโปรไฟล์ CRM ให้ Dify เลือกทีมขายประจำเขตได้โดยไม่ต้องถามซ้ำ
+    inputs: { customer_province: crmProvince(sessionId) },
+    query: difyQuery,
+    response_mode: DIFY_MODE,
+    user: sessionId,
+    conversation_id: conversationId,
+    auto_generate_name: true
+  };
+  if (Array.isArray(files) && files.length) payload.files = files;
+  let answer = '';
+  for (let attempt = 1; attempt <= 2 && !answer; attempt++) {
+    const t0 = Date.now();
+    try {
+      if (DIFY_MODE === 'blocking') {
+        const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
+        if (r.status === 200 && r.data && typeof r.data.answer === 'string') answer = r.data.answer;
+        else console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300));
+      } else {
+        const r = await streamChat({ base: DIFY_BASE, key: DIFY_KEY, payload, timeoutMs: DIFY_TIMEOUT_MS });
+        if (r.answer.trim() && !r.error) answer = r.answer;
+        else {
+          console.log(`[dify] ${sid} stream failed after ${Math.round((Date.now() - t0) / 1000)}s: ${r.error || 'empty answer'}`);
+          if (r.conversationId) payload.conversation_id = r.conversationId;
+          if (r.messageId) {
+            answer = await recoverDifyAnswer(sessionId, r.conversationId || conversationId, r.messageId);
+            if (answer) console.log(`[dify] ${sid} recovered the finished answer from /messages`);
+          }
+        }
+      }
+    } catch (e) { console.log('dify fetch error:', e.message); }
+    if (!answer && Date.now() - t0 > 30000) break; // ล้มหลังรอนานแล้ว ไม่ลองซ้ำให้ลูกค้ารอเพิ่ม
+    if (!answer && attempt === 1) console.log(`[dify] ${sid} retry once`);
+  }
+  if (!answer) return '';
+  const guarded = guardOrder(guardInternal(guardPhones(guardRate(guardCalc(answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId);
+  const visible = stripVisibleCitations(guarded);
+  const safe = guardUnreleasedProducts(visible, productMaster.master, sessionId, (msg) => console.log(msg));
+  // v3.38 (FB-03): ข้อความภายในจากตัวกรองตัวเลขรุ่นเก่าใน Dify ห้ามถึงลูกค้า
+  return compactResponse(safe, text, PIMG_NAMES).split(LEGACY_POINTER).join(RATE_POINTER);
 }
 
 // ---------- LINE ----------
@@ -690,6 +764,7 @@ async function refreshProductMaster() {
 setTimeout(() => { refreshProductMaster().catch(() => {}); }, 1500);
 setInterval(() => { refreshProductMaster().catch(() => {}); }, Math.max(5, parseInt(process.env.PRODUCT_MASTER_SYNC_MIN || '60', 10) || 60) * 60000);
 const pimgMsgs = new WeakSet();
+const pimgNames = new WeakMap(); // v3.38 (FB-12): รูปสินค้า -> ชื่อสินค้า สำหรับประวัติแชทในหน้าแอดมิน
 function productsInAnswer(answer) {
   let t = String(answer);
   const hits = [];
@@ -707,7 +782,7 @@ function productImageMsg(answer) {
   const names = productsInAnswer(answer).filter((n) => !seen.has(PIMG[n]) && seen.add(PIMG[n])).slice(0, PIMG_MAX);
   if (!names.length) return null;
   if (PIMG_MODE === 'image') {
-    const imgs = names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
+    const imgs = names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); pimgNames.set(m, n); return m; });
     return imgs;
   }
   // แสดงเฉพาะรูปสินค้า ไม่มีข้อความ และพื้นการ์ดโปร่งใส
@@ -731,7 +806,7 @@ const PIMG_DEDUP_MS = (parseFloat(process.env.PRODUCT_IMG_DEDUP_H || '24') || 24
 const PIMG_ASK_RX = /(ขอ|ส่ง|มี|ดู|อยากเห็น|โชว์|เห็น).{0,8}(รูป|ภาพ)|(รูป|ภาพ)\s*(สินค้า|ขวด|ยา|หน่อย|ของ|ไหม)|หน้าตา(เป็น)?\s*(ยัง|อย่าง)ไง|แพ็คเกจ|ฉลาก/;
 function pimgBuild(names) {
   if (!names.length) return [];
-  if (PIMG_MODE === 'image') return names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); return m; });
+  if (PIMG_MODE === 'image') return names.map((n) => { const u = PUBLIC_URL + '/img/p/' + PIMG[n]; const m = { type: 'image', originalContentUrl: u, previewImageUrl: u }; pimgMsgs.add(m); pimgNames.set(m, n); return m; });
   const m = productImageMsg(names.join('\n'));
   return m ? [].concat(m) : [];
 }
@@ -790,7 +865,7 @@ async function sendAllProductImages(s, ev, pushTarget, names) {
   for (let i = 4; i < imgs.length; i += 5) {
     const batch = imgs.slice(i, i + 5);
     const ok = await linePush(pushTarget, batch);
-    batch.forEach(() => pushHist(s, 'b', '(รูปสินค้า)'));
+    batch.forEach((m) => pushHist(s, 'b', '(รูปสินค้า: ' + (pimgNames.get(m) || '-') + ')'));
     console.log(`[pimg] all-category push ${i + 1}-${Math.min(i + batch.length, imgs.length)} ok=${ok}`);
   }
   return true;
@@ -885,7 +960,21 @@ function lineLoading(userId) {
 // LINE_IMAGE_WAIT_SECONDS (ค่าเริ่มต้น 8, 0 = ตอบรูปทันทีแบบเดิม)
 const IMG_WAIT_MS = Math.max(0, Math.min(30, parseFloat(process.env.LINE_IMAGE_WAIT_SECONDS || '8') || 0)) * 1000;
 const IMAGE_QUERY = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
-const pendingImgs = new Map(); // sessionId -> { ids, timer } (ไม่บันทึกลงไฟล์)
+// v3.38 (FB-02): ข้อความที่ส่งติดกันภายใน LINE_TEXT_WAIT_SECONDS (ค่าเริ่ม 4) รวมเป็นคำถามเดียว
+// รูปอย่างเดียวรอคำอธิบาย LINE_IMAGE_WAIT_SECONDS · LINE_JOIN_MESSAGES=off = ตอบทุกข้อความทันทีแบบเดิม
+const TEXT_WAIT_MS = Math.max(0, Math.min(15, parseFloat(process.env.LINE_TEXT_WAIT_SECONDS || '4') || 0)) * 1000;
+const TURN_JOIN_ON = process.env.LINE_JOIN_MESSAGES !== 'off';
+const STICKER_QUERY = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
+const turns = createTurnQueue({
+  textWaitMs: TEXT_WAIT_MS,
+  imageWaitMs: IMG_WAIT_MS,
+  log: (m) => console.log(m),
+  run: (ctx, items) => {
+    const s = ctx.s;
+    if (s.handoff || (s.mutedUntil && s.mutedUntil > Date.now())) { console.log(`[turn] ${ctx.sessionId.slice(0, 8)} skip ${items.length} message(s): admin took over`); return Promise.resolve(); }
+    return runTurn(ctx, items);
+  }
+});
 
 // ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
 const CRM_FIELDS = ['real_name', 'phone', 'province', 'district', 'crops', 'farm_rai', 'shop', 'status', 'tags', 'note'];
@@ -979,7 +1068,7 @@ setInterval(() => { refreshTeamSheet().catch(() => {}); }, TEAM_SHEET_MIN * 6000
 
 const PROVINCE_RX = new RegExp('(' + Object.keys(ZONE_OF).sort((a, b) => b.length - a.length).join('|') + ')');
 // จังหวัดทั้งหมด (รวมที่ไม่อยู่ในเขตขาย) + ชื่อย่อ -> ชื่อเต็ม สำหรับตรวจตอนลงทะเบียน
-const PROVINCE_ALIAS = { 'กรุงเทพ': 'กรุงเทพมหานคร', 'กทม': 'กรุงเทพมหานคร', 'กทม.': 'กรุงเทพมหานคร', 'โคราช': 'นครราชสีมา', 'อยุธยา': 'พระนครศรีอยุธยา', 'อุบล': 'อุบลราชธานี', 'สุราษ': 'สุราษฎร์ธานี', 'สุราษฎร์': 'สุราษฎร์ธานี', 'นครศรี': 'นครศรีธรรมราช', 'ประจวบ': 'ประจวบคีรีขันธ์', 'หนองบัว': 'หนองบัวลำภู', 'ปราจีน': 'ปราจีนบุรี', 'สมุทรสาคร': 'สมุทรสาคร' };
+const PROVINCE_ALIAS = { 'กรุงเทพ': 'กรุงเทพมหานคร', 'กทม': 'กรุงเทพมหานคร', 'กทม.': 'กรุงเทพมหานคร', 'โคราช': 'นครราชสีมา', 'อยุธยา': 'พระนครศรีอยุธยา', 'อุบล': 'อุบลราชธานี', 'สุราษ': 'สุราษฎร์ธานี', 'สุราษฎร์': 'สุราษฎร์ธานี', 'นครศรี': 'นครศรีธรรมราช', 'ประจวบ': 'ประจวบคีรีขันธ์', 'หนองบัว': 'หนองบัวลำภู', 'ปราจีน': 'ปราจีนบุรี', 'สมุทรสาคร': 'สมุทรสาคร', 'แปดริ้ว': 'ฉะเชิงเทรา', 'ศรีษะเกษ': 'ศรีสะเกษ', 'เพชรบูรน์': 'เพชรบูรณ์' }; // ชื่อย่อที่ชนกับชื่อคน (สุพรรณ ปทุม กาญ อุดร ปากน้ำ) อ่านเฉพาะตอนขอทีมขาย ดู team_ask.js
 const PROVINCES_ALL = [...new Set(Object.keys(ZONE_OF).concat(['กรุงเทพมหานคร', 'อุตรดิตถ์', 'สุโขทัย', 'อุทัยธานี']).filter((p) => p !== 'โคราช' && p !== 'อยุธยา'))];
 const PROVINCE_ALL_RX = new RegExp('(' + PROVINCES_ALL.concat(Object.keys(PROVINCE_ALIAS)).sort((a, b) => b.length - a.length).map((p) => p.replace(/\./g, '\\.')).join('|') + ')');
 function provinceOf(text) {
@@ -2021,13 +2110,34 @@ async function richMenuCreate() {
 }
 // ทีมงานในพื้นที่ (จากปุ่มเมนู) -> ตอบจากจังหวัดในโปรไฟล์ ไม่ต้องผ่าน Dify
 const TEAM_CMD_RX = /^(ขอ|ดู|อยากรู้)?(ทีมงาน|ทีมขาย|เจ้าหน้าที่|ผู้ดูแล|ผู้แทน)(ใน|ประจำ)?(พื้นที่|เขต)(ของฉัน|ของผม|ของหนู|ของเรา)?[\s.!]*$/;
-function teamReply(c) {
-  const prov = c && (c.province || (c.auto && c.auto.province)) || '';
+// v3.38 (FB-04): ใช้ชื่อเขตตามรหัสในตารางทีมขาย (เช่น "ทีมขายเขต A04 ที่ดูแล จ.ราชบุรี") ไม่ตั้งชื่อเขตตามจังหวัด
+// อยุธยา: อ.เสนา และ อ.ลาดบัวหลวง อยู่เขต A04 นอกนั้น A05 (ตามตาราง "เบอร์ติดต่อรายเขต")
+function teamZoneFor(province, district) {
+  if (/อยุธยา/.test(province) && /เสนา|ลาดบัวหลวง/.test(district || '')) return { zone: 'A04', team: ZONE_TEAM.A04 };
+  return zoneInfo(province);
+}
+function teamReply(c, provinceHint) {
+  const prov = provinceHint || (c && (c.province || (c.auto && c.auto.province))) || '';
   if (!prov) return null;
-  const z = zoneInfo(prov);
-  if (!z) return `ขออภัยค่ะ ยังไม่พบข้อมูลทีมงานสำหรับ จ.${prov} 🙏 พิมพ์ "คุยกับแอดมิน" ได้เลยนะคะ เดี๋ยวเจ้าหน้าที่ติดต่อกลับค่ะ`;
+  const district = provinceHint ? '' : ((c && (c.district || (c.auto && c.auto.district))) || '');
+  const z = teamZoneFor(prov, district);
+  if (!z) return `ขออภัยค่ะ ยังไม่พบข้อมูลทีมขายสำหรับ จ.${prov} 🙏 พิมพ์ "คุยกับแอดมิน" ได้เลยนะคะ เดี๋ยวเจ้าหน้าที่ติดต่อกลับค่ะ`;
   const rows = zoneTeamRows(z);
-  return `📍 ทีมงานดูแลพื้นที่ จ.${prov} (เขต ${z.zone})\n` + rows.map((r) => `• ${r.name} ${r.phone}`).join('\n') + '\n\nโทรหรือทัก LINE ทีมงานได้เลยนะคะ 🌾';
+  const ayutthaya = /อยุธยา/.test(prov) && !district ? '\n(ถ้าอยู่ อ.เสนา หรือ อ.ลาดบัวหลวง ติดต่อทีมขายเขต A04 ได้เลยค่ะ)' : '';
+  return `📍 ทีมขายเขต ${z.zone} ที่ดูแล จ.${prov}\n` + rows.map((r) => `• ${r.name}${r.phone ? ' ' + r.phone : ''}`).join('\n') + ayutthaya + '\n\nโทรหรือทัก LINE ทีมขายได้เลยนะคะ 🌾';
+}
+const TEAM_ASK_PROVINCE = 'คุณลูกค้าอยู่จังหวัดไหนคะ 😊 พิมพ์ชื่อจังหวัดมาได้เลย น้องลัดดาจะแจ้งทีมขายที่ดูแลพื้นที่นั้นให้ทันทีค่ะ';
+// v3.38 (FB-06): คำตอบที่บอกว่ายังไม่มีคำแนะนำหรือชวนถามทีมขาย แต่ยังไม่มีเบอร์ -> แนบปุ่มขอทีมขายในพื้นที่
+const NO_REC_RX = /ยังไม่มีคำแนะนำ|ยังไม่มีข้อมูล(?:อัตรา|การใช้|คำแนะนำ)|(?:สอบถาม|ปรึกษา|ติดต่อ)(?:ทีมขาย|เจ้าหน้าที่)/;
+function attachTeamButton(msgs, answer) {
+  if (!msgs.length || !NO_REC_RX.test(String(answer || '')) || /0\d{1,2}[-\s.]?\d{3}[-\s.]?\d{3,4}/.test(String(answer || ''))) return;
+  const item = { type: 'action', action: { type: 'message', label: '📞 ทีมขายในพื้นที่', text: 'ขอเบอร์ทีมขายในพื้นที่' } };
+  const i = msgs.length - 1;
+  if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i].slice(0, 4900), quickReply: { items: [item] } };
+  else if (msgs[i] && typeof msgs[i] === 'object') {
+    const items = (msgs[i].quickReply && msgs[i].quickReply.items) || [];
+    if (items.length < 13) msgs[i].quickReply = { items: items.concat(item) };
+  }
 }
 
 let liffHtmlCache = null;
@@ -2200,7 +2310,7 @@ function notifyAdmins(id, s, isNew) {
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
   const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)')) : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
+  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า: ' + (pimgNames.get(t) || t.originalContentUrl || '-') + ')' : '(ข้อความแบบปุ่ม)')) : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
   let ok = await lineReply(ev.replyToken, arr);
   if (!ok && arr.some((m) => pimgMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ
     console.log('[pimg] reply with images failed, retry text only');
@@ -2333,15 +2443,19 @@ async function handleEvent(ev) {
       await sendAnswer(s, ev, pushTarget, msgs, { system: 1 });
       return;
     }
-    // ปุ่มเมนู "ทีมงานในพื้นที่" -> ตอบทีม ME/MR ตามจังหวัดที่ลงทะเบียน (ยังไม่ลงทะเบียน -> ชวนลงทะเบียน)
-    if (ev.message.type === 'text' && TEAM_CMD_RX.test(text.trim())) {
-      const tr = teamReply(c);
-      if (tr) { await sendAnswer(s, ev, pushTarget, tr, { system: true }); return; }
-      const ask = 'น้องลัดดายังไม่ทราบจังหวัดของคุณลูกค้าค่ะ 🙏 ลงทะเบียนสั้นๆ ก่อนนะคะ แล้วจะบอกทีมงานที่ดูแลพื้นที่ของคุณให้ทันที';
-      if (liffOn) { await sendAnswer(s, ev, pushTarget, [ask].concat(liffButtonMsg('gate')), { system: true }); return; }
-      if (!s.reg) { regStart(s, ''); }
-      await sendAnswer(s, ev, pushTarget, [ask, regPrompt(s.reg.step, s)], { system: true });
-      return;
+    // ขอทีมขาย/ทีมงานในพื้นที่ (ปุ่มเมนูหรือพิมพ์เอง) -> ตอบทีมขายตามจังหวัดจากตาราง
+    // v3.38 (FB-11): ไม่บังคับลงทะเบียนก่อน ไม่รู้จังหวัด -> ถามจังหวัดข้อความเดียว แล้วตอบเมื่อลูกค้าพิมพ์จังหวัด
+    if (ev.message.type === 'text') {
+      const ask = TEAM_CMD_RX.test(text.trim()) ? { province: provinceOf(text) } : teamAsk(text, provinceOf, PROVINCE_ALL_RX);
+      const awaited = !ask && s.teamAskAt && Date.now() - s.teamAskAt < 15 * 60000 ? provinceAnswer(text, provinceOf, PROVINCE_ALL_RX) : '';
+      if (ask || awaited) {
+        const tr = teamReply(c, (ask && ask.province) || awaited);
+        if (tr) { s.teamAskAt = 0; markDirty(); console.log(`[team] ${sessionId.slice(0, 8)} reply from team sheet`); await sendAnswer(s, ev, pushTarget, tr, { system: true }); return; }
+        s.teamAskAt = Date.now(); markDirty();
+        console.log(`[team] ${sessionId.slice(0, 8)} ask province`);
+        await sendAnswer(s, ev, pushTarget, TEAM_ASK_PROVINCE, { system: true });
+        return;
+      }
     }
     // "ลงทะเบียนผ่านแชท" = ขอกรอกในแชทแทนฟอร์ม (สำรองเมื่อเปิด LIFF ไม่ได้)
     if (ev.message.type === 'text' && /^(ขอ)?(ลงทะเบียน|สมัคร)(ผ่าน|ใน|ทาง)แชท/.test(text.trim())) {
@@ -2425,40 +2539,29 @@ async function handleEvent(ev) {
     return;
   }
 
-  // v3.35: รูปอย่างเดียว -> รอข้อความอธิบาย; ข้อความที่ตามมาจะพารูปที่พักไว้ไปด้วย
-  if (ev.message.type === 'image' && stype === 'user' && IMG_WAIT_MS) {
-    const p = pendingImgs.get(sessionId) || { ids: [] };
-    p.ids.push(ev.message.id);
-    clearTimeout(p.timer);
-    p.timer = setTimeout(() => {
-      if (pendingImgs.get(sessionId) !== p) return;
-      pendingImgs.delete(sessionId);
-      if (s.handoff || (s.mutedUntil && s.mutedUntil > Date.now())) return; // แอดมินรับเรื่องระหว่างรอ
-      answerTurn(text, p.ids).catch((e) => console.log('[image] answer error:', e.message));
-    }, IMG_WAIT_MS);
-    pendingImgs.set(sessionId, p);
-    console.log(`[image] ${sessionId.slice(0, 8)} hold ${p.ids.length} image(s) ${IMG_WAIT_MS / 1000}s for caption`);
-    return;
-  }
-  const held = ev.message.type === 'text' ? pendingImgs.get(sessionId) : null;
-  if (held) {
-    clearTimeout(held.timer);
-    pendingImgs.delete(sessionId);
-    const q = text + '\n\n(ลูกค้าส่งรูปภาพ ' + held.ids.length + ' รูปมาก่อนพิมพ์ข้อความด้านบน ให้อ่านรูปประกอบกับข้อความนี้และตอบรวมในคำตอบเดียว) ' + IMAGE_QUERY;
-    console.log(`[image] ${sessionId.slice(0, 8)} caption joined ${held.ids.length} image(s)`);
-    return answerTurn(q, held.ids);
-  }
-  return answerTurn(text, ev.message.type === 'image' ? [ev.message.id] : []);
+  // v3.38 (FB-02): ข้อความ/รูปที่ส่งติดกันรวมเป็นคำถามเดียว และแต่ละแชทตอบทีละคำถาม (กลุ่มตอบทันทีแบบเดิม)
+  const item = ev.message.type === 'image' ? { kind: 'image', id: ev.message.id }
+    : (ev.message.type === 'sticker' ? { kind: 'sticker' } : { kind: 'text', text });
+  const ctx = { s, ev, sessionId, userId, pushTarget, stype };
+  if (stype !== 'user' || !TURN_JOIN_ON) return runTurn(ctx, [item]);
+  if (turns.push(sessionId, ctx, item) === 'first') lineLoading(userId); // ให้เห็นว่ากำลังพิมพ์ระหว่างรอข้อความถัดไป
+}
 
-  async function answerTurn(query, imageIds) {
+// v3.38: หนึ่งรอบคำถาม = ข้อความ/รูปทั้งหมดที่ลูกค้าส่งติดกัน -> เรียก Dify ครั้งเดียว -> ตอบด้วย event ล่าสุด
+const NO_IMAGE_SEEN_RX = /(ยัง)?ไม่(ได้)?เห็นรูป|ยังไม่เห็นภาพ|ไม่ได้รับรูป|มองไม่เห็นรูป|ไม่พบรูปภาพ/;
+async function runTurn(ctx, items) {
+  const { s, ev, sessionId, userId, pushTarget, stype } = ctx;
+  const { query, images, userText } = turnQuery(items, IMAGE_QUERY, STICKER_QUERY);
+  if (items.length > 1) console.log(`[turn] ${sessionId.slice(0, 8)} joined ${items.length} messages (${images.length} image)`);
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${query.slice(0, 60)}`);
   if (stype === 'user') lineLoading(userId); // v3.34: ให้ลูกค้าเห็นว่าบอทกำลังพิมพ์ระหว่างรอ Dify
 
   let answer = '';
-  if (imageIds.length) {
+  if (images.length) {
     try {
-      const files = await Promise.all(imageIds.slice(-3).map((id) => uploadLineImageToDify(id, sessionId))); // Dify รับสูงสุด 3 รูป
+      const files = await Promise.all(images.slice(-3).map((id) => uploadLineImageToDify(id, sessionId))); // Dify รับสูงสุด 3 รูป
       answer = await askDify(sessionId, query, files);
+      if (answer && NO_IMAGE_SEEN_RX.test(answer)) console.log(`[image] ${sessionId.slice(0, 8)} WARNING: Dify answered as if it did not see ${files.length} attached image(s) — check that File Upload is enabled in the published Dify app`);
     } catch (e) {
       console.log(`[image] ${sessionId.slice(0, 8)} failed:`, e.message);
       answer = 'น้องลัดดารับรูปแล้วค่ะ แต่ตอนนี้ระบบยังเปิดดูรูปนี้ไม่ได้ รบกวนพิมพ์อาการหรือสิ่งที่พบในแปลงเป็นข้อความก่อนนะคะ';
@@ -2468,7 +2571,7 @@ async function handleEvent(ev) {
   }
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
-  const pplan = pimgPlan(s, text, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
+  const pplan = pimgPlan(s, userText, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
   if (pplan.images.length) msgs.push(...pplan.images);
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
   if (stype === 'user' && REG_MODE === 'soft') {
@@ -2482,8 +2585,8 @@ async function handleEvent(ev) {
     }
   }
   pimgAttachButtons(msgs, pplan.buttons);
+  if (stype === 'user') attachTeamButton(msgs, answer);
   await sendAnswer(s, ev, pushTarget, msgs);
-  }
 }
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
@@ -3630,7 +3733,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.36', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.38', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
