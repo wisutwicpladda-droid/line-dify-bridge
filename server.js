@@ -92,6 +92,14 @@
 //                             ตั้งแล้ว = ลงทะเบียนผ่านฟอร์มในแอป LINE แทนการถามในแชท
 //  LINE_LOGIN_CHANNEL_ID      (แนะนำ) Channel ID ของ LINE Login channel นั้น — ใช้ตรวจ ID token / กัน token จาก channel อื่น
 //  REG_UI                     (ไม่บังคับ) liff | chat — บังคับรูปแบบ (ค่าเริ่ม: liff ถ้ามี LIFF_ID ไม่งั้น chat)
+//  ELEVENLABS_API_KEY         (ไม่บังคับ, v3.37-voice ทดลอง V.2) key ของ ElevenLabs (สิทธิ์ Text to Speech + Speech to Text)
+//                             ตั้งแล้วบอทฟังข้อความเสียงของลูกค้าได้ ไม่ตั้ง = ตอบข้อความเสียงว่าให้พิมพ์แทน
+//  ELEVENLABS_VOICE_ID        (ไม่บังคับ) voice ID ของเสียงที่ใช้ตอบ (เสียงโคลน "น้องลัดดา") ตั้งคู่กับ key = ตอบเป็นเสียงได้
+//  VOICE_REPLY                (ไม่บังคับ) voice (ค่าเริ่ม) = แนบเสียงเมื่อลูกค้าส่งเสียงมา · always = ทุกคำตอบ · off = ไม่แนบเสียง
+//  ELEVENLABS_TTS_MODEL / ELEVENLABS_STT_MODEL
+//                             (ไม่บังคับ) ค่าเริ่ม eleven_v4 / scribe_v2 (eleven_v4_turbo เร็วกว่าและใช้เครดิตครึ่งหนึ่ง)
+//  VOICE_MAX_CHARS / VOICE_MAX_INPUT_SECONDS / VOICE_KEEP_DAYS / VOICE_STABILITY / VOICE_SIMILARITY
+//                             (ไม่บังคับ) ค่าเริ่ม 600 ตัวอักษร / 180 วินาที / เก็บไฟล์เสียง 7 วัน / 0.5 / 0.75
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -112,6 +120,7 @@ const imageButtons = require('./image_buttons');
 const leads = require('./leads'); // v3.31: ส่งเคสลูกค้าสนใจซื้อ + เบอร์ เข้ากลุ่ม LINE ฝ่ายขาย // v3.29: ปุ่มดูรูปที่ยังไม่กดอยู่ต่อจนกว่าจะถามใหม่
 const leadScore = require('./lead_score'); // v3.37 (ทดลอง V.2): คะแนนความสนใจซื้อในหน้า /admin
 const referral = require('./referral'); // v3.37 (ทดลอง V.2): ส่งลูกค้าที่ยืนยันแล้วไปหาร้านตัวแทนทาง LINE
+const voice = require('./voice'); // v3.37-voice (ทดลอง V.2): ฟังข้อความเสียงและตอบด้วยเสียงน้องลัดดา (ElevenLabs)
 const LEAD_SCORE_ON = process.env.LEAD_SCORE === 'on';
 const REFERRAL_ON = process.env.REFERRAL === 'on';
 const DEALER_CFG = referral.parseDealers(process.env.DEALERS);
@@ -138,6 +147,18 @@ const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).fi
 const LEAD_LINE_TOKEN = process.env.LEAD_LINE_TOKEN || '';
 const LEAD_TARGETS = (process.env.SALES_LEAD_TARGETS || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
 const PUBLIC_URL = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '');
+// v3.37-voice: ไฟล์เสียงคำตอบเก็บใน Volume (ไม่มี = โฟลเดอร์ชั่วคราว) ให้ LINE ดึงจาก PUBLIC_URL/voice/<id>.mp3
+const VOICE = voice.config(process.env);
+const VOICE_DIR = (() => {
+  for (const d of [pathmod.join(STATE_DIR, 'voice'), pathmod.join(require('os').tmpdir(), 'ladda-voice')]) {
+    try { fs.mkdirSync(d, { recursive: true }); fs.accessSync(d, fs.constants.W_OK); return d; } catch (_) {}
+  }
+  return '';
+})();
+const voiceMsgs = new WeakSet(); // ข้อความเสียงที่บอทแนบ: ถ้า LINE ไม่รับ ส่งซ้ำแบบไม่มีเสียง
+console.log(VOICE.sttOn
+  ? `[voice] on: stt=${VOICE.sttModel} tts=${VOICE.ttsOn ? VOICE.ttsModel : 'off'} reply=${VOICE.mode} files=${VOICE_DIR || 'none'}`
+  : '[voice] off: ไม่มี ELEVENLABS_API_KEY ข้อความเสียงจะได้คำตอบให้พิมพ์แทน');
 // CRM: เชื่อม Supabase (ถ้าตั้งค่า) ไม่งั้นเก็บใน state file บน Volume
 const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
@@ -508,6 +529,51 @@ async function uploadLineImageToDify(messageId, sessionId) {
     throw new Error(`Dify image upload failed (${uploaded.status})`);
   }
   return { type: 'image', transfer_method: 'local_file', upload_file_id: String(id) };
+}
+
+// v3.37-voice: ข้อความเสียงจาก LINE -> ข้อความ (ElevenLabs Speech to Text)
+const VOICE_FAIL_MSG = 'ตอนนี้น้องลัดดายังฟังข้อความเสียงไม่ได้ค่ะ รบกวนพิมพ์คำถามมาแทนนะคะ 🙏';
+async function hearLineAudio(msg, sessionId) {
+  const sid = String(sessionId).slice(0, 8);
+  if (!VOICE.sttOn) return { text: '', reply: VOICE_FAIL_MSG };
+  if (msg.duration && msg.duration > VOICE.maxInMs) {
+    console.log(`[voice] ${sid} audio too long ${msg.duration}ms`);
+    return { text: '', reply: `ข้อความเสียงยาวเกินไปค่ะ รบกวนพูดสั้น ๆ ไม่เกิน ${Math.round(VOICE.maxInMs / 60000)} นาที หรือพิมพ์คำถามมาแทนนะคะ 🙏` };
+  }
+  try {
+    const raw = await requestBuffer('GET', `${LINE_DATA_API}/v2/bot/message/${encodeURIComponent(msg.id)}/content`, { Authorization: 'Bearer ' + CH_TOKEN }, 25 * 1024 * 1024);
+    if (raw.status !== 200 || !raw.body.length) throw new Error(`LINE audio download failed (${raw.status})`);
+    const type = String(raw.headers['content-type'] || 'audio/mp4').split(';')[0].trim();
+    const t0 = Date.now();
+    const out = await voice.transcribe(VOICE, raw.body, { filename: `line-${msg.id}.m4a`, contentType: type });
+    console.log(`[voice] ${sid} heard ${out.text.length} chars in ${Date.now() - t0}ms (${out.language || '?'}, credits ${out.cost || '?'})`);
+    if (!out.text) return { text: '', reply: 'น้องลัดดาฟังข้อความเสียงไม่ชัดค่ะ รบกวนพูดใหม่อีกครั้ง หรือพิมพ์คำถามมาได้เลยนะคะ 🙏' };
+    return { text: out.text };
+  } catch (e) {
+    console.log(`[voice] ${sid} stt failed:`, e.message);
+    return { text: '', reply: VOICE_FAIL_MSG };
+  }
+}
+
+// v3.37-voice: คำตอบ -> เสียงน้องลัดดา (ElevenLabs Text to Speech) -> ข้อความเสียงของ LINE
+async function voiceReplyMsg(answer, sessionId) {
+  if (!VOICE.ttsOn || !PUBLIC_URL || !VOICE_DIR) return null;
+  const say = voice.speechText(answer, VOICE.maxChars);
+  if (!say) return null;
+  const sid = String(sessionId).slice(0, 8);
+  try {
+    const t0 = Date.now();
+    const out = await voice.synthesize(VOICE, say);
+    const ms = voice.mp3DurationMs(out.buf) || Math.round(out.buf.length / 16);
+    const id = voice.save(VOICE_DIR, out.buf, VOICE.keepDays);
+    console.log(`[voice] ${sid} tts ${say.length} chars -> ${ms}ms audio in ${Date.now() - t0}ms (credits ${out.cost || '?'})`);
+    const m = { type: 'audio', originalContentUrl: `${PUBLIC_URL}/voice/${id}.mp3`, duration: Math.max(1, ms) };
+    voiceMsgs.add(m);
+    return m;
+  } catch (e) {
+    console.log(`[voice] ${sid} tts failed:`, e.message);
+    return null;
+  }
 }
 
 async function askDify(sessionId, text, files) {
@@ -2228,11 +2294,11 @@ function notifyAdmins(id, s, isNew) {
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
   const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า)' : '(ข้อความแบบปุ่ม)')) : t; pushHist(s, 'b', ht); if (i >= skip) detectBotPromise(fallbackTo || 'unknown', s, ht); });
+  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า)' : (t.type === 'audio' ? '🔊 (เสียงน้องลัดดาอ่านคำตอบ)' : '(ข้อความแบบปุ่ม)'))) : t; pushHist(s, 'b', ht); if (i >= skip && !(typeof t === 'object' && t.type === 'audio')) detectBotPromise(fallbackTo || 'unknown', s, ht); });
   let ok = await lineReply(ev.replyToken, arr);
-  if (!ok && arr.some((m) => pimgMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ
-    console.log('[pimg] reply with images failed, retry text only');
-    text = arr.filter((m) => !pimgMsgs.has(m)).map((m) => (m && typeof m === 'object' && m.quickReply ? Object.assign({}, m, { quickReply: undefined }) : m));
+  if (!ok && arr.some((m) => pimgMsgs.has(m) || voiceMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ (v3.37-voice: รวมข้อความเสียง)
+    console.log('[pimg] reply with images/voice failed, retry text only');
+    text = arr.filter((m) => !pimgMsgs.has(m) && !voiceMsgs.has(m)).map((m) => (m && typeof m === 'object' && m.quickReply ? Object.assign({}, m, { quickReply: undefined }) : m));
     ok = await lineReply(ev.replyToken, text);
   }
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
@@ -2294,13 +2360,33 @@ async function handleEvent(ev) {
   }
   if (ev.type !== 'message' || !ev.message) return;
 
+  // v3.37-voice (ทดลอง V.2): ข้อความเสียง -> ถอดเป็นข้อความ แล้วไหลต่อเหมือนลูกค้าพิมพ์ (คำตอบแนบเสียงน้องลัดดา)
+  if (ev.message.type === 'audio') {
+    const pre = sessions.get(sessionId);
+    if (pre && pre.mutedUntil && pre.mutedUntil > Date.now()) { // แอดมินรับเรื่องอยู่: ไม่ถอดเสียง ให้แอดมินฟังเองใน LINE OA Manager
+      const s0 = touchSession(sessionId, stype, '🎤 (ข้อความเสียง)');
+      pushHist(s0, 'u', '🎤 (ข้อความเสียง)');
+      console.log(`[muted] ${sessionId.slice(0, 8)} skip voice message`);
+      return;
+    }
+    if (stype === 'user') lineLoading(userId);
+    const heard = await hearLineAudio(ev.message, sessionId);
+    if (!heard.text) {
+      const s0 = touchSession(sessionId, stype, '🎤 (ข้อความเสียง)');
+      pushHist(s0, 'u', '🎤 (ข้อความเสียง)');
+      await sendAnswer(s0, ev, pushTarget, heard.reply, { system: true });
+      return;
+    }
+    ev = Object.assign({}, ev, { voiceIn: true, message: Object.assign({}, ev.message, { type: 'text', text: heard.text }) });
+  }
+
   let text = null;
   if (ev.message.type === 'text') text = ev.message.text;
   else if (ev.message.type === 'image') text = IMAGE_QUERY;
   else if (ev.message.type === 'sticker') text = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
   else return;
 
-  const shown = ev.message.type === 'text' ? text : (ev.message.type === 'image' ? '(รูปภาพจากลูกค้า)' : '(สติกเกอร์)');
+  const shown = ev.voiceIn ? '🎤 ' + text : (ev.message.type === 'text' ? text : (ev.message.type === 'image' ? '(รูปภาพจากลูกค้า)' : '(สติกเกอร์)'));
   const s = touchSession(sessionId, stype, shown);
   const isNewChat = s.history.length === 0 && !s.bf;
   pushHist(s, 'u', shown);
@@ -2546,6 +2632,19 @@ async function handleEvent(ev) {
       s.ref = { step: 'offered', products: prods, offeredAt: Date.now(), at: Date.now() };
       markDirty();
       console.log(`[referral] ${sessionId.slice(0, 8)} offer ${prods.join(',')}`);
+    }
+  }
+  // v3.37-voice: ลูกค้าส่งเสียงมา -> แนบเสียงน้องลัดดาอ่านคำตอบต่อจากข้อความ (ข้อความยังส่งครบเหมือนเดิม)
+  if (VOICE.ttsOn && (VOICE.mode === 'always' || (VOICE.mode === 'voice' && ev.voiceIn))) {
+    const am = await voiceReplyMsg(answer, sessionId);
+    if (am) {
+      const last = msgs[msgs.length - 1];
+      msgs.splice(1, 0, am);
+      if (msgs[msgs.length - 1] === am && last && typeof last === 'object' && last.quickReply) { am.quickReply = last.quickReply; delete last.quickReply; } // ปุ่มตอบด่วนต้องอยู่ข้อความสุดท้าย
+      while (msgs.length > 5) {
+        const k = msgs.findIndex((m) => m && typeof m === 'object' && pimgMsgs.has(m));
+        msgs.splice(k >= 0 ? k : msgs.indexOf(am), 1);
+      }
     }
   }
   await sendAnswer(s, ev, pushTarget, msgs);
@@ -3681,6 +3780,7 @@ function handleAdmin(req, res, path, body) {
 const server = http.createServer((req, res) => {
   const path = (req.url || '/').split('?')[0];
   if (req.method === 'GET' && path.startsWith('/img/p/')) return servePimg(res, path);
+  if ((req.method === 'GET' || req.method === 'HEAD') && path.startsWith('/voice/')) return voice.serve(req, res, VOICE_DIR, path.slice('/voice/'.length)); // v3.37-voice
 
   if (req.method === 'GET' && path === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -3706,7 +3806,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.37', leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.37-voice', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

@@ -102,7 +102,7 @@ async function waitHealth(port) {
   let b = startBridge(port, linePort, { DEALERS: dealers });
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.37');
+    assert.strictEqual(h.version, '3.37-voice');
     assert.strictEqual(h.referral, false);
     assert.strictEqual(h.leadScore, false);
     const out = await say(port, CUSTOMER, 'แกนเตอร์ซื้อได้ที่ไหน');
