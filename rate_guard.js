@@ -57,8 +57,20 @@ const RATE_INTRO_RX = /(อัตรา|วิธีใช้|วิธีพ่
 // the words that only make sense with the number: back to the "อัตรา…", "โดยพ่นด้วยคน" or "ใช้"
 // that introduces it, and forward to the end of the sentence when the rest is rate wording only.
 const END_RX = /(นะคะ|ค่ะ|คะ|ครับ|[.!?])/g;
-const LEAD_RX = /(?:(?:โดย|และ|ส่วน)\s*(?:การ|หาก|ถ้า)?\s*)?(?:อัตรา(?:การ)?(?:ใช้)?[^\s"“”()]{0,20}(?:\s*(?:คือ|ใช้|ประมาณ))?|(?:พ่น|ฉีด|หว่าน)(?:ด้วย)?(?:คน|โดรน)(?:ใช้)?|(?:ใช้)?(?:คน|โดรน)(?:พ่น|ฉีด)?(?:ใช้)?|ใช้|ใส่|ผสม)\s*$/;
-const FILLER_RX = /พ่นได้|ฉีดได้|หว่านได้|หรือ|หาก|ถ้า|ใช้|ด้วย|โดรน|คน|พ่น|ฉีด|หว่าน|ต่อ|ไร่|ลิตร|น้ำ|ละ|สำหรับ|ประมาณ|และ|อัตรา|พื้นที่|การ|ได้|[\d.,+\-–()\s:]/g;
+// v3.47 (production bot test 28 Oct 2026, sim-genx-02): "…ขึ้นไปได้ โดยใช้อัตรา 100 ซีซีต่อน้ำ 20 ลิตรค่ะ"
+// left "…ขึ้นไปได้ โดยค่ะ" because "ใช้" went with the number. A bare connector (โดย/และ/ส่วน/หรือ)
+// and "อยู่ที่/คือ/ประมาณ" right before the rate now go with it.
+const LEAD_RX = /(?:(?:โดย|และ|ส่วน|หรือ)\s*(?:การ|หาก|ถ้า)?\s*)?(?:อัตรา(?:การ)?(?:ใช้)?[^\s"“”()]{0,20}(?:\s*(?:คือ|ใช้|ประมาณ))?|(?:พ่น|ฉีด|หว่าน)(?:ด้วย)?(?:คน|โดรน)(?:\s*ใช้)?|(?:ใช้)?(?:ด้วย)?(?:คน|โดรน)(?:พ่น|ฉีด)?(?:\s*ใช้)?|ใช้|ใส่|ผสม)\s*(?:(?:อยู่)?ที่|คือ|ประมาณ)?\s*$|(?:โดย(?:การ)?|และ|ส่วน|หรือ)\s*(?:(?:อยู่)?ที่|คือ|ประมาณ)?\s*$/;
+// Words that only lead into a rate. A sentence with nothing else before the cut
+// ("ส่วนการใช้โดรนอยู่ที่", "ปริมาณที่ใช้คือ") is cut from its start.
+const HEAD_FILLER_RX = /ปริมาณ|ส่วน|โดย|อยู่|ที่|คือ|แนะนำ|ให้|ควร|ซึ่ง|จะ/g;
+// "…คำแนะนำการพ่นด้วยคนคือ 300 ซีซี…": the noun the lead belongs to goes with it, never a bare "การ".
+const LEAD_NOUN_RX = /(?:มี)?(?:เฉพาะ|เพียง|แค่)?(?:คำแนะนำ)?(?:สำหรับ|ใน)?การ\s*$/;
+// "ต่อไร่" / "ต่อ 1 งาน" right after a cut rate only made sense with the number.
+const TRAIL_UNIT_RX = /^\s*ต่อ\s*(?:พื้นที่\s*)?(?:[\d.,]+\s*)?(?:ไร่|งาน)/;
+// Sentence endings. "คะ" followed by a letter starts a word (คะน้า, คะแนน), not an ending.
+const ENDING = '(?:นะคะ|ค่ะ|คะ(?![\u0E01-\u0E4E])|ครับ)';
+const FILLER_RX = /พ่นได้|ฉีดได้|หว่านได้|หรือ|หาก|ถ้า|ใช้|ด้วย|โดรน|คน|พ่น|ฉีด|หว่าน|ต่อ|ไร่|งาน|ลิตร|น้ำ|ละ|สำหรับ|ประมาณ|และ|อัตรา|พื้นที่|การ|ได้|[\d.,+\-–()\s:]/g;
 const NAME_ONLY_RX = /^\s*(?:["“][^"”\n]{1,40}["”]\s*(?:และ|,)?\s*)+(?:นะคะ|ค่ะ|คะ|ครับ)?\s*$/;
 
 function sentenceStart(line, before) {
@@ -104,7 +116,15 @@ function cutRateClauses(line) {
     const st = sentenceStart(line, sp[0]);
     const lead = LEAD_RX.exec(line.slice(st, sp[0]));
     if (lead) sp[0] = st + lead.index;
+    const noun = lead && LEAD_NOUN_RX.exec(line.slice(st, sp[0]));
+    if (noun) sp[0] = st + noun.index;
+    // Closing brackets that end the previous sentence stay, and a head with its own bracket is left alone.
+    const head = line.slice(st, sp[0]);
+    const skip = head.match(/^[\s)\]”"]*/)[0].length;
+    const words = head.slice(skip);
+    if (!/[()]/.test(words) && !words.replace(FILLER_RX, '').replace(HEAD_FILLER_RX, '').trim()) sp[0] = st + skip;
   }
+  for (const sp of found) { const tail = TRAIL_UNIT_RX.exec(line.slice(sp[1])); if (tail) sp[1] += tail[0].length; }
   let spans = mergeSpans(found);
   for (let i = 0; i < spans.length; i++) {
     const end = sentenceEnd(line, spans[i][1], spans[i][0]);
@@ -117,7 +137,10 @@ function cutRateClauses(line) {
   let pos = 0;
   for (const sp of spans) { out += line.slice(pos, sp[0]) + ' '; pos = sp[1]; }
   out += line.slice(pos);
-  out = out.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+(นะคะ|ค่ะ|คะ|ครับ)/g, '$1').replace(/\s+([,.)])/g, '$1').trim();
+  out = out.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(new RegExp('\\s+(' + ENDING + ')', 'g'), '$1').replace(/\s+([,.)])/g, '$1').trim();
+  // v3.47: a whole sentence cut leaves its ending behind: "…ได้ค่ะค่ะ", or "ค่ะ" opening the line.
+  out = out.replace(new RegExp('(' + ENDING + ')(?:\\s*' + ENDING + ')+', 'g'), '$1');
+  if (!line.slice(0, spans[0][0]).trim()) out = out.replace(new RegExp('^' + ENDING + '\\s*'), '');
   // A sentence left with only product names keeps the names and drops its dangling ending.
   out = out.replace(/[^\n]*?(?:นะคะ|ค่ะ|คะ|ครับ|$)/g, (s) => (s && NAME_ONLY_RX.test(s) ? s.replace(/(นะคะ|ค่ะ|คะ|ครับ)(\s*)$/, '$2') + ' ' : s)).replace(/[ \t]{2,}/g, ' ').trim();
   return { line: out, n: found.length };
@@ -136,7 +159,7 @@ function stripRates(answer) {
     let l = cut.line;
     if (cut.n) {
       removed += cut.n;
-      if (!l || /^[\s\-–•:,.()]*$/.test(l) || NAME_ONLY_RX.test(l)) continue;
+      if (!l || /^[\s\-–•:,.()]*(?:นะคะ|ค่ะ|คะ|ครับ)?[\s\-–•:,.()]*$/.test(l) || NAME_ONLY_RX.test(l)) continue;
     }
     out.push(l);
   }
