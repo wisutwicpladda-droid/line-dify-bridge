@@ -1,0 +1,30 @@
+'use strict';
+// v3.39: แจ้ง LINE เมื่อเครดิต OpenAI หมด (kb_health.js) ทดสอบกับ Knowledge API จำลอง
+const assert = require('assert');
+const { createKbHealth } = require('../kb_health');
+(async () => {
+  let t = 1e12; const now = () => t;
+  const sent = []; let resyncs = 0;
+  const SHEET = 'สินค้า_จาก_GoogleSheet.md';
+  let retrieve = { status: 400, text: '[openai] Rate Limit Error, Error code: 429 - You exceeded your current quota, please check your plan and billing details. insufficient_quota' };
+  let docs = [{ name: SHEET, enabled: true, indexing_status: 'error', error: 'Error code: 429 - insufficient_quota' }, { name: 'dify_icpladda_index.md', enabled: true, indexing_status: 'completed' }];
+  const api = async (m, p) => (p.endsWith('/retrieve') ? retrieve : { status: 200, data: { data: docs } });
+  const h = createKbHealth({ api, datasetId: 'ds', sheetDocName: SHEET, notify: async (m) => { sent.push(m); }, resync: async () => { resyncs++; }, now });
+  await h.check(); assert.strictEqual(sent.length, 1); assert.match(sent[0], /เครดิต OpenAI หมด/);
+  t += 3600e3; await h.check(); assert.strictEqual(sent.length, 1, 'no repeat within 24h');
+  t += 24 * 3600e3; await h.check(); assert.strictEqual(sent.length, 2, 'repeat after 24h');
+  retrieve = { status: 200, text: '{}' };
+  t += 3600e3; await h.check(); assert.strictEqual(sent.length, 3); assert.match(sent[2], /กลับมาใช้ได้/); assert.strictEqual(resyncs, 1);
+  docs = [{ name: SHEET, enabled: true, indexing_status: 'completed' }];
+  t += 3600e3; await h.check(); assert.strictEqual(sent.length, 3, 'quiet when healthy'); assert.strictEqual(h.status().ok, true);
+  retrieve = { status: 500, text: 'Internal Server Error' };
+  t += 3600e3; await h.check(); assert.strictEqual(sent.length, 3, 'non-credit error is log only');
+  const sent2 = [];
+  const h2 = createKbHealth({ api: async (m, p) => (p.endsWith('/retrieve') ? { status: 200 } : { status: 200, data: { data: [{ name: 'dify_rice_underwater.md', indexing_status: 'error', error: 'insufficient_quota' }] } }), datasetId: 'ds', sheetDocName: SHEET, notify: async (m) => { sent2.push(m); }, now });
+  await h2.check(); await h2.check(); assert.strictEqual(sent2.length, 1); assert.match(sent2[0], /Retry/);
+  let calls = 0;
+  const h3 = createKbHealth({ api: async () => { calls++; return { status: 200, data: { data: [] } }; }, datasetId: 'ds', sheetDocName: SHEET, notify: async () => {}, now });
+  h3.checkSoon('timeout'); assert.strictEqual(calls, 0);
+  h3.checkSoon('insufficient_quota'); await new Promise((r) => setTimeout(r, 20)); assert.ok(calls > 0);
+  console.log('PASS: OpenAI credit alert (once a day while out, recovery message + sheet re-upload, quiet when healthy, other errors log only, Retry list, immediate check on quota errors)');
+})().catch((e) => { console.error(e); process.exit(1); });

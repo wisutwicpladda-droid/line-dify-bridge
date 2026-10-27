@@ -123,7 +123,7 @@ mock.listen(0, '127.0.0.1', async () => {
     let h = null;
     for (let i = 0; i < 50 && !h; i++) { await sleep(200); h = await health(port); }
     assert(h, 'server did not start');
-    assert.strictEqual(h.version, '3.38');
+    assert(/^3\.\d+$/.test(String(h.version)), 'health must report a 3.x version');
     assert.strictEqual(h.difyMode, 'streaming');
     assert.strictEqual(h.textWaitSeconds, 1);
 
