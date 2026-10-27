@@ -51,22 +51,101 @@ function rateAsked(userText, history, now) {
 // "…มีอัตราดังนี้ค่ะ" left with nothing after it reads like a broken reply.
 const RATE_INTRO_RX = /(อัตรา|วิธีใช้|วิธีพ่น)[^\n]{0,40}ดังนี้\s*(ค่ะ|คะ|นะคะ|ครับ)?\s*[:：]?\s*$/;
 
+// v3.46 (production bot test 27 Oct 2026): cutting only the numbers left
+// "อัตราใช้สำหรับคนพ่นคือ พ่นได้ 1 ไร่ (หรือหากใช้โดรน ต่อไร่) ค่ะ" and
+// "โดยพ่นด้วยคน ต่อไร่ หรือพ่นด้วยโดรน ต่อไร่ค่ะ". A rate inside a sentence is now cut together with
+// the words that only make sense with the number: back to the "อัตรา…", "โดยพ่นด้วยคน" or "ใช้"
+// that introduces it, and forward to the end of the sentence when the rest is rate wording only.
+const END_RX = /(นะคะ|ค่ะ|คะ|ครับ|[.!?])/g;
+const LEAD_RX = /(?:(?:โดย|และ|ส่วน)\s*(?:การ|หาก|ถ้า)?\s*)?(?:อัตรา(?:การ)?(?:ใช้)?[^\s"“”()]{0,20}(?:\s*(?:คือ|ใช้|ประมาณ))?|(?:พ่น|ฉีด|หว่าน)(?:ด้วย)?(?:คน|โดรน)(?:ใช้)?|(?:ใช้)?(?:คน|โดรน)(?:พ่น|ฉีด)?(?:ใช้)?|ใช้|ใส่|ผสม)\s*$/;
+const FILLER_RX = /พ่นได้|ฉีดได้|หว่านได้|หรือ|หาก|ถ้า|ใช้|ด้วย|โดรน|คน|พ่น|ฉีด|หว่าน|ต่อ|ไร่|ลิตร|น้ำ|ละ|สำหรับ|ประมาณ|และ|อัตรา|พื้นที่|การ|ได้|[\d.,+\-–()\s:]/g;
+const NAME_ONLY_RX = /^\s*(?:["“][^"”\n]{1,40}["”]\s*(?:และ|,)?\s*)+(?:นะคะ|ค่ะ|คะ|ครับ)?\s*$/;
+
+function sentenceStart(line, before) {
+  let start = 0;
+  END_RX.lastIndex = 0;
+  let m;
+  while ((m = END_RX.exec(line)) && m.index + m[0].length <= before) start = m.index + m[0].length;
+  return start;
+}
+// A rate inside brackets ends at the closing bracket, so a cut never leaves "(…" open.
+function sentenceEnd(line, from, start) {
+  END_RX.lastIndex = from;
+  const m = END_RX.exec(line);
+  let end = m ? m.index : line.length;
+  const before = line.slice(0, start);
+  if ((before.match(/\(/g) || []).length > (before.match(/\)/g) || []).length) {
+    const close = line.indexOf(')', from);
+    if (close >= 0 && close < end) end = close;
+  }
+  return end;
+}
+function mergeSpans(spans) {
+  const out = [];
+  for (const sp of spans.sort((a, b) => a[0] - b[0])) {
+    const last = out[out.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]); else out.push(sp.slice());
+  }
+  return out;
+}
+// One line: returns the line with its inline rates cut and how many rate phrases were found.
+function cutRateClauses(line) {
+  const found = [];
+  for (const rx of RATE_PHRASES) {
+    rx.lastIndex = 0;
+    let m;
+    while ((m = rx.exec(line))) {
+      if (!m[0].trim()) { rx.lastIndex++; continue; }
+      found.push([m.index, m.index + m[0].length]);
+    }
+  }
+  if (!found.length) return { line, n: 0 };
+  for (const sp of found) {
+    const st = sentenceStart(line, sp[0]);
+    const lead = LEAD_RX.exec(line.slice(st, sp[0]));
+    if (lead) sp[0] = st + lead.index;
+  }
+  let spans = mergeSpans(found);
+  for (let i = 0; i < spans.length; i++) {
+    const end = sentenceEnd(line, spans[i][1], spans[i][0]);
+    let rest = line.slice(spans[i][1], end);
+    for (let j = i + 1; j < spans.length && spans[j][0] < end; j++) rest = rest.replace(line.slice(spans[j][0], spans[j][1]), ' ');
+    if (!rest.replace(FILLER_RX, '').trim()) spans[i][1] = Math.max(spans[i][1], end);
+  }
+  spans = mergeSpans(spans);
+  let out = '';
+  let pos = 0;
+  for (const sp of spans) { out += line.slice(pos, sp[0]) + ' '; pos = sp[1]; }
+  out += line.slice(pos);
+  out = out.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+(นะคะ|ค่ะ|คะ|ครับ)/g, '$1').replace(/\s+([,.)])/g, '$1').trim();
+  // A sentence left with only product names keeps the names and drops its dangling ending.
+  out = out.replace(/[^\n]*?(?:นะคะ|ค่ะ|คะ|ครับ|$)/g, (s) => (s && NAME_ONLY_RX.test(s) ? s.replace(/(นะคะ|ค่ะ|คะ|ครับ)(\s*)$/, '$2') + ' ' : s)).replace(/[ \t]{2,}/g, ' ').trim();
+  return { line: out, n: found.length };
+}
+// Thai letters outside quoted product names: how much of the answer is left to read.
+function substance(text) {
+  return String(text).replace(/["“][^"”\n]*["”]/g, '').replace(/[^\u0E01-\u0E5B]/g, '').length;
+}
+
 function stripRates(answer) {
   let removed = 0;
   const out = [];
   for (const line of String(answer).split('\n')) {
     if (RATE_LABEL_RX.test(line) || RATE_MARKED_LINE_RX.test(line)) { removed++; continue; }
-    let l = line;
-    for (const rx of RATE_PHRASES) l = l.replace(rx, () => { removed++; return ' '; });
-    if (l !== line) {
-      l = l.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.)])/g, '$1').trim();
-      if (!l || /^[\s\-–•:,.()]*$/.test(l)) continue;
+    const cut = cutRateClauses(line);
+    let l = cut.line;
+    if (cut.n) {
+      removed += cut.n;
+      if (!l || /^[\s\-–•:,.()]*$/.test(l) || NAME_ONLY_RX.test(l)) continue;
     }
     out.push(l);
   }
   if (!removed) return { text: String(answer), removed: 0 };
   const kept = out.filter((l) => !RATE_INTRO_RX.test(l));
-  return { text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(), removed };
+  const text = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // Never cut an answer down to nothing: when the rates were all it said, keep them.
+  if (substance(text) < 6) return { text: String(answer), removed: 0 };
+  return { text, removed };
 }
 
 module.exports = { asksRate, rateAsked, stripRates, BASE_ASK_RX, EXTRA_ASK_RX };

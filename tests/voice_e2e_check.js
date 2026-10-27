@@ -162,7 +162,7 @@ async function waitHealth(port) {
   let b = startBridge(port, linePort, {});
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.45');
+    assert.strictEqual(h.version, '3.46');
     assert.strictEqual(h.voice, false);
     const out = await send(port, voiceMsg());
     assert.strictEqual(out.length, 1, JSON.stringify(out));
@@ -246,7 +246,7 @@ async function waitHealth(port) {
   b = startBridge(port, linePort, { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_VOICE_ID: 'voice-ladda', ELEVENLABS_API_BASE: elBase, FAKE_DIFY_ANSWER: '', DIFY_API_KEY: 'test-dify-key' });
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.45');
+    assert.strictEqual(h.version, '3.46');
     assert.strictEqual(h.difyMode, 'streaming');
     assert.strictEqual(h.textWaitSeconds, 1);
     const ttsBefore = el.tts.length;

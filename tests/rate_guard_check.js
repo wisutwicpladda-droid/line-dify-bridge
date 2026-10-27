@@ -63,7 +63,27 @@ assert(!cutList.text.includes('ดังนี้'), 'ห้ามเหลื�
 assert(cutList.text.includes('ข้อควรระวัง'), 'ต้องคงข้อควรระวังไว้');
 
 const inlineReply = '"แกนเตอร์" โดยพ่นด้วยคนใช้อัตรา 200-250 ซีซี ต่อน้ำ 40 ลิตรต่อไร่ หรือพ่นด้วยโดรนใช้อัตรา 200-250 ซีซี ต่อน้ำ 5 ลิตรต่อไร่ค่ะ';
-assert(!stripRates(inlineReply).text.includes('200'), 'อัตราในประโยคต้องถูกตัด');
+// v3.46: an answer that is only the rate sentence keeps it (cutting would leave nothing to read)...
+assert.strictEqual(stripRates(inlineReply).removed, 0, 'คำตอบที่มีแต่อัตรา ต้องคงไว้');
+// ...and with more to say, the whole rate clause goes, not just the numbers (screenshot 27 Oct:
+// '"แกนเตอร์" โดยพ่นด้วยคน ต่อไร่ หรือพ่นด้วยโดรน ต่อไร่ค่ะ').
+const inlinePlus = stripRates(inlineReply + ' ข้อควรระวังคือห้ามพ่นจี้หรือพ่นซ้ำเพราะอาจทำให้ข้าวยุบได้ค่ะ');
+assert(inlinePlus.removed >= 2, 'ต้องนับว่าตัดอัตรา');
+assert(!/\d/.test(inlinePlus.text), 'ห้ามเหลือตัวเลขอัตรา: ' + inlinePlus.text);
+assert(!/ต่อไร่|พ่นด้วยคน|พ่นด้วยโดรน/.test(inlinePlus.text), 'ห้ามเหลือเศษประโยคอัตรา: ' + inlinePlus.text);
+assert(inlinePlus.text.includes('"แกนเตอร์"') && inlinePlus.text.includes('ข้อควรระวัง'), inlinePlus.text);
+
+// v3.46 production bot test 27 Oct 2026 (sim-genx-02, sim-boomer-01): fragments left by the old cut.
+const genx02 = 'สำหรับมันสำปะหลังอายุ 2 เดือน ที่มีหญ้าใบแคบขึ้น บริษัทมีแนะนำ 2 ตัวค่ะ ได้แก่ "คลิฟตัน" และ "พรีดิม" ทั้งสองตัวใช้กำจัดวัชพืชใบแคบในมันสำปะหลังได้ อัตราใช้สำหรับคนพ่นคือ 300-400 ซีซี ต่อน้ำ 80 ลิตร พ่นได้ 1 ไร่ (หรือหากใช้โดรน 300-400 ซีซี ต่อไร่) ค่ะ';
+const g = stripRates(genx02);
+assert(g.removed >= 1 && !/300|พ่นได้ 1 ไร่|\(หรือ|อัตรา/.test(g.text), 'ต้องตัดทั้งช่วงอัตรา: ' + g.text);
+assert(g.text.includes('"คลิฟตัน" และ "พรีดิม" ทั้งสองตัวใช้กำจัดวัชพืชใบแคบในมันสำปะหลังได้ค่ะ'), g.text);
+const boomer01 = '"แซด-ซีโร่" ใช้กำจัดเพลี้ยกระโดดสีน้ำตาลในนาข้าวได้ค่ะ ฉีดพ่นได้ทุกระยะของข้าว อัตราใช้สำหรับคนพ่นใช้ 50 ซีซี ต่อไร่ หรือหากใช้โดรนพ่นใช้ 50 ซีซี ต่อไร่ค่ะ';
+const b = stripRates(boomer01);
+assert.strictEqual(b.text, '"แซด-ซีโร่" ใช้กำจัดเพลี้ยกระโดดสีน้ำตาลในนาข้าวได้ค่ะ ฉีดพ่นได้ทุกระยะของข้าวค่ะ');
+// Words after the rate that carry their own meaning stay.
+const keepsTiming = stripRates('ฉีด "เทอราโน" ป้องกันโรคใบไหม้ได้ค่ะ ใช้ 20 ซีซี ต่อน้ำ 20 ลิตร พ่นซ้ำทุก 7 วันเมื่อพบการระบาดค่ะ');
+assert(!keepsTiming.text.includes('20 ซีซี') && keepsTiming.text.includes('พ่นซ้ำทุก 7 วันเมื่อพบการระบาดค่ะ'), keepsTiming.text);
 
 // P-72 regression: a Markdown set rate is removed as a whole line.
 const p72 = stripRates('**พ่นด้วยคน:** ขวดละ 50+50 ซีซี ต่อน้ำ 20 ลิตร\nพ่นให้ทั่วแปลง');
