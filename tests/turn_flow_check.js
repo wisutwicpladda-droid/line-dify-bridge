@@ -7,6 +7,7 @@
 //  FB-09     a stream that breaks after Dify started still delivers the finished answer
 //  FB-11     "ขอเบอทีมขาย" with no known province asks once, then answers from the team table
 //  FB-06     an answer without a recommendation gets the "ทีมขายในพื้นที่" quick reply
+//  v3.43     the typing indicator is renewed while a slow answer is prepared and never renewed after the answer
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -20,7 +21,7 @@ const uid = (k) => 'U' + crypto.createHash('md5').update(k).digest('hex');
 const USER = { join: uid('join'), busy: uid('busy'), photo: uid('photo'), team: uid('team'), cut: uid('cut'), norec: uid('norec') };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const seen = { replies: [], pushes: [], chats: [], uploads: 0 };
+const seen = { replies: [], pushes: [], chats: [], uploads: 0, loading: [] };
 const activeByUser = {};
 let overlap = false;
 
@@ -58,9 +59,9 @@ const mock = http.createServer((req, res) => {
   req.on('end', () => {
     const url = req.url;
     const body = () => { try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) { return {}; } };
-    if (url.startsWith('/v2/bot/message/reply')) { seen.replies.push(body()); return json(res, 200, {}); }
+    if (url.startsWith('/v2/bot/message/reply')) { seen.replies.push(Object.assign(body(), { at: Date.now() })); return json(res, 200, {}); }
     if (url.startsWith('/v2/bot/message/push')) { seen.pushes.push(body()); return json(res, 200, {}); }
-    if (url.startsWith('/v2/bot/chat/loading')) return json(res, 202, {});
+    if (url.startsWith('/v2/bot/chat/loading')) { seen.loading.push({ chatId: body().chatId, at: Date.now() }); return json(res, 202, {}); }
     if (url.startsWith('/v2/bot/profile/')) return json(res, 200, { displayName: 'ลูกค้าทดสอบ' });
     if (/^\/v2\/bot\/message\/[^/]+\/content/.test(url)) { res.writeHead(200, { 'Content-Type': 'image/jpeg' }); return res.end(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0xff, 0xd9])); }
     if (url.startsWith('/v1/files/upload')) { seen.uploads++; return json(res, 201, { id: 'file-' + seen.uploads }); }
@@ -110,7 +111,7 @@ mock.listen(0, '127.0.0.1', async () => {
     PORT: String(port), LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'test-token', DIFY_API_KEY: 'test-key',
     LINE_API_BASE: mockBase, LINE_DATA_API_BASE: mockBase, DIFY_API_BASE: mockBase + '/v1',
     TEAM_SHEET_URL: mockBase + '/team-sheet', PRODUCT_SHEET_ID: 'offline-test', STATE_DIR: stateDir,
-    REGISTER: 'off', LINE_TEXT_WAIT_SECONDS: '1', LINE_IMAGE_WAIT_SECONDS: '3', DIFY_RECOVER_SEC: '20',
+    REGISTER: 'off', LINE_LOADING_SECONDS: '5', LINE_LOADING_REFRESH_SEC: '1', LINE_TEXT_WAIT_SECONDS: '1', LINE_IMAGE_WAIT_SECONDS: '3', DIFY_RECOVER_SEC: '20',
     DIFY_RESPONSE_MODE: '', FAKE_DIFY_ANSWER: '', LINE_JOIN_MESSAGES: '', SUPABASE_URL: '', SUPABASE_KEY: '', SUPABASE_SERVICE_KEY: '',
     DIFY_DATASET_KEY: '', LIFF_ID: '', ADMIN_NOTIFY_IDS: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', RAILWAY_VOLUME_MOUNT_PATH: ''
   });
@@ -126,6 +127,7 @@ mock.listen(0, '127.0.0.1', async () => {
     assert(/^3\.\d+$/.test(String(h.version)), 'health must report a 3.x version');
     assert.strictEqual(h.difyMode, 'streaming');
     assert.strictEqual(h.textWaitSeconds, 1);
+    assert.strictEqual(h.loadingRefreshSeconds, 1);
 
     const a1 = await post(port, USER.join, { type: 'text', text: 'หอมแดงเป็นโรคใบไหม้' });
     await sleep(300);
@@ -170,6 +172,19 @@ mock.listen(0, '127.0.0.1', async () => {
     const last = repliesFor(f1)[0].messages.slice(-1)[0];
     assert(last.quickReply && last.quickReply.items.some((x) => x.action.label === '📞 ทีมขายในพื้นที่'), JSON.stringify(last));
     assert.strictEqual(seen.pushes.length, 0, 'every answer should use the reply token');
+    // v3.43: typing indicator renewed during the slow answer, never after the last answer
+    const tokensOf = { [USER.join]: [a1, a2], [USER.busy]: [b1, b2], [USER.photo]: [c1, c2], [USER.team]: [d1, d2], [USER.cut]: [e1], [USER.norec]: [f1] };
+    const replyTimes = (u) => seen.replies.filter((r) => tokensOf[u].includes(r.replyToken)).map((r) => r.at).sort((x, y) => x - y);
+    const loadingTimes = (u) => seen.loading.filter((l) => l.chatId === u).map((l) => l.at);
+    const firstBusy = replyTimes(USER.busy)[0];
+    assert(loadingTimes(USER.busy).filter((t) => t < firstBusy).length >= 3, 'slow answer: typing should be renewed while waiting, got ' + loadingTimes(USER.busy).length + ' calls');
+    await sleep(1600); // longer than one refresh interval
+    for (const u of Object.values(USER)) {
+      const last = replyTimes(u).slice(-1)[0];
+      const late = loadingTimes(u).filter((t) => t > last);
+      assert.strictEqual(late.length, 0, 'typing indicator renewed after the answer for ' + u.slice(0, 8));
+    }
+    assert(/\[loading\] U[0-9a-f]{7} typing kept \d+s \(\d+ refresh\)/.test(log), 'refresh log line');
   } catch (e) { failed = e; }
   app.kill();
   mock.close();
@@ -179,7 +194,7 @@ mock.listen(0, '127.0.0.1', async () => {
     console.error('--- server log ---\n' + log.slice(-5000));
     process.exitCode = 1;
   } else {
-    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button)');
+    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer)');
   }
   setTimeout(() => process.exit(), 200);
 });

@@ -74,6 +74,8 @@
 // 19. v3.42 (27 ต.ค. 2569): แจ้ง LINE เมื่อข้อมูลใน Knowledge มีปัญหาที่ไม่ใช่เรื่องเครดิตด้วย (เอกสารค้าง Error, ซิงก์จากชีทล้ม 3 รอบติด)
 //     เพราะ 22–26 ต.ค. ซิงก์เอกสารสินค้าล้มทุกชั่วโมงโดยไม่มีใครรู้ · หน้าแอดมินล็อก IP ที่ใส่รหัสผิดหลายครั้ง (admin_guard.js)
 //     · จุด "กำลังพิมพ์" ค่าเริ่ม 60 วินาที เพราะคำตอบที่ต้องค้นเว็บใช้ 40–70 วินาที
+// 20. v3.43 (27 ต.ค. 2569): จุด "กำลังพิมพ์" แสดงจนกว่าจะส่งคำตอบ เรียก LINE ซ้ำทุก 20 วินาทีระหว่างรอ แล้วหยุดก่อนส่งคำตอบ
+//     (LINE แสดงได้ครั้งละไม่เกิน 60 วินาที แต่เรียกซ้ำระหว่างที่ยังแสดงอยู่จะต่อเวลาให้)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -95,7 +97,8 @@
 //  KB_INDEX_MIN               (ไม่บังคับ) นาทีต่อรอบซิงก์ดัชนี ค่าเริ่ม 60
 //  ADMIN_MAX_FAILS            (ไม่บังคับ) ใส่รหัสแอดมินผิดได้กี่ครั้งใน 15 นาทีก่อนล็อก IP นั้น ค่าเริ่ม 10
 //  ADMIN_LOCK_MIN             (ไม่บังคับ) นาทีที่ล็อก ค่าเริ่ม 15
-//  LINE_LOADING_SECONDS       (ไม่บังคับ) วินาทีที่แสดงจุด "กำลังพิมพ์" 5-60 ค่าเริ่ม 60 · 0 = ปิด
+//  LINE_LOADING_SECONDS       (ไม่บังคับ) วินาทีที่จุด "กำลังพิมพ์" แสดงต่อการเรียก 1 ครั้ง 5-60 ค่าเริ่ม 60 · 0 = ปิด
+//  LINE_LOADING_REFRESH_SEC   (ไม่บังคับ) ระหว่างรอคำตอบ เรียกจุด "กำลังพิมพ์" ซ้ำทุกกี่วินาที ค่าเริ่ม 20 (จุดจึงแสดงจนกว่าจะส่งคำตอบ)
 //  SUPABASE_URL               (ไม่บังคับ) https://xxxx.supabase.co  — เปิดใช้ CRM บน Supabase
 //  SUPABASE_SERVICE_KEY       (ไม่บังคับ) service_role key ของโปรเจกต์ (เก็บฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใส่ในหน้าเว็บ)
 //  POS_TABLE                  (ไม่บังคับ) ชื่อตารางเกษตรกรจาก POS ใน Supabase เดียวกัน เช่น customers -> เปิดระบบจับคู่ POS
@@ -989,10 +992,34 @@ async function linePush(to, text, token) {
 // LINE_LOADING_SECONDS = 5-60 (ปัดเป็นทีละ 5), 0 = ปิด · v3.42 ค่าเริ่ม 60 (เดิม 20) เพราะคำตอบที่ต้องค้นเว็บใช้ 40–70 วินาที
 const LOADING_SEC = (() => { const n = parseInt(process.env.LINE_LOADING_SECONDS || '60', 10); return n > 0 ? Math.min(60, Math.max(5, Math.round(n / 5) * 5)) : 0; })();
 function lineLoading(userId) {
-  if (!LOADING_SEC || !CH_TOKEN || !/^U[0-9a-f]{32}$/.test(userId || '')) return;
-  request('POST', LINE_API + '/v2/bot/chat/loading/start', { Authorization: `Bearer ${CH_TOKEN}` }, { chatId: userId, loadingSeconds: LOADING_SEC })
+  if (!LOADING_SEC || !CH_TOKEN || !/^U[0-9a-f]{32}$/.test(userId || '')) return Promise.resolve();
+  return request('POST', LINE_API + '/v2/bot/chat/loading/start', { Authorization: `Bearer ${CH_TOKEN}` }, { chatId: userId, loadingSeconds: LOADING_SEC })
     .then((r) => { if (r.status !== 202 && r.status !== 200) console.log('loading error:', r.status, JSON.stringify(r.data).slice(0, 200)); })
     .catch((e) => console.log('loading fetch error:', e.message));
+}
+
+// v3.43: LINE แสดงจุดได้ครั้งละไม่เกิน 60 วินาที แต่ถ้าเรียกซ้ำระหว่างที่จุดยังแสดงอยู่ LINE จะต่อเวลาให้ (เอกสาร LINE: Display a loading animation)
+// จึงเรียกซ้ำทุก LINE_LOADING_REFRESH_SEC ระหว่างรอ Dify แล้วหยุดก่อนส่งคำตอบ ลูกค้าที่สลับไปแอปอื่นแล้วกลับมาจะเห็นจุดอีกในรอบถัดไป
+// หยุดแล้วรอคำขอที่ค้างอยู่ให้เสร็จก่อนส่งคำตอบ กันจุดโผล่หลังคำตอบ · ต่อเวลาไม่เกินเวลารอ Dify + 2 นาทีแม้ไม่มีใครสั่งหยุด
+const LOADING_REFRESH_MS = LOADING_SEC ? Math.max(1, Math.min(LOADING_SEC - 2, parseFloat(process.env.LINE_LOADING_REFRESH_SEC || '20') || 20)) * 1000 : 0;
+const LOADING_MAX_MS = DIFY_TIMEOUT_MS + 120000;
+function keepLoading(userId) {
+  if (!LOADING_SEC || !CH_TOKEN || !/^U[0-9a-f]{32}$/.test(userId || '')) return async () => {};
+  const t0 = Date.now();
+  let refreshes = 0, stopped = false;
+  let inflight = lineLoading(userId);
+  const timer = setInterval(() => {
+    if (Date.now() - t0 > LOADING_MAX_MS) { clearInterval(timer); return; }
+    refreshes++;
+    inflight = lineLoading(userId);
+  }, LOADING_REFRESH_MS);
+  return async function stopLoading() {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    if (refreshes) console.log(`[loading] ${userId.slice(0, 8)} typing kept ${Math.round((Date.now() - t0) / 1000)}s (${refreshes} refresh)`);
+    await Promise.race([inflight, new Promise((r) => setTimeout(r, 2000))]);
+  };
 }
 
 // v3.35: ลูกค้าส่งแต่รูป มักพิมพ์คำอธิบายตามมา -> พักรูปไว้ก่อน ถ้ามีข้อความตามมาให้ส่งรวมเป็นคำถามเดียว
@@ -2588,12 +2615,16 @@ async function handleEvent(ev) {
 
 // v3.38: หนึ่งรอบคำถาม = ข้อความ/รูปทั้งหมดที่ลูกค้าส่งติดกัน -> เรียก Dify ครั้งเดียว -> ตอบด้วย event ล่าสุด
 const NO_IMAGE_SEEN_RX = /(ยัง)?ไม่(ได้)?เห็นรูป|ยังไม่เห็นภาพ|ไม่ได้รับรูป|มองไม่เห็นรูป|ไม่พบรูปภาพ/;
+// v3.43: จุด "กำลังพิมพ์" แสดงต่อเนื่องตั้งแต่เริ่มถาม Dify จนกว่าจะส่งคำตอบ (หยุดเสมอแม้เกิด error)
 async function runTurn(ctx, items) {
+  const stopLoading = ctx.stype === 'user' ? keepLoading(ctx.userId) : null;
+  try { return await answerTurn(ctx, items, stopLoading); } finally { if (stopLoading) await stopLoading(); }
+}
+async function answerTurn(ctx, items, stopLoading) {
   const { s, ev, sessionId, userId, pushTarget, stype } = ctx;
   const { query, images, userText } = turnQuery(items, IMAGE_QUERY, STICKER_QUERY);
   if (items.length > 1) console.log(`[turn] ${sessionId.slice(0, 8)} joined ${items.length} messages (${images.length} image)`);
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${query.slice(0, 60)}`);
-  if (stype === 'user') lineLoading(userId); // v3.34: ให้ลูกค้าเห็นว่าบอทกำลังพิมพ์ระหว่างรอ Dify
 
   let answer = '';
   if (images.length) {
@@ -2625,6 +2656,7 @@ async function runTurn(ctx, items) {
   }
   pimgAttachButtons(msgs, pplan.buttons);
   if (stype === 'user') attachTeamButton(msgs, answer);
+  if (stopLoading) await stopLoading(); // หยุดต่อเวลาก่อนส่ง (คำตอบที่มาถึงทำให้จุดหายเอง)
   await sendAnswer(s, ev, pushTarget, msgs);
 }
 
@@ -3794,7 +3826,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.42', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.43', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
