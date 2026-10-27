@@ -79,6 +79,7 @@
 // 21. v3.44-v2 (27 ต.ค. 2569): รวมระบบทดลอง V.2 (v3.37 คะแนนความสนใจซื้อ + ส่งต่อร้าน, v3.37-voice ข้อความเสียง) เข้ากับ v3.43
 //     ข้อความเสียงที่ถอดแล้วเดินทางเดียวกับข้อความที่พิมพ์ (ขอทีมขาย ส่งต่อร้าน คะแนน คิวรอบคำถาม Dify) รวมกับข้อความที่ส่งติดกันตามลำดับที่ส่ง
 //     และคำตอบของรอบนั้นแนบเสียง · เสนอส่งต่อร้านไม่เกินครั้งเดียวต่อรอบคำถาม โดยดูข้อความทั้งรอบ
+//     แนบเสียงเฉพาะคำตอบจริงจาก Dify: ข้อความระบบขัดข้อง (Dify ไม่ตอบ) และข้อความเปิดรูปไม่ได้ส่งเป็นตัวอักษรอย่างเดียว
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -2787,10 +2788,12 @@ async function answerTurn(ctx, items, stopLoading) {
   console.log(`[msg] ${sessionId.slice(0, 8)}...: ${query.slice(0, 60)}`);
 
   let answer = '';
+  let fromDify = false; // v3.44-v2: คำตอบจริงจาก Dify (ข้อความสำรองของ bridge ไม่นับ) ใช้ตัดสินว่าแนบเสียงได้
   if (images.length) {
     try {
       const files = await Promise.all(images.slice(-3).map((id) => uploadLineImageToDify(id, sessionId))); // Dify รับสูงสุด 3 รูป
       answer = await askDify(sessionId, query, files);
+      fromDify = !!answer;
       if (answer && NO_IMAGE_SEEN_RX.test(answer)) console.log(`[image] ${sessionId.slice(0, 8)} WARNING: Dify answered as if it did not see ${files.length} attached image(s) — check that File Upload is enabled in the published Dify app`);
     } catch (e) {
       console.log(`[image] ${sessionId.slice(0, 8)} failed:`, e.message);
@@ -2798,6 +2801,7 @@ async function answerTurn(ctx, items, stopLoading) {
     }
   } else {
     answer = await askDify(sessionId, query);
+    fromDify = !!answer;
   }
   if (!answer) answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏';
   const msgs = [answer.slice(0, 4900)];
@@ -2829,7 +2833,8 @@ async function answerTurn(ctx, items, stopLoading) {
   if (stype === 'user') attachTeamButton(msgs, answer);
   // v3.37-voice: ลูกค้าส่งเสียงมา -> แนบเสียงน้องลัดดาอ่านคำตอบต่อจากข้อความ (ข้อความยังส่งครบเหมือนเดิม)
   // v3.44-v2: ดูว่ามีข้อความเสียงในรอบนี้ไหม (event ล่าสุดของรอบอาจเป็นข้อความที่พิมพ์ตามมา) และสร้างเสียงก่อนหยุดจุด "กำลังพิมพ์"
-  if (VOICE.ttsOn && (VOICE.mode === 'always' || (VOICE.mode === 'voice' && items.some((x) => x.voice)))) {
+  // แนบเสียงเฉพาะคำตอบจริงจาก Dify ข้อความระบบขัดข้องและข้อความเปิดรูปไม่ได้ส่งเป็นตัวอักษรอย่างเดียว
+  if (fromDify && VOICE.ttsOn && (VOICE.mode === 'always' || (VOICE.mode === 'voice' && items.some((x) => x.voice)))) {
     const am = await voiceReplyMsg(answer, sessionId);
     if (am) {
       const last = msgs[msgs.length - 1];

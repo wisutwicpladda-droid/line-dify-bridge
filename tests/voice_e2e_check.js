@@ -3,6 +3,7 @@
 // v3.37-voice: ทดสอบข้อความเสียงครบวงจรกับ server.js จริง
 // LINE API, ElevenLabs และ Dify เป็น mock ในเครื่อง ไม่ต้องใช้ key จริง (ชุด 1-3 ใช้คำตอบ FAKE_DIFY_ANSWER)
 // v3.44-v2: ชุด 4 ใช้ Dify จำลองแบบ streaming ตรวจว่าข้อความเสียงเข้าคิวรอบคำถามเหมือนข้อความที่พิมพ์
+// และเมื่อ Dify ตอบ HTTP 400 ข้อความระบบขัดข้องต้องไม่ถูกอ่านเป็นเสียง (ไม่เรียก ElevenLabs สร้างเสียง)
 const assert = require('assert');
 const http = require('http');
 const crypto = require('crypto');
@@ -16,7 +17,7 @@ const CUSTOMER = 'U' + 'd'.repeat(32);
 const ANSWER = '"แกนเตอร์" ใช้กำจัดวัชพืชในนาข้าวช่วง 7-12 วันหลังหว่านข้าว อัตรา 200-250 ซีซี/น้ำ 40 ลิตร ต่อไร่ค่ะ';
 const sent = []; // { kind: 'reply' | 'push', to, messages }
 const el = { stt: [], tts: [], heard: 'แกนเตอร์ใช้ยังไงครับ', sttDelay: 0 };
-const dify = { chats: [] }; // payload ที่ bridge ส่งเข้า Dify จำลอง
+const dify = { chats: [], fail: false }; // payload ที่ bridge ส่งเข้า Dify จำลอง · fail = ตอบ HTTP 400 ทุกคำขอ
 
 function fakeMp3(frames) {
   const f = Buffer.alloc(417);
@@ -65,6 +66,11 @@ const mockEleven = () => listen(async (req, res) => {
 // Dify จำลอง: ตอบ chat-messages แบบ streaming เหมือน Dify Cloud ส่วน conversations/messages ตอบว่ายังไม่มีบทสนทนา
 const mockDify = () => listen(async (req, res) => {
   const b = await body(req);
+  if (dify.fail) {
+    if (req.url.startsWith('/v1/chat-messages')) dify.chats.push(Object.assign({ failed: true }, JSON.parse(b.toString('utf8') || '{}')));
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ code: 'invalid_param', message: 'mock Dify error', status: 400 }));
+  }
   if (req.url.startsWith('/v1/chat-messages')) {
     dify.chats.push(JSON.parse(b.toString('utf8') || '{}'));
     const ids = { conversation_id: 'conv-voice', message_id: 'msg-' + dify.chats.length };
@@ -226,6 +232,13 @@ async function waitHealth(port) {
     const out = await send(port, { type: 'text', text: 'แกนเตอร์ใช้ยังไง' });
     assert(out.some((m) => m.type === 'audio'), 'always ต้องแนบเสียง: ' + JSON.stringify(out));
     assert.strictEqual(el.tts[el.tts.length - 1].json.model_id, 'eleven_v4_turbo');
+
+    // รูปที่ระบบเปิดดูไม่ได้ (ไม่มี key ของ Dify): ข้อความแจ้งเปิดรูปไม่ได้ต้องไม่ถูกอ่านเป็นเสียง แม้ตั้ง always
+    const ttsBefore = el.tts.length;
+    const imgOut = await send(port, { type: 'image', contentProvider: { type: 'line' } });
+    assert(imgOut.length >= 1 && /ระบบยังเปิดดูรูปนี้ไม่ได้/.test(imgOut[0].text), 'รูปเปิดไม่ได้ต้องได้ข้อความแจ้ง: ' + JSON.stringify(imgOut));
+    assert(!imgOut.some((m) => m.type === 'audio'), 'ข้อความเปิดรูปไม่ได้ต้องไม่แนบเสียง: ' + JSON.stringify(imgOut));
+    assert.strictEqual(el.tts.length, ttsBefore, 'รูปเปิดไม่ได้ ต้องไม่เรียก ElevenLabs สร้างเสียง');
   } catch (e) { console.log(b.log().slice(-1500)); throw e; } finally { b.child.kill(); }
 
   // 4) v3.44-v2 กับ Dify จำลอง: ข้อความที่พิมพ์ตามมาระหว่างยังถอดเสียง รวมเป็นคำถามเดียวตามลำดับที่ส่ง ได้คำตอบเดียวที่แนบเสียง
@@ -253,7 +266,19 @@ async function waitHealth(port) {
     assert(msgs[0].type === 'text' && msgs[0].text.includes('แกนเตอร์'), JSON.stringify(msgs));
     assert(msgs.some((m) => m.type === 'audio'), 'รอบที่มีข้อความเสียงต้องแนบเสียง แม้ event ล่าสุดเป็นข้อความที่พิมพ์: ' + JSON.stringify(msgs));
     assert.strictEqual(el.tts.length, ttsBefore + 1, 'สร้างเสียงครั้งเดียวต่อรอบคำถาม');
+
+    // Dify ตอบ HTTP 400 (ไม่มีคำตอบ): bridge ส่งข้อความระบบขัดข้องเป็นตัวอักษรอย่างเดียว ไม่แนบเสียงและไม่เรียก ElevenLabs สร้างเสียง
+    dify.fail = true;
+    const chatsBefore = dify.chats.length;
+    const ttsBeforeFail = el.tts.length;
+    const failOut = await send(port, voiceMsg());
+    dify.fail = false;
+    const failedChats = dify.chats.slice(chatsBefore);
+    assert(failedChats.length >= 1 && failedChats.every((c) => c.failed && c.query.startsWith(el.heard)), 'ข้อความจากเสียงต้องถึง Dify ที่ตอบ 400: ' + JSON.stringify(failedChats));
+    assert(failOut.length >= 1 && /ระบบขัดข้องชั่วคราว/.test(failOut[0].text), 'Dify ไม่ตอบ ต้องได้ข้อความระบบขัดข้อง: ' + JSON.stringify(failOut));
+    assert(!failOut.some((m) => m.type === 'audio'), 'ข้อความระบบขัดข้องต้องไม่แนบเสียง: ' + JSON.stringify(failOut));
+    assert.strictEqual(el.tts.length, ttsBeforeFail, 'Dify ไม่ตอบ ต้องไม่เรียก ElevenLabs สร้างเสียง');
   } catch (e) { console.log(b.log().slice(-2500)); throw e; } finally { b.child.kill(); line.close(); eleven.close(); difySrv.close(); }
 
-  console.log('PASS: voice messages (no key -> ask to type; STT -> answer text + cloned-voice audio; typed -> text only; silence/too long handled; always mode; voice + typed follow-up -> one Dify question in order, one voiced answer)');
+  console.log('PASS: voice messages (no key -> ask to type; STT -> answer text + cloned-voice audio; typed -> text only; silence/too long handled; always mode; voice + typed follow-up -> one Dify question in order, one voiced answer; Dify HTTP 400 or unreadable image -> text only, no TTS call)');
 })().catch((e) => { console.error('FAIL:', e.message); process.exit(1); });
