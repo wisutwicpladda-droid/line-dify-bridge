@@ -144,6 +144,7 @@ const { stripVisibleCitations } = require('./citation_visibility'); // p89: ไ�
 const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: กันสินค้าที่ยังไม่เปิดหลุดจาก KB เก่า
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
+const { provinceMatch, PROVINCE_WORDS } = require('./province_match'); // v3.45-v2: เลย/แพร่/ตาก นับเป็นจังหวัดเมื่อมี จ./จังหวัด หรือพิมพ์มาแค่ชื่อจังหวัด
 const imageButtons = require('./image_buttons');
 const { createTurnQueue, turnQuery } = require('./turn_queue'); // v3.38: รวมข้อความที่ส่งติดกัน + ตอบทีละคำถามต่อแชท (FB-02)
 const { teamAsk, provinceAnswer } = require('./team_ask'); // v3.38: ขอทีมขายตอบจากตารางทีมขายโดยตรง (FB-04, FB-11)
@@ -1242,13 +1243,13 @@ setInterval(() => { refreshTeamSheet().catch(() => {}); }, TEAM_SHEET_MIN * 6000
 
 const PROVINCE_RX = new RegExp('(' + Object.keys(ZONE_OF).sort((a, b) => b.length - a.length).join('|') + ')');
 // จังหวัดทั้งหมด (รวมที่ไม่อยู่ในเขตขาย) + ชื่อย่อ -> ชื่อเต็ม สำหรับตรวจตอนลงทะเบียน
-const PROVINCE_ALIAS = { 'กรุงเทพ': 'กรุงเทพมหานคร', 'กทม': 'กรุงเทพมหานคร', 'กทม.': 'กรุงเทพมหานคร', 'โคราช': 'นครราชสีมา', 'อยุธยา': 'พระนครศรีอยุธยา', 'อุบล': 'อุบลราชธานี', 'สุราษ': 'สุราษฎร์ธานี', 'สุราษฎร์': 'สุราษฎร์ธานี', 'นครศรี': 'นครศรีธรรมราช', 'ประจวบ': 'ประจวบคีรีขันธ์', 'หนองบัว': 'หนองบัวลำภู', 'ปราจีน': 'ปราจีนบุรี', 'สมุทรสาคร': 'สมุทรสาคร', 'แปดริ้ว': 'ฉะเชิงเทรา', 'ศรีษะเกษ': 'ศรีสะเกษ', 'เพชรบูรน์': 'เพชรบูรณ์' }; // ชื่อย่อที่ชนกับชื่อคน (สุพรรณ ปทุม กาญ อุดร ปากน้ำ) อ่านเฉพาะตอนขอทีมขาย ดู team_ask.js
+const PROVINCE_ALIAS = { 'กรุงเทพ': 'กรุงเทพมหานคร', 'กทม': 'กรุงเทพมหานคร', 'กทม.': 'กรุงเทพมหานคร', 'โคราช': 'นครราชสีมา', 'อยุธยา': 'พระนครศรีอยุธยา', 'อุบล': 'อุบลราชธานี', 'สุราษ': 'สุราษฎร์ธานี', 'สุราษฎร์': 'สุราษฎร์ธานี', 'นครศรี': 'นครศรีธรรมราช', 'ประจวบ': 'ประจวบคีรีขันธ์', 'หนองบัว': 'หนองบัวลำภู', 'ปราจีน': 'ปราจีนบุรี', 'สมุทรสาคร': 'สมุทรสาคร', 'แปดริ้ว': 'ฉะเชิงเทรา', 'ศรีษะเกษ': 'ศรีสะเกษ', 'เพชรบูรน์': 'เพชรบูรณ์', 'จันท์': 'จันทบุรี' }; // ชื่อย่อที่ชนกับชื่อคน (สุพรรณ ปทุม กาญ อุดร ปากน้ำ) อ่านเฉพาะตอนขอทีมขาย ดู team_ask.js
 const PROVINCES_ALL = [...new Set(Object.keys(ZONE_OF).concat(['กรุงเทพมหานคร', 'อุตรดิตถ์', 'สุโขทัย', 'อุทัยธานี']).filter((p) => p !== 'โคราช' && p !== 'อยุธยา'))];
 const PROVINCE_ALL_RX = new RegExp('(' + PROVINCES_ALL.concat(Object.keys(PROVINCE_ALIAS)).sort((a, b) => b.length - a.length).map((p) => p.replace(/\./g, '\\.')).join('|') + ')');
 function provinceOf(text) {
-  const m = PROVINCE_ALL_RX.exec(String(text || ''));
-  if (!m) return '';
-  return PROVINCE_ALIAS[m[1]] || m[1];
+  const p = provinceMatch(PROVINCE_ALL_RX, text);
+  if (!p) return '';
+  return PROVINCE_ALIAS[p] || p;
 }
 const CROP_WORDS = ['ทุเรียน', 'นาข้าว', 'ข้าวโพด', 'ข้าว', 'ลำไย', 'มะม่วง', 'ส้ม', 'อ้อย', 'มันสำปะหลัง', 'มัน', 'ปาล์ม', 'ยางพารา', 'พริก', 'หอม', 'กระเทียม', 'คะน้า', 'ผัก', 'มะเขือ', 'ถั่วฝักยาว', 'มังคุด', 'เงาะ', 'ลองกอง', 'กาแฟ', 'มะพร้าว', 'แตง'];
 
@@ -1256,6 +1257,27 @@ const CROP_WORDS = ['ทุเรียน', 'นาข้าว', 'ข้าว
 function crmProvince(id) {
   const c = crm.get(id);
   return c && c.province ? String(c.province).trim().slice(0, 100) : '';
+}
+
+// v3.45-v2: รุ่นก่อนเดาจังหวัดจากคำทั่วไป ("เต็มเลย" -> จ.เลย, "แพร่ระบาด" -> จ.แพร่, "ตากแดด" -> จ.ตาก) แล้วเก็บเป็นจังหวัดของลูกค้า
+// ล้างครั้งเดียว เฉพาะโปรไฟล์ที่ยังไม่ลงทะเบียนและจังหวัดมาจากการเดาของรุ่นก่อน (auto.province ไม่มีเครื่องหมาย province_v345)
+function crmClearWordProvinces() {
+  const changed = [];
+  for (const c of crm.values()) {
+    const a = c && c.auto;
+    if (!a || a.province_v345 || !PROVINCE_WORDS.has(a.province || '') || regDone(c)) continue;
+    if (c.province && c.province !== a.province) continue;
+    c.province = '';
+    delete a.province;
+    c.updated_at = new Date().toISOString();
+    changed.push(c);
+  }
+  if (changed.length) {
+    console.log(`[crm] cleared ${changed.length} province guess(es) from common words (เลย/แพร่/ตาก)`);
+    markDirty();
+    if (SB_ON) (async () => { for (const c of changed) await sbUpsert(c); })().catch(() => {}); // ทีละแถว ไม่ยิงพร้อมกัน
+  }
+  return changed.length;
 }
 
 function zoneInfo(province) {
@@ -1350,6 +1372,7 @@ async function crmLoadFromSupabase() {
       from += 1000;
     }
     console.log(`[crm] loaded ${total} profiles from Supabase`);
+    crmClearWordProvinces();
     markDirty();
   } catch (e) { console.log('[crm] supabase load error:', e.message); }
 }
@@ -1371,8 +1394,8 @@ function crmTouch(id, s, userText) {
       const ctx = userText.replace(new RegExp(PHONE_RX.source, 'g'), ' ').replace(/\s+/g, ' ').trim();
       if (ctx) c.auto.phone_ctx = ctx.slice(0, 80);
     }
-    const prm = PROVINCE_RX.exec(userText);
-    if (prm && c.auto.province !== prm[1]) { c.auto.province = prm[1]; if (!c.province) c.province = prm[1]; changed = true; }
+    const prov = provinceMatch(PROVINCE_RX, userText);
+    if (prov && c.auto.province !== prov) { c.auto.province = prov; c.auto.province_v345 = 1; if (!c.province) c.province = prov; changed = true; }
     const found = CROP_WORDS.filter((w) => userText.includes(w)).map((w) => (w === 'นาข้าว' ? 'ข้าว' : w === 'มัน' ? 'มันสำปะหลัง' : w));
     if (found.length) {
       const set = new Set((c.auto.crops || '').split(',').map((x) => x.trim()).filter(Boolean));
@@ -1974,9 +1997,10 @@ function regUnregisteredIds() {
 function regParse(text) {
   const raw = String(text || '').trim();
   const phones = phonesOf(raw);
-  const province = provinceOf(raw);
+  const provRaw = provinceMatch(PROVINCE_ALL_RX, raw);
+  const province = provRaw ? (PROVINCE_ALIAS[provRaw] || provRaw) : '';
   let rest = raw.replace(new RegExp(PHONE_RX.source, 'g'), ' ').replace(/(\+?66)?[\d\-\s]{9,}/g, ' ');
-  if (province) rest = rest.replace(PROVINCE_ALL_RX, ' ');
+  if (provRaw) rest = rest.replace(provRaw, ' ');
   return { phone: phones[0] || '', province, name: regClean(rest) };
 }
 function regNameOk(n) { return n && n.length >= 2 && n.length <= 60 && /\p{L}/u.test(n) && !REG_QUESTION_RX.test(n) && !REG_CMD_RX.test(n) && !REG_EDIT_RX.test(n) && !/^(ข้าม|ไม่|ไม่มี|ไม่สะดวก|ไม่บอก|ไม่รู้)$/.test(n); }
@@ -4033,7 +4057,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.44-v2', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.45-v2', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
@@ -4075,6 +4099,7 @@ if (SB_ON) {
   console.log('[crm] Supabase OFF — CRM เก็บใน state file (ตั้ง SUPABASE_URL + SUPABASE_SERVICE_KEY เพื่อซิงก์)');
   if (POS_TABLE) console.log('[pos] POS_TABLE ตั้งไว้แต่ยังไม่มี SUPABASE_URL/SUPABASE_SERVICE_KEY -> POS link ปิด');
 }
+setTimeout(() => { try { crmClearWordProvinces(); } catch (e) { console.log('[crm] clear word provinces error:', e.message); } }, 2500); // v3.45-v2: CRM จากดิสก์
 setTimeout(bootBackfill, 3000);
 kbSync.start();
 if (kbSync.hasKey()) { // v3.39: เช็กเครดิต OpenAI ผ่าน Knowledge
