@@ -1,7 +1,8 @@
 'use strict';
 
 // v3.37-voice: ทดสอบข้อความเสียงครบวงจรกับ server.js จริง
-// LINE API และ ElevenLabs เป็น mock ในเครื่อง, คำตอบ Dify ใช้ FAKE_DIFY_ANSWER จึงไม่ต้องใช้ key จริง
+// LINE API, ElevenLabs และ Dify เป็น mock ในเครื่อง ไม่ต้องใช้ key จริง (ชุด 1-3 ใช้คำตอบ FAKE_DIFY_ANSWER)
+// v3.44-v2: ชุด 4 ใช้ Dify จำลองแบบ streaming ตรวจว่าข้อความเสียงเข้าคิวรอบคำถามเหมือนข้อความที่พิมพ์
 const assert = require('assert');
 const http = require('http');
 const crypto = require('crypto');
@@ -14,7 +15,8 @@ const SECRET = 'test-secret';
 const CUSTOMER = 'U' + 'd'.repeat(32);
 const ANSWER = '"แกนเตอร์" ใช้กำจัดวัชพืชในนาข้าวช่วง 7-12 วันหลังหว่านข้าว อัตรา 200-250 ซีซี/น้ำ 40 ลิตร ต่อไร่ค่ะ';
 const sent = []; // { kind: 'reply' | 'push', to, messages }
-const el = { stt: [], tts: [], heard: 'แกนเตอร์ใช้ยังไงครับ' };
+const el = { stt: [], tts: [], heard: 'แกนเตอร์ใช้ยังไงครับ', sttDelay: 0 };
+const dify = { chats: [] }; // payload ที่ bridge ส่งเข้า Dify จำลอง
 
 function fakeMp3(frames) {
   const f = Buffer.alloc(417);
@@ -48,6 +50,7 @@ const mockEleven = () => listen(async (req, res) => {
   const b = await body(req);
   if (req.url === '/v1/speech-to-text') {
     el.stt.push({ key: req.headers['xi-api-key'], body: b.toString('latin1') });
+    if (el.sttDelay) await new Promise((ok) => setTimeout(ok, el.sttDelay)); // ถอดเสียงช้า ให้ข้อความที่พิมพ์ตามมาถึงระหว่างถอด
     res.writeHead(200, { 'Content-Type': 'application/json', 'character-cost': '1' });
     return res.end(JSON.stringify({ text: el.heard, language_code: 'tha' }));
   }
@@ -59,6 +62,22 @@ const mockEleven = () => listen(async (req, res) => {
   res.writeHead(404); res.end();
 });
 
+// Dify จำลอง: ตอบ chat-messages แบบ streaming เหมือน Dify Cloud ส่วน conversations/messages ตอบว่ายังไม่มีบทสนทนา
+const mockDify = () => listen(async (req, res) => {
+  const b = await body(req);
+  if (req.url.startsWith('/v1/chat-messages')) {
+    dify.chats.push(JSON.parse(b.toString('utf8') || '{}'));
+    const ids = { conversation_id: 'conv-voice', message_id: 'msg-' + dify.chats.length };
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: ' + JSON.stringify(Object.assign({ event: 'message', answer: ANSWER }, ids)) + '\n\n');
+    res.write('data: ' + JSON.stringify(Object.assign({ event: 'message_end' }, ids)) + '\n\n');
+    return res.end();
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ data: [] }));
+});
+let difyBase = '';
+
 function startBridge(port, linePort, env) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ladda-voice-'));
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
@@ -67,7 +86,10 @@ function startBridge(port, linePort, env) {
       LINE_API_BASE: 'http://127.0.0.1:' + linePort, STATE_DIR: dir, REGISTER: 'off', DIFY_API_KEY: '',
       PUBLIC_URL: 'http://127.0.0.1:' + port, FAKE_DIFY_ANSWER: ANSWER,
       ELEVENLABS_API_KEY: '', ELEVENLABS_VOICE_ID: '', VOICE_REPLY: '',
-      SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', POS_TABLE: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', LINE_IMAGE_WAIT_SECONDS: '0'
+      SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', POS_TABLE: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', LINE_IMAGE_WAIT_SECONDS: '0',
+      // v3.44-v2: คิวรอบคำถามรอ 1 วินาที (ค่าเริ่ม 4) และทุกบริการเป็น mock ในเครื่อง รวม Dify ที่ bridge ใช้ดึงประวัติของแชทใหม่
+      LINE_TEXT_WAIT_SECONDS: '1', DIFY_API_BASE: difyBase, DIFY_RESPONSE_MODE: '', DIFY_DATASET_KEY: '',
+      PRODUCT_SHEET_ID: 'offline-test', TEAM_SHEET_URL: 'http://127.0.0.1:' + linePort + '/team-sheet'
     }, env),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -92,18 +114,23 @@ function req(port, method, p, data, headers) {
 }
 
 let seq = 0;
-async function send(port, message) {
+async function post(port, message) {
   seq++;
-  const before = sent.length;
   const payload = JSON.stringify({ destination: 'x', events: [{ type: 'message', mode: 'active', timestamp: Date.now(), source: { type: 'user', userId: CUSTOMER }, replyToken: 'rt' + seq, webhookEventId: 'ev' + seq, deliveryContext: { isRedelivery: false }, message: Object.assign({ id: 'm' + seq }, message) }] });
   const sig = crypto.createHmac('sha256', SECRET).update(payload).digest('base64');
   const r = await req(port, 'POST', '/webhook', payload, { 'x-line-signature': sig });
   assert.strictEqual(r.status, 200, 'webhook ' + r.status);
-  for (let i = 0; i < 80; i++) {
-    await new Promise((ok) => setTimeout(ok, 100));
-    if (sent.slice(before).some((x) => x.kind === 'reply' && x.to === 'rt' + seq)) break;
-  }
+  return 'rt' + seq;
+}
+const repliesTo = (tokens) => sent.filter((x) => x.kind === 'reply' && tokens.includes(x.to));
+async function waitReply(tokens) {
+  for (let i = 0; i < 80 && !repliesTo(tokens).length; i++) await new Promise((ok) => setTimeout(ok, 100));
   await new Promise((ok) => setTimeout(ok, 200));
+  return repliesTo(tokens);
+}
+async function send(port, message) {
+  const before = sent.length;
+  await waitReply([await post(port, message)]);
   return sent.slice(before).filter((x) => x.kind === 'reply').flatMap((x) => x.messages);
 }
 const voiceMsg = () => ({ type: 'audio', duration: 4000, contentProvider: { type: 'line' } });
@@ -119,15 +146,17 @@ async function waitHealth(port) {
 (async () => {
   const line = await mockLine();
   const eleven = await mockEleven();
+  const difySrv = await mockDify();
   const linePort = line.address().port;
   const elBase = 'http://127.0.0.1:' + eleven.address().port;
+  difyBase = 'http://127.0.0.1:' + difySrv.address().port + '/v1';
 
   // 1) ไม่มี key (ค่าเริ่มต้นของระบบจริง): ข้อความเสียงต้องได้คำตอบให้พิมพ์แทน ไม่เงียบ
   let port = 42000 + Math.floor(Math.random() * 2000);
   let b = startBridge(port, linePort, {});
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.37-voice');
+    assert.strictEqual(h.version, '3.44-v2');
     assert.strictEqual(h.voice, false);
     const out = await send(port, voiceMsg());
     assert.strictEqual(out.length, 1, JSON.stringify(out));
@@ -197,7 +226,34 @@ async function waitHealth(port) {
     const out = await send(port, { type: 'text', text: 'แกนเตอร์ใช้ยังไง' });
     assert(out.some((m) => m.type === 'audio'), 'always ต้องแนบเสียง: ' + JSON.stringify(out));
     assert.strictEqual(el.tts[el.tts.length - 1].json.model_id, 'eleven_v4_turbo');
-  } catch (e) { console.log(b.log().slice(-1500)); throw e; } finally { b.child.kill(); line.close(); eleven.close(); }
+  } catch (e) { console.log(b.log().slice(-1500)); throw e; } finally { b.child.kill(); }
 
-  console.log('PASS: voice messages (no key -> ask to type; STT -> answer text + cloned-voice audio; typed -> text only; silence/too long handled; always mode)');
+  // 4) v3.44-v2 กับ Dify จำลอง: ข้อความที่พิมพ์ตามมาระหว่างยังถอดเสียง รวมเป็นคำถามเดียวตามลำดับที่ส่ง ได้คำตอบเดียวที่แนบเสียง
+  port += 1;
+  b = startBridge(port, linePort, { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_VOICE_ID: 'voice-ladda', ELEVENLABS_API_BASE: elBase, FAKE_DIFY_ANSWER: '', DIFY_API_KEY: 'test-dify-key' });
+  try {
+    const h = await waitHealth(port);
+    assert.strictEqual(h.version, '3.44-v2');
+    assert.strictEqual(h.difyMode, 'streaming');
+    assert.strictEqual(h.textWaitSeconds, 1);
+    const ttsBefore = el.tts.length;
+    el.sttDelay = 600;
+    const tVoice = await post(port, voiceMsg());
+    await new Promise((ok) => setTimeout(ok, 150));
+    const tText = await post(port, { type: 'text', text: 'ใช้กับนาหว่านน้ำตมได้ไหม' });
+    await waitReply([tVoice, tText]);
+    await new Promise((ok) => setTimeout(ok, 1500)); // เผื่อเวลาให้คำตอบที่สอง ถ้าระบบแยกตอบ
+    el.sttDelay = 0;
+    const replies = repliesTo([tVoice, tText]);
+    assert.strictEqual(replies.length, 1, 'เสียงกับข้อความที่ส่งติดกันต้องได้คำตอบเดียว: ' + JSON.stringify(replies));
+    assert.strictEqual(replies[0].to, tText, 'ตอบด้วย reply token ของข้อความล่าสุด');
+    assert.strictEqual(dify.chats.length, 1, 'ต้องเรียก Dify ครั้งเดียว: ' + JSON.stringify(dify.chats.map((c) => c.query)));
+    assert(dify.chats[0].query.startsWith(el.heard + '\nใช้กับนาหว่านน้ำตมได้ไหม'), 'ข้อความจากเสียงต้องมาก่อนข้อความที่พิมพ์ตามมา: ' + JSON.stringify(dify.chats[0].query));
+    const msgs = replies[0].messages;
+    assert(msgs[0].type === 'text' && msgs[0].text.includes('แกนเตอร์'), JSON.stringify(msgs));
+    assert(msgs.some((m) => m.type === 'audio'), 'รอบที่มีข้อความเสียงต้องแนบเสียง แม้ event ล่าสุดเป็นข้อความที่พิมพ์: ' + JSON.stringify(msgs));
+    assert.strictEqual(el.tts.length, ttsBefore + 1, 'สร้างเสียงครั้งเดียวต่อรอบคำถาม');
+  } catch (e) { console.log(b.log().slice(-2500)); throw e; } finally { b.child.kill(); line.close(); eleven.close(); difySrv.close(); }
+
+  console.log('PASS: voice messages (no key -> ask to type; STT -> answer text + cloned-voice audio; typed -> text only; silence/too long handled; always mode; voice + typed follow-up -> one Dify question in order, one voiced answer)');
 })().catch((e) => { console.error('FAIL:', e.message); process.exit(1); });

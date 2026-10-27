@@ -4,7 +4,8 @@
   "description": "LINE OA to Dify bridge for Nong Ladda ICPL chatbot",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/run_all.js"
   },
   "engines": {
     "node": ">=18"
