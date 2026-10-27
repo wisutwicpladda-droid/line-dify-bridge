@@ -28,4 +28,10 @@ assert.strictEqual(rate, long, 'rate requests must keep full details');
 const short = 'ได้ค่ะ แนะนำบอกอายุพืชก่อน น้องลัดดาจะช่วยเลือกตัวที่ตรงช่วงให้ค่ะ';
 assert.strictEqual(compactResponse(short, 'ใช้อะไรดี'), short, 'short replies must remain unchanged');
 
+// v3.44-v2: mixing questions, two questions in one message, and lists of products stay whole.
+assert.strictEqual(compactResponse(long, 'ยาร้อนผสมยาเย็นถังเดียวกันได้มั้ย', ['แกนเตอร์']), long, 'mixing advice must stay whole');
+assert.strictEqual(compactResponse(long, 'มีอทราซีนไหม จะใช้ตอนอ้อยอายุกี่เดือน', ['แกนเตอร์']), long, 'two questions must both be answered');
+const twoProducts = long.replace('ควรสำรวจซ้ำหลายต้น', 'หรือ "ไฮซีส" ก็ใช้ได้ ควรสำรวจซ้ำหลายต้น');
+assert.strictEqual(compactResponse(twoProducts, 'ใช้อะไรดี', ['แกนเตอร์', 'ไฮซีส']), twoProducts, 'a list of product options must stay whole');
+
 console.log('PASS: ordinary replies compact while detail requests remain intact');

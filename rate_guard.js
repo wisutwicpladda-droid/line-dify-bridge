@@ -23,13 +23,18 @@ const RATE_PHRASES = [
 // Phrasings the base pattern missed: words between the verb and ยังไง/อย่างไร,
 // application methods (คน/โดรน/เครื่องพ่น) and per-unit wording (ต่อไร่, ไร่ละ).
 const EXTRA_ASK_RX = /(ใช้|ฉีด|พ่น|หว่าน|ราด|รด)[^\n?]{0,30}?((ยัง|อย่าง)(ไง|ไร)|ยังงัย|แบบไหน)|วิธี(พ่น|ฉีด|ผสม|หว่าน|ราด)|ต่อ\s*(ไร่|ถัง|ต้น)|(ไร่|ถัง|ต้น)ละ|โดรน|พ่นด้วยคน|คนพ่น|เครื่องพ่น|ถังพ่น|เป้พ่น/i;
+// v3.44-v2 (bot test 27 Oct 2026): "แก่นเตอร์ ใช้ไง" (no ยัง) and a customer quoting a dose
+// ("เซลล์บอกว่าต้องใส่ 50 กรัมต่อน้ำ 20 ลิตร จริงไหม") are rate questions too; the guard cut the
+// sheet rate the customer needed to compare.
+const COLLOQUIAL_ASK_RX = /(ใช้|ฉีด|พ่น|หว่าน)\s*ไง/;
+const QUOTED_DOSE_RX = /\d[\d.,]*\s*(ซีซี|cc|มล|ml|กรัม|ก\.|ลิตร|กิโล|กก|ช้อน|ฝา)/i;
 // A short reply right after a rate question ("ข้าวค่ะ", "ทั้งคน ทั้งโดรนค่ะ") continues that question.
 const FOLLOW_UP_MS = 20 * 60000;
 const FOLLOW_UP_MAX_CHARS = 60;
 
 function asksRate(text) {
   const t = String(text || '');
-  return BASE_ASK_RX.test(t) || EXTRA_ASK_RX.test(t);
+  return BASE_ASK_RX.test(t) || EXTRA_ASK_RX.test(t) || COLLOQUIAL_ASK_RX.test(t) || QUOTED_DOSE_RX.test(t);
 }
 
 // history: session entries { r: 'u' | 'b', t, at }. The current message may already be the last 'u' entry.

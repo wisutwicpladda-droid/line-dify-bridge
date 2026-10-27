@@ -27,6 +27,13 @@ for (const q of ['พ่นในสวนทุเรียนอย่าง�
 for (const q of ['อัตราเท่าไหร่', 'ใช้ยังไง', 'ผสมกี่ซีซี', 'พ่น 10 ไร่ใช้กี่ขวด', 'วิธีใช้', 'ขั้นตอนการใช้']) {
   assert(asksRate(q), q + ' ต้องยังนับว่าถามอัตรา');
 }
+// v3.44-v2 (bot test 27 Oct 2026): colloquial "ใช้ไง" and a quoted dose count as rate questions.
+for (const q of ['แก่นเตอร์ ใช้ไง', 'ฉีดไงครับ', 'ฉีดอ้อย เซลล์บอกว่าโบร์แลนต้องใส่ 50 กรัมต่อน้ำ 20 ลิตร จริงไหม', 'ใส่ 2 ฝาพอไหม']) {
+  assert(asksRate(q), q + ' ต้องนับว่าถามอัตรา');
+}
+for (const q of ['ข้าวอายุ 10 วัน ใบเหลือง เป็นอะไร', 'ทุเรียนอายุ 5 ปี ใบไหม้']) {
+  assert(!asksRate(q), q + ' ตัวเลขอายุพืชไม่ใช่การถามอัตรา');
+}
 
 // A short answer to the bot's clarifying question continues a rate question...
 const clarify = [{ r: 'u', t: 'ใช้ยังไงคะ', at: now - 3 * min }, { r: 'b', t: 'ใช้กับพืชอะไรคะ', at: now - 3 * min }, { r: 'u', t: 'ข้าวค่ะ', at: now }];

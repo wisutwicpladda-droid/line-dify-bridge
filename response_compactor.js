@@ -7,6 +7,19 @@ const DETAIL_QUERY_RX = /(อัตรา|กี่\s*(ไร่|กระสอ
 const QUESTION_RX = /(ไหม|หรือไม่|อะไร|ตัวไหน|ชนิดไหน|อายุเท่าไร|ระยะไหน|จังหวัด|อำเภอ|แปลง|พบตรงไหน|ดูตรงไหน)\s*[?？]?$/;
 const STRUCTURED_REPLY_RX = /(^|\n)\s*(?:[-•*]\s+|\d+[.)]\s+|(?:แนวทาง|วิธี|คำแนะนำ|ขั้นตอน|ข้อควรระวัง)\s*[:：]?)/u;
 const ORDINARY_MAX = 420;
+// v3.44-v2 (bot test 27 Oct 2026): the compactor cut the answer to the second question
+// ("อะทราซีน ... แล้วผสมกับ 2,4-ดี ได้ไหม"), the small-jar mixing advice and lists of product
+// options. Mixing questions, messages with two or more questions, and answers that name two or
+// more products are kept whole.
+const MIX_QUERY_RX = /ผสม|ร่วมกับ|ใช้คู่|พร้อมกัน/;
+const QUESTION_WORD_RX = /ไหม|มั้ย|มั๊ย|หรือเปล่า|ยังไง|อย่างไร|เท่าไหร่|เท่าไร|อะไร|ตัวไหน|ชนิดไหน|กี่/g;
+
+function asksSeveral(query) {
+  return (String(query || '').match(QUESTION_WORD_RX) || []).length >= 2;
+}
+function namesSeveral(text, productNames) {
+  return (productNames || []).filter((name) => name && text.includes(name)).length >= 2;
+}
 
 function clean(text) {
   return String(text || '')
@@ -26,6 +39,7 @@ function sentenceUnits(text) {
 function compactResponse(answer, query, productNames = []) {
   const text = clean(answer);
   if (!text || text.length <= ORDINARY_MAX || DETAIL_QUERY_RX.test(String(query || ''))) return text;
+  if (MIX_QUERY_RX.test(String(query || '')) || asksSeveral(query) || namesSeveral(text, productNames)) return text;
   // Never shorten a structured answer. These often contain a heading followed
   // by the actual treatment steps; keeping only the first units can leave a
   // heading such as "แนวทางแก้ไขเบื้องต้น:" with no advice underneath.
