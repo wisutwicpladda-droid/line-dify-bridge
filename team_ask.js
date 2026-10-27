@@ -4,8 +4,9 @@
 // rich menu sent three registration messages, while "ขอเบอทีมขาย" went to Dify
 // and the model named the same A04 people "ทีมขายเขตราชบุรี" in one chat and
 // "ทีมขายเขตสมุทรปราการ" in another. Every short request for the sales team is
-// now answered from the team sheet with the zone code; without a province the
-// bot asks for it once in a single message.
+// now answered from the team sheet (v3.44-v2: as "พนักงานขายที่ดูแล จ.<province>",
+// without the zone code or ME/MR); without a province the bot asks for it once
+// in a single message.
 
 const TEAM_WORD_RX = /(ทีมงาน|ทีมขาย|ทีมเซล(?:ล์)?|เซลล์|ผู้แทน(?:ขาย)?|ตัวแทนขาย|พนักงานขาย|ผู้ดูแล(?:เขต|พื้นที่)|เจ้าหน้าที่(?:ขาย|ใน(?:พื้นที่|เขต)|ประจำ(?:พื้นที่|เขต)))/;
 const FILLER_RX = /ขอ|ดู|อยาก(?:ได้|รู้)?|ทราบ|หา|มี|เบอร์โทร|เบอโทร|เบอร์|เบอ|โทรศัพท์|โทร|ติดต่อ|ช่องทาง|ทาง|ไลน์|ไอดี|สอบถาม|ปรึกษา|คุย|กับ|ใน|ประจำ|ดูแล|พื้นที่|เขต|จังหวัด|จ\.|ของ|ฉัน|ผม|หนู|เรา|ดิฉัน|หน่อย|ด้วย|ได้|ไหม|มั้ย|มั๊ย|ค่ะ|คะ|ครับ|คับ|จ้า|จ้ะ|นะ|อยู่|ที่|คน|ไหน|อะไร|บ้าง|แถว|นี้|นั้น/g;

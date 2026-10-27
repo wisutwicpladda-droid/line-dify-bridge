@@ -6,6 +6,7 @@
 //  FB-05/10  a photo and its caption reach Dify as one question with the photo attached
 //  FB-09     a stream that breaks after Dify started still delivers the finished answer
 //  FB-11     "ขอเบอทีมขาย" with no known province asks once, then answers from the team table
+//  owner     the team reply says "พนักงานขายที่ดูแล จ.<province>" with no zone code or ME/MR; Ayutthaya names อ.เสนา/อ.ลาดบัวหลวง
 //  FB-06     an answer without a recommendation gets the "ทีมขายในพื้นที่" quick reply
 //  v3.43     the typing indicator is renewed while a slow answer is prepared and never renewed after the answer
 const assert = require('assert');
@@ -18,7 +19,7 @@ const { spawn } = require('child_process');
 
 const SECRET = 'turn-flow-secret';
 const uid = (k) => 'U' + crypto.createHash('md5').update(k).digest('hex');
-const USER = { join: uid('join'), busy: uid('busy'), photo: uid('photo'), team: uid('team'), cut: uid('cut'), norec: uid('norec') };
+const USER = { join: uid('join'), busy: uid('busy'), photo: uid('photo'), team: uid('team'), cut: uid('cut'), norec: uid('norec'), ayut: uid('ayut') };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const seen = { replies: [], pushes: [], chats: [], uploads: 0, loading: [] };
@@ -137,6 +138,7 @@ mock.listen(0, '127.0.0.1', async () => {
     await sleep(500);
     const c2 = await post(port, USER.photo, { type: 'text', text: 'ใบทุเรียนเป็นจุดแบบนี้คือโรคอะไร' });
     const d1 = await post(port, USER.team, { type: 'text', text: 'ขอเบอทีมขาย' });
+    const g1 = await post(port, USER.ayut, { type: 'text', text: 'ขอเบอร์ทีมขายอยุธยาค่ะ' });
     const e1 = await post(port, USER.cut, { type: 'text', text: 'CUT อะบา ชื่อว่าอะไร' });
     const f1 = await post(port, USER.norec, { type: 'text', text: 'NOREC มันสำปะหลังใบไหม้แบคทีเรีย' });
     await sleep(1800); // the SLOW answer for b1 is still being prepared
@@ -145,7 +147,7 @@ mock.listen(0, '127.0.0.1', async () => {
     assert(/จังหวัดไหน/.test(textOf(d1)), 'team request without a province should ask for it: ' + textOf(d1));
     const d2 = await post(port, USER.team, { type: 'text', text: 'ราชบุรีค่ะ' });
 
-    const want = [a2, b1, b2, c2, d2, e1, f1];
+    const want = [a2, b1, b2, c2, d2, e1, f1, g1];
     for (let i = 0; i < 100 && want.some((t) => !repliesFor(t).length); i++) await sleep(200);
 
     // FB-02
@@ -164,7 +166,17 @@ mock.listen(0, '127.0.0.1', async () => {
     assert.strictEqual(repliesFor(c2).length, 1);
     // FB-11 / FB-04
     assert.strictEqual(chatsFor(USER.team).length, 0, 'team request went to Dify');
-    assert(textOf(d2).includes('ทีมขายเขต A04 ที่ดูแล จ.ราชบุรี') && textOf(d2).includes('063-205-9076'), textOf(d2));
+    assert(textOf(d2).includes('พนักงานขายที่ดูแล จ.ราชบุรี') && textOf(d2).includes('063-205-9076'), textOf(d2));
+    // owner decision (27 Oct 2026): customers see no zone code and no ME/MR
+    const NO_CODES = /\bA\d\d\b|\bM[ER]\b/;
+    assert(!NO_CODES.test(textOf(d2)), 'zone code or ME/MR shown to the customer: ' + textOf(d2));
+    // Ayutthaya: the province team first, then the people for อ.เสนา/อ.ลาดบัวหลวง (the same people listed for ราชบุรี above)
+    const ay = textOf(g1);
+    const a04 = textOf(d2).split('\n').filter((l) => l.startsWith('• '));
+    assert.strictEqual(chatsFor(USER.ayut).length, 0, 'team request went to Dify');
+    assert(ay.startsWith('📍 พนักงานขายที่ดูแล จ.พระนครศรีอยุธยา\n') && !NO_CODES.test(ay), ay);
+    const senaAt = ay.indexOf('ถ้าอยู่ อ.เสนา หรือ อ.ลาดบัวหลวง');
+    assert(senaAt > 0 && a04.length > 0 && a04.every((l) => ay.indexOf(l) > senaAt), 'Ayutthaya reply should name อ.เสนา/อ.ลาดบัวหลวง and list their people: ' + ay);
     // FB-09
     assert.strictEqual(chatsFor(USER.cut).length, 1);
     assert(textOf(e1).includes('คำตอบที่ Dify ทำเสร็จแล้วค่ะ') && !textOf(e1).includes('ระบบขัดข้อง'), textOf(e1));
@@ -173,7 +185,7 @@ mock.listen(0, '127.0.0.1', async () => {
     assert(last.quickReply && last.quickReply.items.some((x) => x.action.label === '📞 ทีมขายในพื้นที่'), JSON.stringify(last));
     assert.strictEqual(seen.pushes.length, 0, 'every answer should use the reply token');
     // v3.43: typing indicator renewed during the slow answer, never after the last answer
-    const tokensOf = { [USER.join]: [a1, a2], [USER.busy]: [b1, b2], [USER.photo]: [c1, c2], [USER.team]: [d1, d2], [USER.cut]: [e1], [USER.norec]: [f1] };
+    const tokensOf = { [USER.join]: [a1, a2], [USER.busy]: [b1, b2], [USER.photo]: [c1, c2], [USER.team]: [d1, d2], [USER.cut]: [e1], [USER.norec]: [f1], [USER.ayut]: [g1] };
     const replyTimes = (u) => seen.replies.filter((r) => tokensOf[u].includes(r.replyToken)).map((r) => r.at).sort((x, y) => x - y);
     const loadingTimes = (u) => seen.loading.filter((l) => l.chatId === u).map((l) => l.at);
     const firstBusy = replyTimes(USER.busy)[0];
