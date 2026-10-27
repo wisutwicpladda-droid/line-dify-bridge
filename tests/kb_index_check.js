@@ -103,6 +103,13 @@ const nameNow = docName(hashOf(buildIndex(sheets()).text));
     s = await mk(f5).syncOnce();
     assert.strictEqual(s.ok, false); assert(/kept the previous index/.test(s.error));
     assert.deepStrictEqual(f5.docs.map((d) => d.id), ['old5'], 'ต้องเก็บดัชนีเก่าไว้เมื่อตัวใหม่ล้ม');
+    // 5c) v3.42: นับรอบที่ล้มติดกัน (kb_health แจ้งเมื่อครบ 3 รอบ) และล้างเมื่อสำเร็จ
+    const o5c = { failIndexing: true, docs: [{ id: 'old5c', name: DOC, created_at: 1, segs: ['x'] }] };
+    const k5c = mk(fakeDify(o5c));
+    s = await k5c.syncOnce(); assert.strictEqual(s.failStreak, 1, 'ล้มรอบแรกนับ 1');
+    s = await k5c.syncOnce(); assert.strictEqual(s.failStreak, 2, 'ล้มติดกันนับต่อ'); assert(s.failSince > 0);
+    o5c.failIndexing = false;
+    s = await k5c.syncOnce(); assert.strictEqual(s.ok, true); assert.strictEqual(s.failStreak, 0, 'สำเร็จแล้วล้างตัวนับ'); assert.strictEqual(s.failSince, 0);
     // 5b) ถ้า Dify เขียนทับเอกสารเดิมแทนการสร้างใหม่ แล้วทำดัชนีล้ม ห้ามลบเอกสารนั้น
     const f5b = fakeDify({ failIndexing: true, forceDuplicate: true, docs: [{ id: 'only', name: DOC, created_at: 1, segs: ['x'] }] });
     s = await mk(f5b).syncOnce();

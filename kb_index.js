@@ -184,7 +184,7 @@ function createKbIndex(opts) {
   const pollMs = opts.pollMs || 15000; // Knowledge API ของ Dify Cloud จำกัดจำนวนครั้งต่อนาที
   const timeoutMs = opts.timeoutMs || 15 * 60000;
   const enabled = opts.enabled != null ? !!opts.enabled : !/^(off|0|false|no)$/i.test(process.env.KB_INDEX_SYNC || '');
-  const state = { enabled, ok: null, at: 0, action: '', name: '', chunks: 0, products: 0, docId: '', error: '', running: false };
+  const state = { enabled, ok: null, at: 0, action: '', name: '', chunks: 0, products: 0, docId: '', error: '', running: false, failStreak: 0, failSince: 0 };
   const base = '/datasets/' + datasetId;
 
   async function listManaged() {
@@ -223,6 +223,9 @@ function createKbIndex(opts) {
 
   function done(fields) {
     Object.assign(state, { at: now(), error: '' }, fields);
+    // v3.42: นับรอบที่ล้มติดกัน ให้ kb_health แจ้งเมื่อครบ 3 รอบ (สำเร็จ = ล้าง)
+    if (state.ok === false) Object.assign(state, { failStreak: (state.failStreak || 0) + 1, failSince: state.failSince || now() });
+    else Object.assign(state, { failStreak: 0, failSince: 0 });
     console.log('[kb-index] ' + state.action + ' ' + DOC + ': ' + state.chunks + ' chunks, ' + state.products + ' products'
       + (fields.removed ? ', removed ' + fields.removed + ' old' : '') + (state.error ? ' · ' + state.error : ''));
     return state;
@@ -262,7 +265,7 @@ function createKbIndex(opts) {
       return done(Object.assign({ ok: !failed.length, action: managed.length ? 'replaced' : 'created', docId: newId, segments: w.segments,
         removed: old.length - failed.length, error: failed.length ? 'delete failed ' + failed.join(',') : '' }, info));
     } catch (e) {
-      Object.assign(state, { ok: false, at: now(), error: e.message });
+      Object.assign(state, { ok: false, at: now(), error: e.message, failStreak: (state.failStreak || 0) + 1, failSince: state.failSince || now() });
       console.log('[kb-index] failed: ' + e.message);
       return state;
     } finally {
@@ -281,7 +284,7 @@ function createKbIndex(opts) {
   function status() {
     if (!state.enabled) return 'off';
     return { ok: state.ok, at: state.at, action: state.action, name: state.name, chunks: state.chunks, products: state.products,
-      docId: state.docId ? state.docId.slice(0, 8) : '', error: state.error ? state.error.slice(0, 200) : undefined };
+      docId: state.docId ? state.docId.slice(0, 8) : '', failStreak: state.failStreak || undefined, error: state.error ? state.error.slice(0, 200) : undefined };
   }
 
   return { state, syncOnce, start, status };

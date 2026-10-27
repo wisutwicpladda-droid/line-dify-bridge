@@ -23,7 +23,7 @@ const SEP = '@@@@';
 const OVERRIDES = {};
 (process.env.NAME_OVERRIDES || 'โซนิก=ทริปสัน').split(',').forEach((p) => { const [a, b] = p.split('=').map((x) => (x || '').trim()); if (a && b) OVERRIDES[a] = b; });
 
-const state = { enabled: !!KEY, ok: false, at: 0, products: 0, chars: 0, hash: '', docId: '', action: '', error: '' };
+const state = { enabled: !!KEY, ok: false, at: 0, products: 0, chars: 0, hash: '', docId: '', action: '', error: '', failStreak: 0, failSince: 0 }; // v3.42: failStreak = รอบที่ล้มติดกัน (kb_health แจ้งเมื่อครบ 3)
 // v3.10: ระดับแนะนำของสินค้าแต่ละชื่อ ใช้เรียงสินค้าในคำตอบก่อนส่งถึงลูกค้า (server.js guardOrder)
 const levels = { map: {}, names: [], moa: {}, categories: {}, status: {}, at: 0 }; // v3.17: metadata สำหรับคำขอรายการสินค้าทั้งหมดและรูปสินค้า
 
@@ -200,7 +200,7 @@ async function syncOnce(force) {
     if (products < 50) throw new Error('found only ' + products + ' products, skip');
     setLevels(lv, mo, categories, status);
     const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-    if (!force && hash === state.hash && state.docId) { Object.assign(state, { ok: true, at: Date.now(), action: 'unchanged', error: '' }); return state; }
+    if (!force && hash === state.hash && state.docId) { Object.assign(state, { ok: true, at: Date.now(), action: 'unchanged', error: '', failStreak: 0, failSince: 0 }); return state; }
     const rule = { mode: 'custom', rules: { pre_processing_rules: [{ id: 'remove_extra_spaces', enabled: false }, { id: 'remove_urls_emails', enabled: false }], segmentation: { separator: SEP, max_tokens: 4000 } } };
     let docId = state.docId;
     if (!docId) {
@@ -213,10 +213,10 @@ async function syncOnce(force) {
     else { r = await api('POST', '/datasets/' + DATASET_ID + '/document/create-by-text', { name: DOC_NAME, text, indexing_technique: 'high_quality', process_rule: rule }); action = 'created'; }
     if (r.status !== 200) throw new Error(action + ' ' + r.status + ' ' + r.text.slice(0, 300));
     docId = (r.data && r.data.document && r.data.document.id) || docId;
-    Object.assign(state, { ok: true, at: Date.now(), products, chars: text.length, hash, docId, action, error: '' });
+    Object.assign(state, { ok: true, at: Date.now(), products, chars: text.length, hash, docId, action, error: '', failStreak: 0, failSince: 0 });
     console.log('[kb-sync] ' + action + ' ' + DOC_NAME + ': ' + products + ' products, ' + text.length + ' chars');
   } catch (e) {
-    Object.assign(state, { ok: false, at: Date.now(), error: e.message });
+    Object.assign(state, { ok: false, at: Date.now(), error: e.message, failStreak: (state.failStreak || 0) + 1, failSince: state.failSince || Date.now() });
     console.log('[kb-sync] failed: ' + e.message);
   }
   return state;

@@ -71,6 +71,9 @@
 // 18. v3.40 (26 ต.ค. 2569): สร้างดัชนี dify_icpladda_index.md จาก Google Sheet และซิงก์เข้า Knowledge ทุกชั่วโมง (kb_index.js)
 //     เนื้อหาเปลี่ยนจึงอัปโหลดเป็นเอกสารใหม่ รอ Dify ทำดัชนีเสร็จแล้วค่อยลบตัวเก่า ถ้าตัวใหม่ล้มจะเก็บตัวเก่าไว้
 //     v3.41: ชื่อเอกสารมีรหัสเนื้อหา (dify_icpladda_index_<รหัส>.md) เพราะ Dify เขียนทับเอกสารชื่อซ้ำแทนการสร้างใหม่
+// 19. v3.42 (27 ต.ค. 2569): แจ้ง LINE เมื่อข้อมูลใน Knowledge มีปัญหาที่ไม่ใช่เรื่องเครดิตด้วย (เอกสารค้าง Error, ซิงก์จากชีทล้ม 3 รอบติด)
+//     เพราะ 22–26 ต.ค. ซิงก์เอกสารสินค้าล้มทุกชั่วโมงโดยไม่มีใครรู้ · หน้าแอดมินล็อก IP ที่ใส่รหัสผิดหลายครั้ง (admin_guard.js)
+//     · จุด "กำลังพิมพ์" ค่าเริ่ม 60 วินาที เพราะคำตอบที่ต้องค้นเว็บใช้ 40–70 วินาที
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -86,10 +89,13 @@
 //  ADMIN_NOTIFY_IDS           (ไม่บังคับ) LINE userId ของแอดมิน คั่นด้วย , — เมื่อมีลูกค้า
 //                             รอติดต่อกลับ ระบบจะ Push แจ้งเตือนเข้า LINE แอดมินทันที
 //                             (ใช้โควต้า Push 1 ข้อความ/คน/ครั้ง) ดู userId ตัวเองได้จากหน้า /admin
-//  OPENAI_ALERT_TO            (ไม่บังคับ) LINE userId/groupId คั่นด้วย , ที่รับแจ้งเมื่อเครดิต OpenAI หมด (ไม่ตั้ง = ส่งถึง ADMIN_NOTIFY_IDS)
+//  OPENAI_ALERT_TO            (ไม่บังคับ) LINE userId/groupId คั่นด้วย , ที่รับแจ้งเมื่อเครดิต OpenAI หมด หรือข้อมูลใน Knowledge มีปัญหา (ไม่ตั้ง = ส่งถึง ADMIN_NOTIFY_IDS)
 //  KB_HEALTH_MIN              (ไม่บังคับ) นาทีต่อการเช็กเครดิต OpenAI ผ่าน Knowledge ค่าเริ่ม 60 (ต้องมี DIFY_DATASET_KEY)
 //  KB_INDEX_SYNC              (ไม่บังคับ) off = ปิดการซิงก์ดัชนี dify_icpladda_index.md จากชีท (ต้องมี DIFY_DATASET_KEY)
 //  KB_INDEX_MIN               (ไม่บังคับ) นาทีต่อรอบซิงก์ดัชนี ค่าเริ่ม 60
+//  ADMIN_MAX_FAILS            (ไม่บังคับ) ใส่รหัสแอดมินผิดได้กี่ครั้งใน 15 นาทีก่อนล็อก IP นั้น ค่าเริ่ม 10
+//  ADMIN_LOCK_MIN             (ไม่บังคับ) นาทีที่ล็อก ค่าเริ่ม 15
+//  LINE_LOADING_SECONDS       (ไม่บังคับ) วินาทีที่แสดงจุด "กำลังพิมพ์" 5-60 ค่าเริ่ม 60 · 0 = ปิด
 //  SUPABASE_URL               (ไม่บังคับ) https://xxxx.supabase.co  — เปิดใช้ CRM บน Supabase
 //  SUPABASE_SERVICE_KEY       (ไม่บังคับ) service_role key ของโปรเจกต์ (เก็บฝั่งเซิร์ฟเวอร์เท่านั้น ห้ามใส่ในหน้าเว็บ)
 //  POS_TABLE                  (ไม่บังคับ) ชื่อตารางเกษตรกรจาก POS ใน Supabase เดียวกัน เช่น customers -> เปิดระบบจับคู่ POS
@@ -133,6 +139,11 @@ const CH_SECRET = process.env.LINE_CHANNEL_SECRET || '';
 const CH_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
 const DIFY_KEY = process.env.DIFY_API_KEY || '';
 const ADMIN_KEY = (process.env.ADMIN_KEY || '').trim();
+// v3.42: ล็อก IP ที่ใส่รหัสแอดมินผิดหลายครั้ง (admin_guard.js)
+const adminGuard = require('./admin_guard').createAdminGuard({
+  maxFails: parseInt(process.env.ADMIN_MAX_FAILS || '10', 10) || 10,
+  lockMs: Math.max(1, parseInt(process.env.ADMIN_LOCK_MIN || '15', 10) || 15) * 60000
+});
 const MUTE_MINUTES = Math.max(1, parseInt(process.env.MUTE_MINUTES || '60', 10) || 60);
 const RAILWAY_VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
 const STATE_DIR = process.env.STATE_DIR || RAILWAY_VOL || '/data';
@@ -152,6 +163,11 @@ const OPENAI_ALERT_TO = (process.env.OPENAI_ALERT_TO || '').split(/[\s,]+/).filt
 const kbHealth = require('./kb_health').createKbHealth({
   api: kbSync.api, datasetId: kbSync.DATASET_ID, sheetDocName: kbSync.DOC_NAME,
   resync: () => kbSync.syncOnce(true),
+  // v3.42: ซิงก์ที่ล้มติดกัน 3 รอบ -> แจ้ง LINE (kbIndex ประกาศด้านล่าง ฟังก์ชันนี้ถูกเรียกหลังบูตแล้ว)
+  syncStates: () => [
+    { label: 'ซิงก์เอกสารสินค้าจากชีท (' + kbSync.DOC_NAME + ')', state: kbSync.state },
+    { label: 'ซิงก์ดัชนีจากชีท (dify_icpladda_index)', state: kbIndex.state }
+  ],
   notify: async (msg) => {
     const to = OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS;
     console.log(`[kb-health] ${msg.split('\n')[0]} -> ${to.length} LINE`);
@@ -970,8 +986,8 @@ async function linePush(to, text, token) {
 }
 
 // v3.34: จุด "กำลังพิมพ์" ใน LINE ระหว่างรอ Dify (แชท 1:1 เท่านั้น; หายเองเมื่อบอทตอบ)
-// LINE_LOADING_SECONDS = 5-60 (ปัดเป็นทีละ 5), 0 = ปิด
-const LOADING_SEC = (() => { const n = parseInt(process.env.LINE_LOADING_SECONDS || '20', 10); return n > 0 ? Math.min(60, Math.max(5, Math.round(n / 5) * 5)) : 0; })();
+// LINE_LOADING_SECONDS = 5-60 (ปัดเป็นทีละ 5), 0 = ปิด · v3.42 ค่าเริ่ม 60 (เดิม 20) เพราะคำตอบที่ต้องค้นเว็บใช้ 40–70 วินาที
+const LOADING_SEC = (() => { const n = parseInt(process.env.LINE_LOADING_SECONDS || '60', 10); return n > 0 ? Math.min(60, Math.max(5, Math.round(n / 5) * 5)) : 0; })();
 function lineLoading(userId) {
   if (!LOADING_SEC || !CH_TOKEN || !/^U[0-9a-f]{32}$/.test(userId || '')) return;
   request('POST', LINE_API + '/v2/bot/chat/loading/start', { Authorization: `Bearer ${CH_TOKEN}` }, { chatId: userId, loadingSeconds: LOADING_SEC })
@@ -2888,7 +2904,11 @@ function api(path, opts) {
   opts = opts || {};
   opts.headers = Object.assign({ 'x-admin-key': KEY, 'Content-Type': 'application/json' }, opts.headers || {});
   return fetch(path, opts).then(function(r) {
-    if (r.status === 401) throw new Error('รหัสไม่ถูกต้อง');
+    if (r.status === 401 || r.status === 429) return r.json().catch(function() { return {}; }).then(function(j) {
+      var e = new Error(r.status === 429 ? 'ใส่รหัสผิดหลายครั้ง ระบบล็อกไว้ชั่วคราว ลองใหม่ในอีก ' + (j.minutes || 15) + ' นาที' : 'รหัสไม่ถูกต้อง');
+      e.auth = true;
+      throw e;
+    });
     if (r.status === 503) throw new Error('ยังไม่ได้ตั้งค่า ADMIN_KEY ใน Railway');
     if (!r.ok) throw new Error('ผิดพลาด (' + r.status + ')');
     return r.json();
@@ -2901,8 +2921,20 @@ function setLive(on) {
   else { el.className = 'live off'; el.textContent = '● กำลังเชื่อมต่อ…'; }
 }
 
+// v3.42: รหัสใช้ไม่ได้แล้ว (เช่น เพิ่งเปลี่ยน ADMIN_KEY) -> หยุดดึงข้อมูลทุกอย่างแล้วกลับหน้าเข้าสู่ระบบ ไม่ส่งรหัสเก่าซ้ำ
+function signOut(msg) {
+  KEY = '';
+  sessionStorage.removeItem('nladda_key');
+  if (timer) { clearInterval(timer); timer = null; }
+  if (esRetry) { clearTimeout(esRetry); esRetry = null; }
+  if (es) { try { es.close(); } catch (e) {} es = null; }
+  document.getElementById('app').classList.remove('on');
+  document.getElementById('login').style.display = '';
+  var el = document.getElementById('err'); el.style.display = 'block'; el.textContent = msg;
+}
+
 function connectStream() {
-  if (es) return;
+  if (es || !KEY) return;
   api('/admin/api/token', { method: 'POST' }).then(function(d) {
     if (es) return;
     es = new EventSource('/admin/api/stream?t=' + encodeURIComponent(d.token));
@@ -2957,6 +2989,7 @@ function load(fromLogin) {
   }).catch(function(e) {
     if (fromLogin) { var el = document.getElementById('err'); el.style.display = 'block'; el.textContent = e.message; }
     sessionStorage.removeItem('nladda_key');
+    if (e && e.auth && !fromLogin) signOut(e.message === 'รหัสไม่ถูกต้อง' ? 'รหัสแอดมินเปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่' : e.message);
   });
 }
 
@@ -3487,9 +3520,14 @@ function handleAdmin(req, res, path, body) {
     return;
   }
 
+  // v3.42: IP ที่ใส่รหัสผิดเกิน ADMIN_MAX_FAILS ครั้งถูกล็อก ADMIN_LOCK_MIN นาที (ได้ 429 แม้รหัสถูก)
+  const adminIp = adminGuard.clientIp(req);
+  const lockedMin = adminGuard.lockedFor(adminIp);
+  if (lockedMin) return sendJson(res, 429, { ok: false, error: 'locked', minutes: lockedMin });
   const authed = adminAuthed(req);
   if (authed === null) return sendJson(res, 503, { ok: false, error: 'ADMIN_KEY not set' });
-  if (!authed) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+  if (!authed) { adminGuard.fail(adminIp, req.headers['x-admin-key'] || ''); return sendJson(res, 401, { ok: false, error: 'unauthorized' }); }
+  adminGuard.ok(adminIp);
 
   // v3.8: สั่ง sync สินค้าจาก Google Sheet เข้า KB ทันที
   if (path === '/admin/api/kb-sync' && req.method === 'POST') {
@@ -3756,7 +3794,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.41', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.42', conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, summary: productValidation.summary, error: productValidation.error || undefined }, kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
