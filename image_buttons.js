@@ -5,7 +5,7 @@
 // ถ้าลูกค้าส่งข้อความอื่นที่ไม่ใช่การกดปุ่ม ปุ่มชุดเดิมหมดอายุ ไม่ถูกแนบกลับมาอีก
 
 function rememberButtons(s, names) {
-  s.pimgPending = Array.isArray(names) ? names.slice(0, 4) : [];
+  s.pimgPending = Array.isArray(names) ? names.slice(0, 6) : [];
 }
 
 function clearButtons(s) {
