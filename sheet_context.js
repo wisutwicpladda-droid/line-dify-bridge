@@ -115,7 +115,9 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   const isDurian = /ทุเรียน/.test(q);
   const isLifecycle = isLifecycleQuery(q);
   const hasFlowering = /ผ่าดอก|ช่วงดอก|ออกดอก|ดอกบาน|ดอก/.test(q);
-  const hasPest = /หนอน|เพลี้ย|แมลง|ไร/.test(q);
+  // v3.49 (28 Oct 2026): "ไร" alone also matched "อะไร" (and ไร่, ไร้), so every durian question
+  // with "ใช้ยาอะไร" got the insect block, disease questions too. Mites are named as such.
+  const hasPest = /หนอน|เพลี้ย|แมลง|ตัวไร|ไร(?:แดง|ขาว|สี่ขา|สนิม|กำมะหยี่|ศัตรู)/.test(q);
   const isCropUsageQuery = (isSugarcane || isRice) && isPostEmergenceQuery(q)
     || isDurian && (hasPest || hasFlowering)
     || isLifecycle;

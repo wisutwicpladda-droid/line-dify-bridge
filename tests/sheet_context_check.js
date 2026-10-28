@@ -23,6 +23,7 @@ const usage = [
   ['u9', 'p-rice', '', 'นาข้าว', '', 'วัชพืช', 'หญ้าข้าวนก', 'หลังงอก'],
   ['u6', 'p-closed', '', 'ข้าวโพด', '', 'แมลง', 'หนอน', 'ก่อนเก็บเกี่ยว'],
   ['u7', 'p-future', '', 'ข้าวโพด', '', 'วัชพืช', 'หญ้า', 'ก่อนปลูก/เริ่มงอก'],
+  ['u10', 'p-corn', '', 'ทุเรียน', '', 'แมลง', 'ไรแดง เพลี้ยไฟ', 'แตกใบอ่อน'],
 ];
 
 const result = buildVerifiedUsageContext('ขอโปรแกรมดูแลข้าวโพดตั้งแต่เริ่มปลูกจนเก็บเกี่ยว', master, usage, { 'ตัวคุมข้าวโพด': 1 });
@@ -49,5 +50,10 @@ assert(riceWeedResult.indexOf('ตัวเลือกระดับสูง'
 const mixedStageResult = buildVerifiedUsageContext('ข้าวมีวัชพืช ใช้สินค้าตัวไหนดี', master, usage, { 'ตัวเลือกระดับสูง': 1, 'ตัวคุมนาข้าว': 2 });
 assert(mixedStageResult.includes('ต้องถามอายุ/ระยะพืชก่อนเลือกสินค้าตัวสุดท้าย'), 'เมื่อข้อมูลการใช้ต่างช่วงและไม่ทราบอายุ ต้องถามอายุก่อนเลือกตัวสุดท้าย');
 assert(!buildVerifiedUsageContext('ข้าวอายุ 10 วัน มีวัชพืช ใช้สินค้าตัวไหนดี', master, usage, { 'ตัวเลือกระดับสูง': 1, 'ตัวคุมนาข้าว': 2 }).includes('ต้องถามอายุ/ระยะพืชก่อนเลือกสินค้าตัวสุดท้าย'), 'เมื่อมีอายุพืชแล้วไม่ควรถามอายุซ้ำ');
+
+// v3.49: "อะไร" is not a mite. A durian disease question gets no insect block; a mite question does.
+assert.strictEqual(buildVerifiedUsageContext('ทุเรียนเป็นโรคราสีชมพู กิ่งแห้งตาย ใช้ยาอะไรดีคะ', master, usage, {}), '', 'คำถามโรคทุเรียนที่มีคำว่า อะไร ต้องไม่แนบรายการแมลง');
+assert(buildVerifiedUsageContext('ทุเรียนมีไรแดง ใช้ยาอะไรดี', master, usage, {}).includes('ไรแดง'), 'คำถามไรแดงในทุเรียนยังต้องแนบรายการแมลง');
+assert(buildVerifiedUsageContext('ทุเรียนมีเพลี้ยไฟ ใช้อะไรดี', master, usage, {}).includes('เพลี้ยไฟ'), 'คำถามเพลี้ยในทุเรียนยังต้องแนบรายการแมลง');
 
 console.log('PASS: lifecycle sheet context includes all verified crop stages and open products');
