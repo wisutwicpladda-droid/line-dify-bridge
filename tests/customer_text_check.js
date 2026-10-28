@@ -22,6 +22,14 @@ assert.strictEqual(stripStaffCode('ษศกร (โลมา)'), 'ษศกร 
 assert.strictEqual(stripStaffCode('MEGA ช็อป'), 'MEGA ช็อป');
 console.log('PASS: customer text drops the internal word "ในระบบ" and ME/MR codes but keeps plant-system wording');
 
+// v3.53: คำตอบจริงจากระบบจริง 28 ต.ค. (prod100 p052) มี "นิวเพน (ไม่มีรูป)" ซึ่งเป็นหมายเหตุในชื่อสินค้าของชีท
+const { removeInternalNotes } = require('../customer_text');
+assert.strictEqual(removeInternalNotes('สำหรับการคุมหญ้าก่อนงอกในพริก น้องลัดดาแนะนำ "นิวเพน (ไม่มีรูป)" และ "ออล์สตาร์" ค่ะ'),
+  'สำหรับการคุมหญ้าก่อนงอกในพริก น้องลัดดาแนะนำ "นิวเพน" และ "ออล์สตาร์" ค่ะ');
+assert.strictEqual(removeInternalNotes('1. นิวเพน (ไม่มีรูป)\n2. คริซ่า(ไม่มีรูป)'), '1. นิวเพน\n2. คริซ่า');
+for (const keep of ['แผลมีขอบ (ไม่มีรูปร่างชัดเจน)', 'ยังไม่มีรูปสินค้านี้ค่ะ', 'ไม่มีคำนี้']) assert.strictEqual(removeInternalNotes(keep), keep, keep);
+console.log('PASS: customer text drops the sheet note "(ไม่มีรูป)" from product names');
+
 // v3.50: ข้อความยืนยันลงทะเบียนและหน้า LIFF ไม่มีรหัสเขตและ ME/MR (เดิม "ทีมงานดูแลพื้นที่ของคุณ (เขต A07): ME … · MR …")
 const { zoneTeamRows, customerTeam, customerTeamText } = require('../customer_text');
 const A07 = { zone: 'A07', team: 'ME ชนาภัทร พลูหนัง (อ้อม) 0612692590 · MR ศตวรรษ (เจมส์) 092-2478766 / ษศกร (โลมา)' };

@@ -4,6 +4,7 @@
 // 1) "ในระบบ" เป็นคำภายใน (เช่น "ยังไม่มีข้อมูลคำแนะนำในระบบ", "ในระบบยังไม่มีข้อมูล") ตัดออกจากคำตอบของ Dify
 //    ตัดเฉพาะเมื่อพูดถึงข้อมูล/คำแนะนำ หรือขึ้นต้นประโยคว่ายังไม่มี คำอย่าง "ในระบบราก" "ในระบบท่อน้ำ" "ในระบบประสาท" ยังอยู่
 // 2) รายชื่อพนักงานขายที่ลูกค้าเห็นไม่มีรหัสตำแหน่ง ME/MR (เจ้าของตัดสิน 27 ต.ค. 2569)
+// 3) v3.53: หมายเหตุภายใน "(ไม่มีรูป)" ในชื่อสินค้าของชีท (นิวเพน) หลุดไปในคำตอบคุมหญ้าพริกและหอมแบ่ง ตัดออก
 
 const SYSTEM_WORD_END = '(?=$|[\\s.,!?)\\]"\'”]|ค่ะ|คะ|นะ|ครับ|เลย|ตอนนี้|ขณะนี้|แล้ว|ด้วย|เท่านั้น|ยัง|ไม่|จึง|แต่|และ|หรือ|ซึ่ง|ที่|โดย|ให้|เพื่อ)';
 const SYSTEM_OWNER = '(?:ของ(?:เรา|บริษัท|น้องลัดดา|ลัดดา))?';
@@ -15,6 +16,13 @@ function removeSystemWords(text) {
   if (!s.includes('ในระบบ')) return s;
   return s.replace(SYSTEM_WORD_DATA_RX, '$1$2').replace(SYSTEM_WORD_LEAD_RX, '')
     .replace(/[ \t]{2,}/g, ' ').replace(/ +([,.!?)])/g, '$1');
+}
+
+// v3.53: "นิวเพน (ไม่มีรูป)" -> "นิวเพน" ส่วนข้อความอย่าง "(ไม่มีรูปร่างชัดเจน)" ไม่โดนตัด
+const INTERNAL_NOTE_RX = /[ \t]*\(\s*ไม่มีรูป\s*\)/g;
+function removeInternalNotes(text) {
+  const s = String(text == null ? '' : text);
+  return s.includes('ไม่มีรูป') ? s.replace(INTERNAL_NOTE_RX, '') : s;
 }
 
 function stripStaffCode(name) {
@@ -47,4 +55,4 @@ function customerTeamText(team) {
   return '📍 ' + team.title + '\n' + team.rows.map((r) => '• ' + r.name + (r.phone ? ' ' + r.phone : '')).join('\n');
 }
 
-module.exports = { removeSystemWords, stripStaffCode, zoneTeamRows, customerTeam, customerTeamText };
+module.exports = { removeSystemWords, removeInternalNotes, stripStaffCode, zoneTeamRows, customerTeam, customerTeamText };

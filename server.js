@@ -92,6 +92,7 @@
 //     v3.51: "โคราช" ตามด้วยคำถามสินค้า (ใช้ ฉีด ผสม อัตรา ยังไง) = โค-ราซ พิมพ์ผิด ไม่บันทึกเป็นจังหวัดนครราชสีมา
 //     v3.52: สถิติคุณภาพนับผลการส่งคำตอบด้วย (reply, push สำรอง, ส่งไม่ถึง) งานตรวจรายวันจึงเห็นเมื่อลูกค้าไม่ได้รับคำตอบ
 //       เช่น reply ใช้ไม่ได้แล้ว push ก็ไม่ผ่านเพราะโควตาข้อความของ OA หมด
+//     v3.53: ตัดหมายเหตุภายใน "(ไม่มีรูป)" ออกจากคำตอบ (บอทเคยตอบ "นิวเพน (ไม่มีรูป)") และข้อความรูปสินค้าทั้งหมดไม่ใช้คำว่า "ในระบบ"
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -157,7 +158,7 @@ const { validateProductData } = require('./product_validator'); // p112: ตร�
 // v3.50 (28 Oct 2026): สถิติคุณภาพคำตอบ 24 ชม. ใน /health (งานตรวจรายวันอ่านจากตรงนี้) และจุดในชีทที่แจ้งแอดมินไปแล้ว
 const quality = require('./quality').createQuality();
 let sheetAlertKeys = [];
-const { removeSystemWords, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า
+const { removeSystemWords, removeInternalNotes, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)"
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
 const { provinceMatch, PROVINCE_WORDS } = require('./province_match'); // v3.45-v2: เลย/แพร่/ตาก นับเป็นจังหวัดเมื่อมี จ./จังหวัด หรือพิมพ์มาแค่ชื่อจังหวัด
 const imageButtons = require('./image_buttons');
@@ -1065,7 +1066,7 @@ async function sendAllProductImages(s, ev, pushTarget, names) {
   if (!names.length) return false;
   const withImages = names.filter((n) => PIMG[n]);
   const missingImages = names.filter((n) => !PIMG[n]);
-  const suffix = missingImages.length ? `\nยังไม่มีรูปในระบบ: ${missingImages.join(', ')}` : '';
+  const suffix = missingImages.length ? `\nยังไม่มีรูป: ${missingImages.join(', ')}` : '';
   const text = `รูปสินค้ากำจัดแมลงที่เปิดขาย (${names.length} รายการ, มีรูป ${withImages.length} รายการ)\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}${suffix}`;
   const imgs = pimgBuild(withImages);
   // LINE รับได้ไม่เกิน 5 ข้อความต่อ request: ใช้ reply แรกเป็นข้อความ + รูป 4 รูป
@@ -1123,10 +1124,10 @@ function guardInternal(answer, sessionId) {
   return out || INTERNAL_REPLY;
 }
 
-// v3.50 (28 Oct 2026): ตัดคำภายใน "ในระบบ" ออกจากคำตอบ (customer_text.js)
+// v3.50 (28 Oct 2026): ตัดคำภายใน "ในระบบ" ออกจากคำตอบ (customer_text.js) · v3.53: ตัด "(ไม่มีรูป)" ท้ายชื่อสินค้าด้วย
 function guardSystemWords(answer, sessionId) {
-  const out = removeSystemWords(answer);
-  if (out !== String(answer)) console.log('[guard] ' + String(sessionId || '').slice(0, 8) + ' removed "ในระบบ"');
+  const out = removeInternalNotes(removeSystemWords(answer));
+  if (out !== String(answer)) console.log('[guard] ' + String(sessionId || '').slice(0, 8) + ' removed internal words');
   return out;
 }
 
@@ -4122,7 +4123,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.52', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.53', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
