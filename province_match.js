@@ -13,6 +13,12 @@ const NOISE_RX = /[\s\u200b.!?,:;()"'“”~\-]+|\p{Extended_Pictographic}/gu;
 // that consonant starts the next syllable, so the match is part of another word.
 const ENDS_IN_CONSONANT_RX = /[\u0E01-\u0E2E]$/;
 const NEXT_IN_SYLLABLE_RX = /^[\u0E2D\u0E30-\u0E3A\u0E47-\u0E4E]/;
+// v3.51 (28 Oct 2026): "โคราช" is also how customers misspell the product โค-ราซ. On 28 Oct a real chat
+// "โคราชใช้ยังไง" was read as จ.นครราชสีมา and the bot offered that province's salespeople. A product
+// question right after the name (ใช้ ฉีด ผสม อัตรา ยังไง ...) means the product unless จ./จังหวัด comes first.
+const PRODUCT_LOOKALIKES = {
+  'โคราช': /^\s*(?:ใช้|ฉีด|พ่น|ผสม|อัตรา|ราด|กำจัด|รักษา|ป้องกัน|ดี(?:ไหม|มั้ย|มั๊ย|มั๋ย)|ได้(?:ไหม|มั้ย|มั๊ย)|ยังไง|ยังงัย|อย่างไร|กี่|คือ(?:อะไร|ยา)|เป็นยา|ขวด|แกลลอน|ตัวนี้)/
+};
 
 function bareText(text) {
   return String(text || '').replace(NOISE_RX, '')
@@ -29,6 +35,7 @@ function provinceMatch(rx, text) {
   while ((m = g.exec(t))) {
     const name = m[1];
     if (ENDS_IN_CONSONANT_RX.test(name) && NEXT_IN_SYLLABLE_RX.test(t.slice(m.index + name.length))) continue;
+    if (PRODUCT_LOOKALIKES[name] && !MARK_BEFORE_RX.test(t.slice(0, m.index)) && PRODUCT_LOOKALIKES[name].test(t.slice(m.index + name.length))) continue;
     if (!PROVINCE_WORDS.has(name)) return name;
     if (MARK_BEFORE_RX.test(t.slice(0, m.index))) return name;
     if (bareText(t) === name) return name;
