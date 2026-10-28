@@ -242,8 +242,8 @@ function showDone(r) {
   $('done_title').textContent = r.updated ? 'อัปเดตข้อมูลเรียบร้อยค่ะ' : 'ลงทะเบียนเรียบร้อยค่ะ';
   var team = (r.zone && r.zone.rows) || [];
   var h = '✅ ขอบคุณคุณ<b>' + esc(r.fullName || '') + '</b><br>' + esc(r.addressLine || '') + (r.areaLine ? ' · พื้นที่ปลูก ' + esc(r.areaLine) : '') + ' 🙏 ' + esc((r.posNote || 'บันทึกข้อมูลสมาชิกเรียบร้อยแล้ว').replace(/\s*✅\s*$/, ''));
-  if (r.zone && r.zone.zone) {
-    h += '<div class="tt">ทีมงานดูแลพื้นที่ของคุณ (เขต ' + esc(r.zone.zone) + ')</div>';
+  if (r.zone && team.length) {
+    h += '<div class="tt">' + esc(r.zone.title || 'พนักงานขายที่ดูแลพื้นที่ของคุณ') + '</div>';
     for (var i = 0; i < team.length; i++) h += '<div class="tr"><span>' + esc(team[i].name) + '</span>' + (team[i].phone ? '<a href="tel:' + esc(String(team[i].phone).replace(/-/g, '')) + '">' + esc(team[i].phone) + '</a>' : '') + '</div>';
   }
   h += '<div class="tail">สอบถามเรื่องสินค้า โรค แมลง วัชพืช หรือขอคำแนะนำได้เลยนะคะ 🌾</div>';

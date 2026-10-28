@@ -4,6 +4,7 @@
 // LINE API เป็น mock ในเครื่อง (Dify ชี้ไปที่ mock เดียวกัน), คำตอบ Dify ใช้ FAKE_DIFY_ANSWER จึงไม่ต้องใช้ key จริง
 // v3.44-v2: ข้อความที่ส่งติดกันรวมเป็นคำถามเดียว (คิวรอบคำถามของ v3.38) ได้คำตอบเดียวและข้อเสนอส่งต่อร้านครั้งเดียว
 const assert = require('assert');
+const SOURCE_VERSION = (require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8').match(/version: '([\d.]+)'/) || [])[1];
 const http = require('http');
 const crypto = require('crypto');
 const os = require('os');
@@ -110,13 +111,19 @@ async function waitHealth(port) {
   let b = startBridge(port, linePort, { DEALERS: dealers });
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.48');
+    assert.strictEqual(h.version, SOURCE_VERSION); // รุ่นใน /health ต้องตรงกับใน server.js
     assert.strictEqual(h.referral, false);
     assert.strictEqual(h.leadScore, false);
     const out = await say(port, CUSTOMER, 'แกนเตอร์ซื้อได้ที่ไหน');
     assert(!quick(out).includes('สนใจซื้อ ส่งต่อร้าน'), 'ปิดฟีเจอร์แล้วต้องไม่มีปุ่มส่งต่อร้าน');
     const out2 = await say(port, CUSTOMER, 'หาร้าน');
     assert(!/ร้านตัวแทนใกล้คุณ|อำเภอและจังหวัด/.test(texts(out2)), 'ปิดฟีเจอร์แล้ว "หาร้าน" ต้องไปที่บอทปกติ');
+    // v3.50: สถิติคุณภาพนับรอบคำถามที่ตอบแล้ว และ /health มีรายการจุดที่ควรแก้ในชีท (งานตรวจรายวันอ่านจากตรงนี้)
+    const hq = (await req(port, 'GET', '/health')).json;
+    assert(hq.quality && hq.quality.hours === 24 && hq.quality.turns >= 2, 'health ต้องนับรอบคำถามในสถิติคุณภาพ: ' + JSON.stringify(hq.quality));
+    assert.strictEqual(hq.quality.fallbacks, 0);
+    assert(Array.isArray(hq.productValidation.problems), 'health ต้องมีรายการจุดที่ควรแก้ในชีท');
+    assert.strictEqual(hq.sheetAlert, false, 'ระบบที่ไม่ซิงก์ Knowledge ต้องไม่แจ้ง LINE เรื่องชีท');
     const list = await req(port, 'GET', '/admin/api/list', null, { 'x-admin-key': ADMIN });
     assert.strictEqual(list.json.sessions[0].score, null, 'ปิดฟีเจอร์แล้วต้องไม่มีคะแนน');
   } finally { b.child.kill(); }

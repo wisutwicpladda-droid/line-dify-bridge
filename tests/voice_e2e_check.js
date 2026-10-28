@@ -5,6 +5,7 @@
 // v3.44-v2: ชุด 4 ใช้ Dify จำลองแบบ streaming ตรวจว่าข้อความเสียงเข้าคิวรอบคำถามเหมือนข้อความที่พิมพ์
 // และเมื่อ Dify ตอบ HTTP 400 ข้อความระบบขัดข้องต้องไม่ถูกอ่านเป็นเสียง (ไม่เรียก ElevenLabs สร้างเสียง)
 const assert = require('assert');
+const SOURCE_VERSION = (require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8').match(/version: '([\d.]+)'/) || [])[1];
 const http = require('http');
 const crypto = require('crypto');
 const os = require('os');
@@ -162,7 +163,7 @@ async function waitHealth(port) {
   let b = startBridge(port, linePort, {});
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.48');
+    assert.strictEqual(h.version, SOURCE_VERSION); // รุ่นใน /health ต้องตรงกับใน server.js
     assert.strictEqual(h.voice, false);
     const out = await send(port, voiceMsg());
     assert.strictEqual(out.length, 1, JSON.stringify(out));
@@ -246,7 +247,7 @@ async function waitHealth(port) {
   b = startBridge(port, linePort, { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_VOICE_ID: 'voice-ladda', ELEVENLABS_API_BASE: elBase, FAKE_DIFY_ANSWER: '', DIFY_API_KEY: 'test-dify-key' });
   try {
     const h = await waitHealth(port);
-    assert.strictEqual(h.version, '3.48');
+    assert.strictEqual(h.version, SOURCE_VERSION); // รุ่นใน /health ต้องตรงกับใน server.js
     assert.strictEqual(h.difyMode, 'streaming');
     assert.strictEqual(h.textWaitSeconds, 1);
     const ttsBefore = el.tts.length;

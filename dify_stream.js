@@ -17,7 +17,9 @@ function streamChat(opts) {
   return new Promise((resolve) => {
     const u = new URL(base.replace(/\/+$/, '') + '/chat-messages');
     const body = JSON.stringify(Object.assign({}, payload, { response_mode: 'streaming' }));
-    const out = { status: 0, answer: '', conversationId: '', messageId: '', ended: false, error: '' };
+    // v3.50 (28 Oct 2026): เก็บโหนดที่พัง (exception/failed) และโหนดที่ต้องลองใหม่ สำหรับสถิติคุณภาพ
+    // โหนดที่พังแบบมีค่า default ยังให้คำตอบได้ ลูกค้าไม่เห็น error แต่คำตอบมักช้าและอ่อนลง
+    const out = { status: 0, answer: '', conversationId: '', messageId: '', ended: false, error: '', nodeIssues: [], nodeRetries: [], workflowStatus: '' };
     let buf = '', raw = '', done = false;
     const finish = (err) => {
       if (done) return;
@@ -48,6 +50,13 @@ function streamChat(opts) {
           if (ev.event === 'message' || ev.event === 'agent_message') out.answer += ev.answer || '';
           else if (ev.event === 'message_replace') out.answer = ev.answer || '';
           else if (ev.event === 'message_end') out.ended = true;
+          else if (ev.event === 'node_finished') {
+            const d = ev.data || {};
+            if (d.status && d.status !== 'succeeded') out.nodeIssues.push({ title: String(d.title || d.node_id || '').slice(0, 80), status: String(d.status), error: String(d.error || '').slice(0, 160) });
+          } else if (ev.event === 'node_retry') {
+            const d = ev.data || {};
+            out.nodeRetries.push(String(d.title || d.node_id || '').slice(0, 80));
+          } else if (ev.event === 'workflow_finished') out.workflowStatus = String((ev.data && ev.data.status) || '');
           else if (ev.event === 'error') out.error = ('stream error ' + (ev.status || '') + ' ' + (ev.code || '') + ' ' + String(ev.message || '')).slice(0, 300);
         }
       });

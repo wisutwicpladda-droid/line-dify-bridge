@@ -150,7 +150,8 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
     const stage = clean(r[7]);
     const cropMatches = isLifecycle
       ? cropMatchesQuery(crop, q, allLabels)
-      : isSugarcane ? /อ้อย/.test(crop) : isRice ? /นาข้าว|ข้าว/.test(crop) : /ทุเรียน/.test(crop);
+      // v3.50 (28 Oct 2026): แถว "พืชไร่ / ข้าวโพด" เคยหลุดเข้าคำถามนาข้าว (ยาฆ่าหญ้าข้าวโพดโผล่ในรายการนาข้าว)
+      : isSugarcane ? /อ้อย/.test(crop) : isRice ? /นาข้าว|ข้าว(?!โพด)/.test(crop) : /ทุเรียน/.test(crop);
     const stageMatchesQuery = isLifecycle
       ? true
       : isSugarcane
@@ -215,8 +216,15 @@ function buildVerifiedUsageContext(query, masterRows, usageRows, levels) {
   return lines.join('\n');
 }
 
-function enrichQuery(query, masterRows, usageRows, levels) {
-  const extra = buildVerifiedUsageContext(query, masterRows, usageRows, levels);
+// v3.50 (28 Oct 2026): ตัดสินจากคำที่ลูกค้าพิมพ์หรือพูดเท่านั้น (opts.userText) คำสั่งอ่านรูปที่ bridge แนบ
+// มีคำว่า แมลง วัชพืช โรค ซึ่งเคยทำให้รูปที่ลูกค้าไม่ได้บอกศัตรูพืชได้รายการสินค้าผิดประเภท
+// รอบที่มีรูป (opts.hasImage) แนบรายการเฉพาะเมื่อลูกค้าบอกศัตรูพืชหรือวัชพืชเอง
+const NAMED_PROBLEM_RX = /หนอน|เพลี้ย|แมลง|ตัวไร|ไร(?:แดง|ขาว|สี่ขา|สนิม|กำมะหยี่|ศัตรู)|วัชพืช|หญ้า|ฉีด\s*ทับ|ยาเก็บ/;
+function enrichQuery(query, masterRows, usageRows, levels, opts) {
+  const o = opts || {};
+  const basis = o.userText != null ? String(o.userText) : String(query || '');
+  if (o.hasImage && !NAMED_PROBLEM_RX.test(basis)) return query;
+  const extra = buildVerifiedUsageContext(basis, masterRows, usageRows, levels);
   return extra ? `${query}\n\n${extra}` : query;
 }
 

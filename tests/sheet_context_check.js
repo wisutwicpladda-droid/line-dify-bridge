@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { buildVerifiedUsageContext } = require('../sheet_context');
+const { buildVerifiedUsageContext, enrichQuery } = require('../sheet_context');
 
 const master = [
   ['id', 'name', '', 'common', 'ai', 'moa', '', 'selling', '', '', '', 'phyto', 'precautions', '', 'status'],
@@ -55,5 +55,23 @@ assert(!buildVerifiedUsageContext('ข้าวอายุ 10 วัน มี�
 assert.strictEqual(buildVerifiedUsageContext('ทุเรียนเป็นโรคราสีชมพู กิ่งแห้งตาย ใช้ยาอะไรดีคะ', master, usage, {}), '', 'คำถามโรคทุเรียนที่มีคำว่า อะไร ต้องไม่แนบรายการแมลง');
 assert(buildVerifiedUsageContext('ทุเรียนมีไรแดง ใช้ยาอะไรดี', master, usage, {}).includes('ไรแดง'), 'คำถามไรแดงในทุเรียนยังต้องแนบรายการแมลง');
 assert(buildVerifiedUsageContext('ทุเรียนมีเพลี้ยไฟ ใช้อะไรดี', master, usage, {}).includes('เพลี้ยไฟ'), 'คำถามเพลี้ยในทุเรียนยังต้องแนบรายการแมลง');
+
+// v3.50 (28 Oct 2026): คำถามนาข้าวต้องไม่ดึงแถวข้าวโพด (ยาฆ่าหญ้าข้าวโพดเคยโผล่ในรายการนาข้าว)
+const cornWeedUsage = usage.concat([['u11', 'p-corn', '', 'พืชไร่', 'ข้าวโพด', 'วัชพืช', 'หญ้าข้าวนก', 'หลังงอก']]);
+const riceOnly = buildVerifiedUsageContext('หญ้าแบบนี้ขึ้นในนาข้าว ใช้ยาฆ่าหญ้าอะไรได้บ้าง', master, cornWeedUsage, {});
+assert(riceOnly.includes('ตัวคุมนาข้าว'), 'ต้องแนบยาฆ่าหญ้านาข้าว');
+assert(!riceOnly.includes('ตัวคุมข้าวโพด'), 'ห้ามแนบยาฆ่าหญ้าของแถวข้าวโพดในคำถามนาข้าว');
+
+// v3.50: ตัดสินจากคำของลูกค้าเท่านั้น คำสั่งอ่านรูปของ bridge มีคำว่า แมลง วัชพืช โรค
+const IMAGE_NOTE = '(ลูกค้าส่งรูปภาพ 1 รูปมาพร้อมข้อความด้านบน) ลูกค้าส่งรูปภาพมา ... (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร';
+const durianPhoto = 'ทุเรียนเป็นอะไร\n\n' + IMAGE_NOTE;
+assert.strictEqual(enrichQuery(durianPhoto, master, usage, {}, { userText: 'ทุเรียนเป็นอะไร', hasImage: true }), durianPhoto, 'รูปที่ลูกค้าไม่ได้บอกศัตรูพืชต้องไม่ได้รายการแมลง');
+const ricePhoto = 'นาข้าวแห้งตายเป็นหย่อมๆ แบบนี้ เกิดจากอะไร\n\n' + IMAGE_NOTE;
+assert.strictEqual(enrichQuery(ricePhoto, master, cornWeedUsage, {}, { userText: 'นาข้าวแห้งตายเป็นหย่อมๆ แบบนี้ เกิดจากอะไร', hasImage: true }), ricePhoto, 'คำสั่งอ่านรูปต้องไม่ทำให้ได้รายการยาฆ่าหญ้า');
+const weedPhoto = 'หญ้าแบบนี้ขึ้นในนาข้าว ใช้ยาฆ่าหญ้าอะไรได้บ้าง\n\n' + IMAGE_NOTE;
+const withBlock = enrichQuery(weedPhoto, master, cornWeedUsage, {}, { userText: 'หญ้าแบบนี้ขึ้นในนาข้าว ใช้ยาฆ่าหญ้าอะไรได้บ้าง', hasImage: true });
+assert(withBlock.startsWith(weedPhoto) && withBlock.includes('ตัวคุมนาข้าว') && !withBlock.includes('ตัวคุมข้าวโพด'), 'รูปที่ลูกค้าบอกว่าเป็นหญ้าในนาข้าวยังได้รายการยาฆ่าหญ้านาข้าว');
+assert.strictEqual(enrichQuery(IMAGE_NOTE, master, usage, {}, { userText: '', hasImage: true }), IMAGE_NOTE, 'รูปที่ไม่มีข้อความต้องไม่ได้รายการ');
+assert(enrichQuery('ข้าวมีหญ้าข้าวนก ใช้สินค้าตัวไหนดี', master, usage, {}).includes('หญ้าข้าวนก'), 'ข้อความปกติที่ไม่มี opts ยังทำงานเหมือนเดิม');
 
 console.log('PASS: lifecycle sheet context includes all verified crop stages and open products');

@@ -19,6 +19,12 @@ const server = http.createServer((req, res) => {
     res.write(line(Object.assign({ event: 'workflow_started' }, ids)));
     res.write('event: ping\n\n');
     if (p.query === 'workflow-error') { res.write(line({ event: 'error', status: 500, code: 'internal', message: 'LLM failed' })); return res.end(); }
+    if (p.query === 'node-issues') { // v3.50: โหนดที่พังแบบมีค่า default ยังให้คำตอบ แต่ต้องนับได้
+      res.write(line({ event: 'node_finished', data: { title: 'เตรียมข้อมูล Jev', status: 'succeeded' } }));
+      res.write(line({ event: 'node_finished', data: { title: 'Gemini วิเคราะห์บริบทและคำค้น', status: 'exception', error: 'Invalid context structure' } }));
+      res.write(line({ event: 'node_retry', data: { title: 'จัดข้อมูลสินค้า/วิธีใช้' } }));
+      res.write(line({ event: 'workflow_finished', data: { status: 'partial-succeeded' } }));
+    }
     const first = line(Object.assign({ event: 'message', answer: 'สวัสดี' }, ids));
     res.write(first.slice(0, 15)); // one event split across two network chunks
     setTimeout(() => {
@@ -47,6 +53,12 @@ server.listen(0, '127.0.0.1', async () => {
     assert.ok(/stream error 500 internal LLM failed/.test(r.error), r.error);
     r = await ask('http-error');
     assert.ok(r.error.startsWith('HTTP 400'), r.error);
+    r = await ask('node-issues');
+    assert.strictEqual(r.answer, 'สวัสดีค่ะ');
+    assert.strictEqual(r.error, '');
+    assert.deepStrictEqual(r.nodeIssues, [{ title: 'Gemini วิเคราะห์บริบทและคำค้น', status: 'exception', error: 'Invalid context structure' }]);
+    assert.deepStrictEqual(r.nodeRetries, ['จัดข้อมูลสินค้า/วิธีใช้']);
+    assert.strictEqual(r.workflowStatus, 'partial-succeeded');
     console.log('PASS: Dify stream joins split events, reports cut or failed streams, and keeps the message id for recovery');
   } catch (e) { console.error(e); process.exitCode = 1; }
   server.close();
