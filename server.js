@@ -90,6 +90,8 @@
 //     - ตัวตรวจชีทตรวจเนื้อหาด้วย (ชื่อมีช่องว่างเกิน ข้อความคัดลอกผิดแถว สะกดผิดแบบสระซ้อน แมลงในบ้านในแถวพืช)
 //       ระบบจริงแจ้ง LINE แอดมินเมื่อพบจุดใหม่และเมื่อแก้ครบ (SHEET_ALERT)
 //     v3.51: "โคราช" ตามด้วยคำถามสินค้า (ใช้ ฉีด ผสม อัตรา ยังไง) = โค-ราซ พิมพ์ผิด ไม่บันทึกเป็นจังหวัดนครราชสีมา
+//     v3.52: สถิติคุณภาพนับผลการส่งคำตอบด้วย (reply, push สำรอง, ส่งไม่ถึง) งานตรวจรายวันจึงเห็นเมื่อลูกค้าไม่ได้รับคำตอบ
+//       เช่น reply ใช้ไม่ได้แล้ว push ก็ไม่ผ่านเพราะโควตาข้อความของ OA หมด
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -2578,9 +2580,10 @@ async function sendAnswer(s, ev, fallbackTo, text, opts) {
   if (!ok && fallbackTo && fallbackTo !== 'unknown') {
     const pushed = await linePush(fallbackTo, text);
     console.log(`[send] reply=failed push=${pushed}`);
-  } else {
-    console.log(`[send] reply=${ok}`);
+    return pushed ? 'push' : 'failed';
   }
+  console.log(`[send] reply=${ok}`);
+  return ok ? 'reply' : 'failed'; // v3.52: ผลการส่งสำหรับสถิติคุณภาพ
 }
 
 // ---------- คีย์เวิร์ดปิด/เปิดเสียง ----------
@@ -2936,9 +2939,9 @@ async function answerTurn(ctx, items, stopLoading) {
     }
   }
   if (stopLoading) await stopLoading(); // หยุดต่อเวลาก่อนส่ง (คำตอบที่มาถึงทำให้จุดหายเอง)
-  await sendAnswer(s, ev, pushTarget, msgs);
-  // v3.50: สถิติคุณภาพ (ไม่เก็บข้อความหรือ userId) งานตรวจรายวันอ่านจาก /health
-  quality.record({ kind: images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text'), ms: Date.now() - turnStart, ok: fromDify, fallback: fallbackKind, issues: difyInfo.issues, retries: difyInfo.retries });
+  const delivery = await sendAnswer(s, ev, pushTarget, msgs);
+  // v3.50: สถิติคุณภาพ (ไม่เก็บข้อความหรือ userId) งานตรวจรายวันอ่านจาก /health · v3.52: เก็บผลการส่งด้วย
+  quality.record({ kind: images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text'), ms: Date.now() - turnStart, ok: fromDify, fallback: fallbackKind, issues: difyInfo.issues, retries: difyInfo.retries, delivery });
   markDirty();
 }
 
@@ -4119,7 +4122,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.51', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.52', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
