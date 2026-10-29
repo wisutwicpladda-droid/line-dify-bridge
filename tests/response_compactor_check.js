@@ -34,4 +34,11 @@ assert.strictEqual(compactResponse(long, 'มีอทราซีนไหม �
 const twoProducts = long.replace('ควรสำรวจซ้ำหลายต้น', 'หรือ "ไฮซีส" ก็ใช้ได้ ควรสำรวจซ้ำหลายต้น');
 assert.strictEqual(compactResponse(twoProducts, 'ใช้อะไรดี', ['แกนเตอร์', 'ไฮซีส']), twoProducts, 'a list of product options must stay whole');
 
+// v3.54: the first answer states the rate (owner, 29 Oct 2026). A reply with a rate is not shortened,
+// even when the rate sits in a sentence without the product name.
+const withRate = long.replace('ควรสำรวจซ้ำหลายต้น', 'ใช้ 20-30 ซีซี ต่อน้ำ 20 ลิตร ควรสำรวจซ้ำหลายต้น');
+assert.strictEqual(compactResponse(withRate, 'ใช้อะไรดี', ['แกนเตอร์']), withRate, 'a reply that gives a rate must stay whole');
+const perRai = long.replace('ควรสำรวจซ้ำหลายต้น', 'ใช้ 100 กรัม/ไร่ ควรสำรวจซ้ำหลายต้น');
+assert.strictEqual(compactResponse(perRai, 'ใช้อะไรดี', ['แกนเตอร์']), perRai, 'a per-rai rate must stay whole');
+
 console.log('PASS: ordinary replies compact while detail requests remain intact');

@@ -13,6 +13,9 @@ const ORDINARY_MAX = 420;
 // more products are kept whole.
 const MIX_QUERY_RX = /ผสม|ร่วมกับ|ใช้คู่|พร้อมกัน/;
 const QUESTION_WORD_RX = /ไหม|มั้ย|มั๊ย|หรือเปล่า|ยังไง|อย่างไร|เท่าไหร่|เท่าไร|อะไร|ตัวไหน|ชนิดไหน|กี่/g;
+// v3.54 (owner, 29 Oct 2026): every first answer states the application rate. An answer that
+// gives a rate is kept whole, as shortening it could keep the product name and drop the rate.
+const RATE_IN_ANSWER_RX = /\d+(?:[.,]\d+)?\s*(?:[-–]\s*\d+(?:[.,]\d+)?\s*)?(?:ซีซี|ซีซี\.|มล\.?|มิลลิลิตร|cc|กรัม|กก\.?|กิโลกรัม|ลิตร)\s*(?:ต่อ|\/)/i;
 
 function asksSeveral(query) {
   return (String(query || '').match(QUESTION_WORD_RX) || []).length >= 2;
@@ -40,6 +43,7 @@ function compactResponse(answer, query, productNames = []) {
   const text = clean(answer);
   if (!text || text.length <= ORDINARY_MAX || DETAIL_QUERY_RX.test(String(query || ''))) return text;
   if (MIX_QUERY_RX.test(String(query || '')) || asksSeveral(query) || namesSeveral(text, productNames)) return text;
+  if (RATE_IN_ANSWER_RX.test(text)) return text;
   // Never shorten a structured answer. These often contain a heading followed
   // by the actual treatment steps; keeping only the first units can leave a
   // heading such as "แนวทางแก้ไขเบื้องต้น:" with no advice underneath.
