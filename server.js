@@ -3233,8 +3233,8 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .cv-grid2 > .cv-sec { margin-top: 12px; }
   .cv-empty { color: #98a2ad; text-align: center; padding: 22px 10px; font-size: 13px; line-height: 1.8; }
   .cv-warn.bad { background: #fdeeee; border-color: #f5c6c6; color: #8a1f24; }
-  .cv-kind.app { background: #efe9fd; color: #5b3fb5; }
-  .cv-kind.test { background: #fff1dd; color: #a15c00; }
+  .cv-kind.cv-app { background: #efe9fd; color: #5b3fb5; }
+  .cv-kind.cv-test { background: #fff1dd; color: #a15c00; }
   .cv-t .m-only { display: none; }
   @media (max-width: 760px) {
     .cv-wrap { padding: 0 10px 30px; }
@@ -4013,7 +4013,7 @@ function cvRow(x) { return x.chat ? ' class="go" data-sid="' + esc(x.sid) + '"' 
 var CV_SRC = { line: 'ข้อความจาก LINE', test: 'ชุดทดสอบอัตโนมัติ' };
 function cvSrcName(x) { return x.src === 'test' ? CV_SRC.test + ' · ' + esc(x.app) : esc(x.app) + ' · ' + (CV_SRC[x.src] || esc(x.src)); }
 function cvWho(x) {
-  var tag = (x.own ? '' : ' <span class="cv-kind app">' + esc(x.app) + '</span>') + (x.src === 'test' ? ' <span class="cv-kind test">ทดสอบ</span>' : '');
+  var tag = (x.own ? '' : ' <span class="cv-kind cv-app">' + esc(x.app) + '</span>') + (x.src === 'test' ? ' <span class="cv-kind cv-test">ทดสอบ</span>' : '');
   var name = x.own ? (x.name || (String(x.sid).slice(0, 10) + '…')) : (String(x.sid).slice(0, 9) + '…');
   return '<b>' + esc(name) + '</b>' + tag;
 }
