@@ -1,8 +1,10 @@
 // kb_sync.js — sync ข้อมูลสินค้าจาก Google Sheet (Product master) เข้า Dify Knowledge Base อัตโนมัติ
 // ตัวแปร: DIFY_DATASET_KEY (จำเป็น, Knowledge API key), KB_DATASET_ID, PRODUCT_SHEET_ID, KB_DOC_NAME, KB_SYNC_MIN, NAME_OVERRIDES
+// v3.58: ชีทเป็นส่วนตัวแล้ว อ่านด้วย service account (GOOGLE_SA_JSON) หรือผ่าน bridge ตัวกลาง (PRODUCT_SHEET_PROXY_URL/KEY) ดู google_sheets.js
 'use strict';
 const https = require('https');
 const crypto = require('crypto');
+const sheets = require('./google_sheets').createGoogleSheets();
 
 const SHEET_ID = process.env.PRODUCT_SHEET_ID || '155mB2y8vpDYITc49ZbsAWKdjaJXz31EMGBHKUiO4_pU';
 const GIDS = { master: process.env.PRODUCT_GID_MASTER || '1517893127', usage: process.env.PRODUCT_GID_USAGE || '212188772', packages: process.env.PRODUCT_GID_PACKAGES || '994912510' };
@@ -181,15 +183,30 @@ function buildText(master, usage, packages) {
   return { text: [indexBlock, usageIndexBlock, ...blocks].join('\n' + SEP + '\n'), products: blocks.length, categories, status: statuses, levels: lv, moa: mo };
 }
 
-async function fetchSheets() {
+// ลิงก์ CSV สาธารณะแบบเดิม (ใช้ได้เฉพาะตอนชีทเปิด "ทุกคนที่มีลิงก์ดูได้")
+async function fetchCsv() {
   const base = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/export?format=csv&gid=';
   const out = {};
   for (const [k, gid] of Object.entries(GIDS)) {
     const r = await get(base + gid);
     if (r.status !== 200) throw new Error(k + ' HTTP ' + r.status);
+    if (/^\s*</.test(r.text)) throw new Error(k + ' ได้หน้าเว็บแทน CSV'); // หน้าเข้าสู่ระบบหรือหน้า error ของ Google ห้ามอ่านเป็นข้อมูลสินค้า
     out[k] = parseCsv(r.text);
   }
   return out;
+}
+
+// v3.58: service account หรือ bridge ตัวกลางก่อน ถ้าไม่ได้ลองลิงก์สาธารณะ (เผื่อชีทกลับมาเปิดลิงก์) แล้วค่อยแจ้ง error ของทางหลัก
+async function fetchSheets() {
+  if (sheets.mode === 'public') {
+    try { return await fetchCsv(); } catch (e) { throw sheets.state.configError ? new Error(sheets.state.configError + ' · ' + e.message) : e; }
+  }
+  try {
+    return await sheets.readTabs(SHEET_ID, GIDS);
+  } catch (e) {
+    try { return await fetchCsv(); } catch (_) { /* ชีทยังเป็นส่วนตัว */ }
+    throw new Error((sheets.mode === 'proxy' ? 'proxy: ' : 'service account: ') + e.message);
+  }
 }
 
 async function syncOnce(force) {
@@ -238,4 +255,4 @@ function setLevels(lv, mo, categories, status) {
   levels.at = Date.now();
 }
 
-module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels, isOpenForSale, api, DATASET_ID, DOC_NAME, OVERRIDES, STRAT_LEVEL, hasKey: () => !!KEY };
+module.exports = { buildText, parseCsv, fetchSheets, syncOnce, start, state, levels, setLevels, isOpenForSale, api, DATASET_ID, DOC_NAME, OVERRIDES, STRAT_LEVEL, SHEET_ID, GIDS, sheets, hasKey: () => !!KEY };

@@ -104,6 +104,9 @@
 //     v3.57: หน้าค่าใช้จ่ายเลือกดูได้ 3 แบบ: 30 วันล่าสุด รายวัน (กราฟรายชั่วโมง) และรายเดือน (กราฟทุกวันของเดือน)
 //       ตารางทุกตารางคิดตามช่วงที่เลือก · /admin/api/cost?day=YYYY-MM-DD หรือ ?month=YYYY-MM
 //       เริ่มเก็บยอดรายชั่วโมงและรายแชทรายวันใน v3.57 (วันก่อนหน้าสร้างจากคำตอบล่าสุด 400 ครั้งตอนเปิดระบบ)
+//     v3.58: ชีทสินค้าเป็นส่วนตัวแล้ว (29 ต.ค. เจ้าของปิด "ทุกคนที่มีลิงก์ดูได้") bridge อ่านชีทด้วย service account (google_sheets.js)
+//       บอทจริงเป็นตัวกลาง /sheets/v4/... ให้โหนดอ่านชีทของ Dify และ bridge V.2 อ่านผ่าน (SHEET_PROXY_KEY)
+//       เก็บข้อมูลชีทชุดล่าสุดใน Volume (product-sheet-cache.json) ใช้ตอนเริ่มระบบถ้าอ่านชีทไม่ได้ และลองอ่านใหม่ทุก 5 นาทีเมื่ออ่านไม่ได้
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -161,6 +164,11 @@
 //  COST_FORWARD_URL / COST_FORWARD_KEY
 //                             (ไม่บังคับ, V.2 และ relay) ส่งบันทึกค่าใช้จ่ายต่อให้หน้าของบอทจริง
 //                             URL = https://<บอทจริง>/admin/api/cost/ingest · KEY = COST_INGEST_KEY ของบอทจริง
+//  GOOGLE_SA_JSON             (v3.58, บอทจริง) เนื้อไฟล์ JSON ของ key ของ service account ที่ชีทสินค้าแชร์ให้ (เช่น sheets-sync@...)
+//                             วางทั้งไฟล์ได้เลย โปรเจกต์ของ service account ต้องเปิด Google Sheets API ไว้
+//  SHEET_PROXY_KEY            (v3.58, บอทจริง) รหัสยาว 24 ตัวขึ้นไป ให้ Dify และ V.2 อ่านชีทผ่าน /sheets/v4/... (header x-sheet-key)
+//  PRODUCT_SHEET_PROXY_URL / PRODUCT_SHEET_PROXY_KEY
+//                             (v3.58, V.2) อ่านชีทสินค้าผ่านบอทจริง URL = https://<บอทจริง>/sheets · KEY = SHEET_PROXY_KEY ของบอทจริง
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -951,7 +959,7 @@ try { PIMG = JSON.parse(fs.readFileSync(pathmod.join(PIMG_DIR, 'index.json'), 'u
 const PIMG_NAMES = Object.keys(PIMG).sort((a, b) => b.length - a.length);
 // โหลดหมวดและสถานะจาก Product master แบบ public แยกจาก DIFY_DATASET_KEY
 // เพื่อให้คำขอรูปทั้งหมดทำงานได้ แม้ระบบ sync KB จะยังไม่ได้ตั้ง API key
-const productMaster = { ok: false, products: 0, at: 0, error: '', master: [], usage: [] };
+const productMaster = { ok: false, products: 0, at: 0, error: '', cachedAt: 0, master: [], usage: [] }; // cachedAt = ใช้ชุดที่เก็บใน Volume (v3.58)
 const productValidation = { ok: false, at: 0, errors: [], warnings: [], notices: [], summary: {}, error: '' };
 // v3.50 (28 Oct 2026): จุดในชีทที่ควรแก้ (error + notices จาก product_validator) -> แจ้ง LINE แอดมินเมื่อพบจุดใหม่
 // และแจ้งอีกครั้งเมื่อแก้ครบ (จำจุดที่แจ้งแล้วไว้ใน state ไม่แจ้งซ้ำทุกชั่วโมงหรือทุกครั้งที่ deploy)
@@ -982,6 +990,30 @@ async function sheetAlertCheck(checked) {
   for (const id of to) await linePush(id, msg).catch(() => {});
 }
 let productMasterRefreshing = false;
+let productMasterRetry = null;
+// v3.58: ข้อมูลชีทชุดล่าสุดที่อ่านได้ เก็บใน Volume ถ้าเริ่มระบบตอนอ่านชีทไม่ได้ใช้ชุดนี้แทน
+// (29 ต.ค. ชีทถูกปิดแชร์ลิงก์ แล้ว deploy ทำให้ restart: sheetContext ตัวกันสินค้ายังไม่ออกขาย และรูปตามหมวดไม่มีข้อมูลเลย)
+const SHEET_CACHE_FILE = pathmod.join(STATE_DIR, 'product-sheet-cache.json');
+let sheetCacheHash = '';
+function saveSheetCache(sh) {
+  if (!canWrite) return;
+  try {
+    const data = { master: sh.master, usage: sh.usage, packages: sh.packages || [] };
+    const hash = crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
+    if (hash === sheetCacheHash) return;
+    const tmp = SHEET_CACHE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(Object.assign({ v: 1, at: Date.now(), id: kbSync.SHEET_ID }, data)));
+    fs.renameSync(tmp, SHEET_CACHE_FILE);
+    sheetCacheHash = hash;
+  } catch (e) { console.log('[product-master] save sheet copy failed:', e.message); }
+}
+function loadSheetCache() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SHEET_CACHE_FILE, 'utf8'));
+    if (!raw || raw.v !== 1 || raw.id !== kbSync.SHEET_ID || !Array.isArray(raw.master) || !Array.isArray(raw.usage)) return null;
+    return raw;
+  } catch (_) { return null; }
+}
 async function refreshProductMaster() {
   if (productMasterRefreshing) return;
   productMasterRefreshing = true;
@@ -989,7 +1021,8 @@ async function refreshProductMaster() {
     const sh = await kbSync.fetchSheets();
     const built = kbSync.buildText(sh.master, sh.usage, sh.packages);
     kbSync.setLevels(built.levels, built.moa, built.categories, built.status);
-    Object.assign(productMaster, { ok: true, products: built.products, at: Date.now(), error: '', master: sh.master, usage: sh.usage });
+    Object.assign(productMaster, { ok: true, products: built.products, at: Date.now(), error: '', cachedAt: 0, master: sh.master, usage: sh.usage });
+    saveSheetCache(sh);
     const checked = validateProductData(sh.master, sh.usage, PIMG);
     Object.assign(productValidation, checked, { at: Date.now(), error: '' });
     if (!checked.ok || checked.warnings.length || checked.notices.length) {
@@ -1006,6 +1039,20 @@ async function refreshProductMaster() {
     Object.assign(productMaster, { ok: false, error: e.message });
     Object.assign(productValidation, { ok: false, at: Date.now(), error: e.message });
     console.log('[product-master] load failed:', e.message);
+    // v3.58: เพิ่งเริ่มระบบและยังไม่มีข้อมูลในหน่วยความจำ ใช้ชุดล่าสุดที่เก็บใน Volume (ถ้ามี)
+    if (!productMaster.master.length) {
+      const saved = loadSheetCache();
+      if (saved) {
+        try {
+          const built = kbSync.buildText(saved.master, saved.usage, saved.packages || []);
+          kbSync.setLevels(built.levels, built.moa, built.categories, built.status);
+          Object.assign(productMaster, { products: built.products, cachedAt: saved.at, master: saved.master, usage: saved.usage });
+          console.log('[product-master] using the saved sheet copy from ' + new Date(saved.at).toISOString() + ' (' + built.products + ' products)');
+        } catch (e2) { console.log('[product-master] saved sheet copy unusable:', e2.message); }
+      }
+    }
+    // อ่านไม่ได้ ลองใหม่ใน 5 นาที (ปกติรอบละ 1 ชั่วโมง) เช่น หลังใส่ key ในบอทจริง V.2 จะอ่านผ่านตัวกลางได้เร็วขึ้น
+    if (!productMasterRetry) productMasterRetry = setTimeout(() => { productMasterRetry = null; refreshProductMaster().catch(() => {}); }, 5 * 60000);
   } finally {
     productMasterRefreshing = false;
   }
@@ -4387,6 +4434,75 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// ---------- v3.58: ตัวกลางอ่านชีทสินค้า (ชีทเป็นส่วนตัว) ----------
+// โหนด "อ่าน Google Sheets สินค้า/วิธีใช้" ใน Dify และ bridge V.2 เรียก Sheets API แบบเดิม แต่ผ่าน bridge นี้:
+//   GET https://<บอทจริง>/sheets/v4/spreadsheets/<PRODUCT_SHEET_ID>/values:batchGet?... พร้อม header x-sheet-key: <SHEET_PROXY_KEY>
+// bridge อ่านจาก Google ด้วย service account แล้วส่งคำตอบของ Google กลับไปตามเดิม โค้ดใน Dify จึงไม่ต้องแก้
+// อ่านได้เฉพาะชีทสินค้าแบบ GET · คำตอบเดิมใช้ซ้ำ 60 วินาที เกินแล้วส่งชุดเดิมทันทีและอ่านใหม่เบื้องหลัง (โหนดใน Dify รอได้ 5 วินาที)
+// ถ้า Google ล่มหรือ token มีปัญหา ส่งชุดล่าสุดที่อ่านได้ (ไม่เกิน 24 ชั่วโมง)
+const SHEET_PROXY_KEY = (process.env.SHEET_PROXY_KEY || '').trim().length >= 24 ? process.env.SHEET_PROXY_KEY.trim() : '';
+const SHEET_PROXY_TTL_MS = Math.max(1, parseInt(process.env.SHEET_PROXY_TTL_SECONDS || '60', 10) || 60) * 1000;
+const SHEET_PROXY_STALE_MS = 24 * 3600000;
+const sheetProxy = { cache: new Map(), inflight: new Map(), calls: 0, google: 0, errors: 0, denied: 0, lastError: '', lastErrorAt: 0 };
+function sheetProxyError(msg) {
+  sheetProxy.errors++;
+  sheetProxy.lastError = String(msg).replace(/\s+/g, ' ').slice(0, 200);
+  sheetProxy.lastErrorAt = Date.now();
+}
+function sheetProxyFetch(full) {
+  if (sheetProxy.inflight.has(full)) return sheetProxy.inflight.get(full);
+  const p = (async () => {
+    sheetProxy.google++;
+    const r = await kbSync.sheets.get(full);
+    const body = Buffer.from(await r.arrayBuffer());
+    if (r.status === 200) {
+      sheetProxy.cache.set(full, { at: Date.now(), body });
+      if (sheetProxy.cache.size > 30) sheetProxy.cache.delete(sheetProxy.cache.keys().next().value);
+    } else {
+      sheetProxyError('HTTP ' + r.status + ' ' + body.toString('utf8'));
+    }
+    return { status: r.status, body };
+  })().finally(() => sheetProxy.inflight.delete(full));
+  sheetProxy.inflight.set(full, p);
+  return p;
+}
+async function handleSheetProxy(req, res, path) {
+  const send = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(body); };
+  const fail = (status, message) => send(status, JSON.stringify({ error: { code: status, message } }));
+  if (!SHEET_PROXY_KEY || kbSync.sheets.mode !== 'service-account') return fail(503, 'sheet proxy is not configured (needs SHEET_PROXY_KEY and GOOGLE_SA_JSON)');
+  const k = String(req.headers['x-sheet-key'] || '');
+  let okKey = false;
+  try { okKey = k.length === SHEET_PROXY_KEY.length && crypto.timingSafeEqual(Buffer.from(k), Buffer.from(SHEET_PROXY_KEY)); } catch (_) { okKey = false; }
+  if (!okKey) { sheetProxy.denied++; return fail(401, 'invalid x-sheet-key'); }
+  if (req.method !== 'GET') return fail(405, 'GET only');
+  const rest = path.slice('/sheets'.length);
+  const m = rest.match(/^\/v4\/spreadsheets\/([^/]+?)(?:\/values:batchGet|\/values\/[^/]+)?$/);
+  let id = '';
+  try { id = m ? decodeURIComponent(m[1]) : ''; } catch (_) { id = ''; }
+  if (id !== kbSync.SHEET_ID) return fail(403, 'only the product sheet can be read');
+  const q = (req.url || '').split('?')[1];
+  const full = rest + (q ? '?' + q : '');
+  sheetProxy.calls++;
+  const hit = sheetProxy.cache.get(full);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < SHEET_PROXY_TTL_MS) return send(200, hit.body);
+  if (hit && age < SHEET_PROXY_STALE_MS) {
+    sheetProxyFetch(full).catch((e) => sheetProxyError(e.message));
+    return send(200, hit.body);
+  }
+  try {
+    const r = await sheetProxyFetch(full);
+    return send(r.status, r.body);
+  } catch (e) {
+    sheetProxyError(e.message);
+    return fail(502, 'google: ' + e.message);
+  }
+}
+function sheetProxyView() {
+  if (!SHEET_PROXY_KEY) return false;
+  return { ready: kbSync.sheets.mode === 'service-account', calls: sheetProxy.calls, google: sheetProxy.google, errors: sheetProxy.errors, denied: sheetProxy.denied, lastError: sheetProxy.lastError || undefined, lastErrorAt: sheetProxy.lastErrorAt || undefined };
+}
+
 function handleAdmin(req, res, path, body) {
   // SSE stream ใช้ token (EventSource ตั้ง header เองไม่ได้)
   if (path === '/admin/api/stream' && req.method === 'GET') {
@@ -4695,6 +4811,11 @@ const server = http.createServer((req, res) => {
   const path = (req.url || '/').split('?')[0];
   if (req.method === 'GET' && path.startsWith('/img/p/')) return servePimg(res, path);
   if ((req.method === 'GET' || req.method === 'HEAD') && path.startsWith('/voice/')) return voice.serve(req, res, VOICE_DIR, path.slice('/voice/'.length)); // v3.37-voice
+  // v3.58: ตัวกลางอ่านชีทสินค้าให้ Dify และ V.2 (ต้องมี header x-sheet-key)
+  if (path.startsWith('/sheets/')) {
+    handleSheetProxy(req, res, path).catch((e) => { try { sendJson(res, 500, { error: { code: 500, message: e.message } }); } catch (_) {} });
+    return;
+  }
 
   if (req.method === 'GET' && path === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -4720,7 +4841,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.57', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.58', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
