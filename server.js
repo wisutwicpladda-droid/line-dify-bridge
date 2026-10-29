@@ -95,6 +95,9 @@
 //     v3.53: ตัดหมายเหตุภายใน "(ไม่มีรูป)" ออกจากคำตอบ (บอทเคยตอบ "นิวเพน (ไม่มีรูป)") และข้อความรูปสินค้าทั้งหมดไม่ใช้คำว่า "ในระบบ"
 //     v3.54: บอกอัตราในคำตอบแรกทุกกรณี (เจ้าของ 29 ต.ค.): ตัวตัดอัตรา guardRate ปิดเป็นค่าเริ่ม (เปิดคืนด้วย RATE_ONLY_WHEN_ASKED=on)
 //       และตัวย่อคำตอบไม่ย่อคำตอบที่มีอัตรา
+//     v3.55: หน้า "💰 ค่าใช้จ่าย" ในเว็บแอดมิน (cost.js): ทุกคำตอบเก็บ token ของทุกโหนดใน Dify จาก stream จำนวนครั้งที่ค้นเว็บ
+//       และค่าเสียง ElevenLabs แล้วคิดเป็นบาท แสดงยอดวันนี้ 7 วัน เดือนนี้ เฉลี่ยต่อข้อความ ประมาณการต่อเดือน กราฟรายวัน
+//       ค่าใช้จ่ายแยกตามขั้นตอนและชนิดคำถาม คำตอบที่ใช้เงินมากที่สุด และแชทที่ใช้มากที่สุด (ตัวเลขเงินไม่อยู่ใน /health)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -142,6 +145,10 @@
 //                             (ไม่บังคับ) ค่าเริ่ม eleven_v4 / scribe_v2 (eleven_v4_turbo เร็วกว่าและใช้เครดิตครึ่งหนึ่ง)
 //  VOICE_MAX_CHARS / VOICE_MAX_INPUT_SECONDS / VOICE_KEEP_DAYS / VOICE_STABILITY / VOICE_SIMILARITY
 //                             (ไม่บังคับ) ค่าเริ่ม 600 ตัวอักษร / 180 วินาที / เก็บไฟล์เสียง 7 วัน / 0.5 / 0.75
+//  COST_USD_THB               (ไม่บังคับ, v3.55) บาทต่อ 1 USD สำหรับหน้าค่าใช้จ่าย ค่าเริ่ม 33.8
+//  COST_PRICES                (ไม่บังคับ) JSON แก้ราคาที่ใช้คิดค่าใช้จ่าย (ค่าเริ่มดู DEFAULT_PRICES ใน cost.js) เช่น
+//                             {"models":{"gemini-3.8-flash":[{"in":0.75,"out":3.75},{"from":"2027-01-01","in":1.5,"out":7.5}]},"ttsUsdPer1kChars":0.08}
+//                             in/out = USD ต่อ 1 ล้าน token · from = วันที่เริ่มใช้ราคานั้น · ยอดที่บันทึกไปแล้วไม่เปลี่ยน
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -159,6 +166,9 @@ const { guardUnreleasedProducts } = require('./unreleased_guard'); // p109: ก�
 const { validateProductData } = require('./product_validator'); // p112: ตรวจความครบถ้วนสินค้าใหม่จาก Google Sheet
 // v3.50 (28 Oct 2026): สถิติคุณภาพคำตอบ 24 ชม. ใน /health (งานตรวจรายวันอ่านจากตรงนี้) และจุดในชีทที่แจ้งแอดมินไปแล้ว
 const quality = require('./quality').createQuality();
+// v3.55: ค่าใช้จ่าย AI ต่อคำตอบ สำหรับหน้า 💰 ในเว็บแอดมิน (ไม่อยู่ใน /health ที่เปิดสาธารณะ)
+const cost = require('./cost').createCost({ env: process.env });
+if (cost.error) console.log('[cost] ' + cost.error);
 let sheetAlertKeys = [];
 const { removeSystemWords, removeInternalNotes, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)"
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
@@ -319,13 +329,14 @@ function initPersist() {
         for (const [did, uid] of raw.dealerBind) { const d = DEALERS.find((x) => x.id === did); if (d && !d.userId && uid) d.userId = uid; }
       }
       if (raw && Array.isArray(raw.quality)) quality.load(raw.quality); // v3.50
+      if (raw && raw.cost) cost.load(raw.cost); // v3.55
       if (raw && Array.isArray(raw.sheetAlertKeys)) sheetAlertKeys = raw.sheetAlertKeys.map(String).slice(0, 200);
     }
   } catch (e) { console.log('[persist] load error:', e.message); }
 }
 
 function stateJson() {
-  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()], dealerBind: DEALERS.filter((d) => d.userId).map((d) => [d.id, d.userId]), quality: quality.dump(), sheetAlertKeys });
+  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()], dealerBind: DEALERS.filter((d) => d.userId).map((d) => [d.id, d.userId]), quality: quality.dump(), cost: cost.dump(), sheetAlertKeys });
 }
 
 function saveNow() {
@@ -640,6 +651,7 @@ async function hearLineAudio(msg, sessionId) {
     const t0 = Date.now();
     const out = await voice.transcribe(VOICE, raw.body, { filename: `line-${msg.id}.m4a`, contentType: type });
     console.log(`[voice] ${sid} heard ${out.text.length} chars in ${Date.now() - t0}ms (${out.language || '?'}, credits ${out.cost || '?'})`);
+    recordCost({ sid: sessionId, kind: 'voice', turn: false, stt: { sec: (Number(msg.duration) || 0) / 1000, credits: out.cost } }); // v3.55
     if (!out.text) return { text: '', reply: 'น้องลัดดาฟังข้อความเสียงไม่ชัดค่ะ รบกวนพูดใหม่อีกครั้ง หรือพิมพ์คำถามมาได้เลยนะคะ 🙏' };
     return { text: out.text };
   } catch (e) {
@@ -658,7 +670,8 @@ function waitHearing(sessionId) {
 }
 
 // v3.37-voice: คำตอบ -> เสียงน้องลัดดา (ElevenLabs Text to Speech) -> ข้อความเสียงของ LINE
-async function voiceReplyMsg(answer, sessionId) {
+// v3.55: info.tts = จำนวนตัวอักษรที่ส่งให้ ElevenLabs อ่าน (หน้าค่าใช้จ่าย)
+async function voiceReplyMsg(answer, sessionId, info) {
   if (!VOICE.ttsOn || !PUBLIC_URL || !VOICE_DIR) return null;
   const say = voice.speechText(answer, VOICE.maxChars);
   if (!say) return null;
@@ -668,6 +681,7 @@ async function voiceReplyMsg(answer, sessionId) {
     const out = await voice.synthesize(VOICE, say);
     const ms = voice.mp3DurationMs(out.buf) || Math.round(out.buf.length / 16);
     const id = voice.save(VOICE_DIR, out.buf, VOICE.keepDays);
+    if (info) info.tts = { chars: say.length, credits: out.cost };
     console.log(`[voice] ${sid} tts ${say.length} chars -> ${ms}ms audio in ${Date.now() - t0}ms (credits ${out.cost || '?'})`);
     const m = { type: 'audio', originalContentUrl: `${PUBLIC_URL}/voice/${id}.mp3`, duration: Math.max(1, ms) };
     voiceMsgs.add(m);
@@ -714,6 +728,10 @@ async function askDify(sessionId, text, files, opts) {
   const info = o.info || {};
   info.issues = info.issues || [];
   info.retries = info.retries || [];
+  // v3.55: token รายโหนดของทุกรอบที่เรียก Dify (รวมรอบที่ลองใหม่) สำหรับหน้าค่าใช้จ่าย
+  // ผู้เรียกที่ไม่ส่ง info มา (เช่นคำถามที่ค้างไว้ตอนลงทะเบียน) บันทึกค่าใช้จ่ายที่นี่
+  const own = !o.info;
+  info.nodes = info.nodes || [];
   const sid = String(sessionId).slice(0, 8);
   const conversationId = await findConversation(sessionId);
   const hasImage = Array.isArray(files) && files.length > 0;
@@ -736,11 +754,15 @@ async function askDify(sessionId, text, files, opts) {
       if (DIFY_MODE === 'blocking') {
         const r = await request('POST', `${DIFY_BASE}/chat-messages`, { Authorization: `Bearer ${DIFY_KEY}` }, payload);
         if (r.status === 200 && r.data && typeof r.data.answer === 'string') answer = r.data.answer;
+        const bu = r.status === 200 && r.data && r.data.metadata && r.data.metadata.usage;
+        if (bu) info.message = { title: '', type: 'llm', status: 'succeeded', model: '', inTok: Number(bu.prompt_tokens) || 0, outTok: Number(bu.completion_tokens) || 0, tokens: Number(bu.total_tokens) || 0, difyUsd: Number(bu.total_price) || 0 };
         else { console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300)); kbHealth.checkSoon(JSON.stringify(r.data)); }
       } else {
         const r = await streamChat({ base: DIFY_BASE, key: DIFY_KEY, payload, timeoutMs: DIFY_TIMEOUT_MS });
         for (const x of r.nodeIssues || []) info.issues.push(x.title + ' (' + x.status + ')');
         for (const x of r.nodeRetries || []) info.retries.push(x);
+        for (const x of r.usage || []) info.nodes.push(x);
+        if (r.messageUsage) info.message = r.messageUsage;
         if ((r.nodeIssues || []).length) console.log(`[dify] ${sid} node issue: ${r.nodeIssues.map((x) => x.title + ' ' + x.status + (x.error ? ' ' + x.error.slice(0, 80) : '')).join(' | ')}`);
         if (r.answer.trim() && !r.error) answer = r.answer;
         else {
@@ -757,6 +779,7 @@ async function askDify(sessionId, text, files, opts) {
     if (!answer && Date.now() - t0 > 30000) break; // ล้มหลังรอนานแล้ว ไม่ลองซ้ำให้ลูกค้ารอเพิ่ม
     if (!answer && attempt === 1) console.log(`[dify] ${sid} retry once`);
   }
+  if (own) recordCost({ sid: sessionId, kind: hasImage ? 'image' : 'text', q: o.userText != null ? o.userText : text, nodes: info.nodes, message: info.message });
   if (!answer) return '';
   const guarded = guardSystemWords(guardOrder(guardInternal(guardPhones(guardRate(guardCalc(answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId), sessionId);
   const visible = stripVisibleCitations(guarded);
@@ -2929,7 +2952,7 @@ async function answerTurn(ctx, items, stopLoading) {
   // v3.44-v2: ดูว่ามีข้อความเสียงในรอบนี้ไหม (event ล่าสุดของรอบอาจเป็นข้อความที่พิมพ์ตามมา) และสร้างเสียงก่อนหยุดจุด "กำลังพิมพ์"
   // แนบเสียงเฉพาะคำตอบจริงจาก Dify ข้อความระบบขัดข้องและข้อความเปิดรูปไม่ได้ส่งเป็นตัวอักษรอย่างเดียว
   if (fromDify && VOICE.ttsOn && (VOICE.mode === 'always' || (VOICE.mode === 'voice' && items.some((x) => x.voice)))) {
-    const am = await voiceReplyMsg(answer, sessionId);
+    const am = await voiceReplyMsg(answer, sessionId, difyInfo);
     if (am) {
       const last = msgs[msgs.length - 1];
       msgs.splice(1, 0, am);
@@ -2943,8 +2966,28 @@ async function answerTurn(ctx, items, stopLoading) {
   if (stopLoading) await stopLoading(); // หยุดต่อเวลาก่อนส่ง (คำตอบที่มาถึงทำให้จุดหายเอง)
   const delivery = await sendAnswer(s, ev, pushTarget, msgs);
   // v3.50: สถิติคุณภาพ (ไม่เก็บข้อความหรือ userId) งานตรวจรายวันอ่านจาก /health · v3.52: เก็บผลการส่งด้วย
-  quality.record({ kind: images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text'), ms: Date.now() - turnStart, ok: fromDify, fallback: fallbackKind, issues: difyInfo.issues, retries: difyInfo.retries, delivery });
+  const turnKind = images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text');
+  quality.record({ kind: turnKind, ms: Date.now() - turnStart, ok: fromDify, fallback: fallbackKind, issues: difyInfo.issues, retries: difyInfo.retries, delivery });
+  // v3.55: ค่าใช้จ่ายของรอบนี้ (token ทุกโหนดใน Dify + เสียงที่อ่านคำตอบ) สำหรับหน้า 💰 ในเว็บแอดมิน
+  recordCost({ sid: sessionId, kind: turnKind, q: userText, nodes: difyInfo.nodes, message: difyInfo.message, tts: difyInfo.tts });
   markDirty();
+}
+
+// v3.55: บันทึกค่าใช้จ่ายห้ามทำให้การตอบลูกค้าล้ม
+function recordCost(t) {
+  try {
+    const rec = cost.record(t);
+    if (!rec) return;
+    console.log('[cost] ' + String(t.sid || '').slice(0, 8) + (rec.n ? ' answer ' : ' voice-in ') + cost.thb(rec.u).toFixed(2) + ' THB (' + rec.t + ' tokens' + (rec.s ? ', web search' : '') + ')');
+    markDirty();
+  } catch (e) { console.log('[cost] record error:', e.message); }
+}
+
+// v3.55: ชื่อแชทในหน้าค่าใช้จ่าย (ชื่อจริงใน CRM ก่อน แล้วจึงชื่อ LINE)
+function costChatName(sid) {
+  const c = crm.get(sid);
+  const s = sessions.get(sid);
+  return (c && c.real_name) || (s && s.name && s.name !== '…' ? s.name : '');
 }
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
@@ -3097,6 +3140,72 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .sendbtn { background: #06c755; color: #fff; border-radius: 50%; width: 40px; height: 40px; font-size: 17px; flex: none; }
   .sendbtn:disabled { opacity: .45; cursor: default; }
 
+  /* v3.55: หน้าค่าใช้จ่าย AI */
+  .rf.cost { background: #e6f9ee; color: #0a7a3a; font-size: 13px; font-weight: 700; margin-right: 4px; white-space: nowrap; }
+  .costv { display: none; position: fixed; inset: 0; z-index: 30; background: #f3f5f7; overflow-y: auto; overflow-x: hidden; }
+  .costv.on { display: block; }
+  .cv-wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px 40px; }
+  .cv-head { position: sticky; top: 0; z-index: 2; background: #f3f5f7; display: flex; align-items: center; gap: 10px; padding: 14px 0 10px; }
+  .cv-head h2 { font-size: 18px; flex: 1; min-width: 0; }
+  .cv-back { background: #fff; color: #1f2329; border: 1px solid #dfe3e8; border-radius: 9px; padding: 7px 12px; font-size: 13px; font-weight: 600; flex: none; }
+  .cv-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+  .cv-card { background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .cv-card .l { font-size: 12px; color: #6b7682; }
+  .cv-card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .cv-card .s { font-size: 11.5px; color: #8a95a1; margin-top: 3px; line-height: 1.5; }
+  .cv-card.hi .v { color: #06a447; }
+  .cv-sec { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.05); min-width: 0; }
+  .cv-sec h3 { font-size: 14.5px; margin-bottom: 4px; }
+  .cv-sec .d { font-size: 12px; color: #8a95a1; margin-bottom: 10px; }
+  .cv-ymax { font-size: 11px; color: #98a2ad; text-align: right; }
+  .cv-chart { display: flex; align-items: stretch; gap: 3px; height: 160px; border-bottom: 1px solid #dfe3e8; padding-top: 4px; }
+  .cv-col { flex: 1; min-width: 0; display: flex; flex-direction: column-reverse; cursor: pointer; border-radius: 3px 3px 0 0; }
+  .cv-col:hover { background: #f1f3f5; }
+  .cv-col span { display: block; flex: none; width: 100%; }
+  .cv-col span:last-child { border-radius: 3px 3px 0 0; }
+  .cv-xl { display: flex; gap: 3px; font-size: 10px; color: #98a2ad; margin-top: 4px; }
+  .cv-xl span { flex: 1; min-width: 0; position: relative; height: 15px; }
+  .cv-xl em { position: absolute; left: 50%; transform: translateX(-50%); font-style: normal; white-space: nowrap; }
+  .cv-xl span:last-child em { left: auto; right: 0; transform: none; }
+  .cv-leg { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: #55606b; margin-top: 10px; }
+  .cv-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .cv-tip { font-size: 12.5px; color: #1f2329; margin-top: 8px; min-height: 18px; }
+  .cv-scroll { overflow-x: auto; }
+  .cv-t { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cv-t th { text-align: left; font-size: 11.5px; color: #6b7682; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #e3e6ea; white-space: nowrap; }
+  .cv-t td { padding: 7px 8px; border-bottom: 1px solid #f1f3f5; vertical-align: top; }
+  .cv-t .n { text-align: right; white-space: nowrap; }
+  .cv-t .nw { white-space: nowrap; }
+  .cv-t tr.go { cursor: pointer; }
+  .cv-t tr.go:hover td { background: #f3f8ff; }
+  .cv-sub { font-size: 11.5px; color: #8a95a1; margin-top: 2px; line-height: 1.5; }
+  .cv-kind { font-size: 11px; color: #55606b; background: #f1f3f5; border-radius: 6px; padding: 0 6px; white-space: nowrap; }
+  .cv-pct { font-size: 12px; color: #55606b; }
+  .cv-bar { height: 6px; background: #eef0f2; border-radius: 3px; margin-top: 3px; overflow: hidden; }
+  .cv-bar b { display: block; height: 100%; border-radius: 3px; }
+  .cv-big { font-size: 26px; font-weight: 700; }
+  .cv-big small { font-size: 13px; font-weight: 400; color: #8a95a1; }
+  .cv-note { font-size: 12.5px; color: #55606b; line-height: 1.8; }
+  .cv-warn { background: #fff6e8; border: 1px solid #f5d9a8; color: #7a4f00; border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-top: 10px; line-height: 1.6; }
+  .cv-grid2 { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; }
+  .cv-grid2 > .cv-sec { margin-top: 12px; }
+  .cv-empty { color: #98a2ad; text-align: center; padding: 22px 10px; font-size: 13px; line-height: 1.8; }
+  .cv-t .m-only { display: none; }
+  @media (max-width: 760px) {
+    .cv-wrap { padding: 0 10px 30px; }
+    .cv-grid2 { grid-template-columns: 1fr; }
+    .cv-head h2 { font-size: 15.5px; }
+    .cv-head .m-hide { display: none; }
+    .cv-cards { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .cv-cards .cv-card:last-child { grid-column: 1 / -1; }
+    .cv-card { padding: 10px 12px; }
+    .cv-card .v { font-size: 18px; }
+    .cv-sec { padding: 12px 10px; }
+    .cv-t { font-size: 12.5px; }
+    .cv-t th, .cv-t td { padding: 6px 5px; }
+    .cv-t .mh { display: none; }
+    .cv-t .m-only { display: block; }
+  }
   @media (max-width: 760px) {
     .app.on { display: block; }
     .side { width: 100%; height: 100dvh; }
@@ -3125,7 +3234,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
   <div class="side">
     <div class="side-head">
       <b>แชท<span class="cnt" id="count">0</span><span class="cnt red" id="cbcount" style="display:none" title="ลูกค้ารอติดต่อกลับ">📞 0</span><span class="live off" id="live">● กำลังเชื่อมต่อ…</span></b>
-      <button class="rf" id="refreshbtn">⟳</button>
+      <span style="flex:none"><button class="rf cost" id="costbtn" title="ค่าใช้จ่าย AI ของบอท">💰 ค่าใช้จ่าย</button><button class="rf" id="refreshbtn">⟳</button></span>
     </div>
     <div class="srch"><input id="q" type="search" placeholder="🔍 ค้นหา ชื่อ / เบอร์ / แท็ก / จังหวัด / พืช"></div>
     <div class="items" id="items"></div>
@@ -3157,6 +3266,16 @@ const ADMIN_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<div id="costv" class="costv">
+  <div class="cv-wrap">
+    <div class="cv-head">
+      <button class="cv-back" id="costclose">‹ กลับหน้าแชท</button>
+      <h2>💰 ค่าใช้จ่าย AI<span class="m-hide"> ของน้องลัดดา</span></h2>
+      <button class="rf" id="costrf" title="โหลดตัวเลขใหม่">⟳</button>
+    </div>
+    <div id="cvbody"><div class="cv-sec"><div class="cv-empty">กำลังโหลด…</div></div></div>
+  </div>
+</div>
 <script>
 var KEY = sessionStorage.getItem('nladda_key') || '';
 var timer = null;
@@ -3306,6 +3425,7 @@ function load(fromLogin) {
     if (sel) { renderHead(); fetchHist(sel); }
     if (!timer) timer = setInterval(load, 20000);
     connectStream();
+    if (costOpen) loadCost();
   }).catch(function(e) {
     if (fromLogin) { var el = document.getElementById('err'); el.style.display = 'block'; el.textContent = e.message; }
     sessionStorage.removeItem('nladda_key');
@@ -3737,6 +3857,200 @@ function doSend() {
 
 document.getElementById('loginbtn').addEventListener('click', login);
 document.getElementById('key').addEventListener('keydown', function(e) { if (e.key === 'Enter') login(); });
+// ---------- v3.55: หน้าค่าใช้จ่าย AI ----------
+var costOpen = false;
+var costLast = 0;
+var CV_GROUPS = ['ai', 'search', 'voice', 'other'];
+var CV_TH = { ai: 'ตอบคำถาม (Gemini)', search: 'ค้นเว็บ (Gemini + Google)', voice: 'เสียง (ElevenLabs)', other: 'อื่น ๆ' };
+var CV_COLOR = { ai: '#06c755', search: '#3b82f6', voice: '#8b5cf6', other: '#f59e0b' };
+var CV_KIND = { text: '💬 ข้อความ', image: '📷 รูป', voice: '🎤 เสียง' };
+var CV_STEP = [
+  [/วิเคราะห์บริบท/, 'อ่านคำถามและหาคำค้น'],
+  [/คัดสินค้า/, 'เลือกสินค้าจากชีทและ Knowledge'],
+  [/External Search|Google Search/i, 'ค้นข้อมูลจากเว็บ เมื่อชีทมีข้อมูลไม่พอ'],
+  [/สรุปคำตอบ/, 'เขียนคำตอบถึงลูกค้า'],
+  [/ตัวแยกสำรอง/, 'แยกประเภทคำถาม เมื่อ Jev ใช้ไม่ได้'],
+  [/Jev|OpenRouter/i, 'แยกประเภทคำถาม'],
+  [/คำตอบสั้น/, 'ตอบคำทักทาย'],
+  [/ค้น KB/, 'ค้นข้อมูลใน Knowledge'],
+  [/รวมทุกขั้น/, 'ยอดรวมจาก Dify ไม่มีรายขั้นตอน'],
+  [/ถอดข้อความเสียง/, 'แปลงเสียงลูกค้าเป็นข้อความ'],
+  [/อ่านคำตอบเป็นเสียง/, 'อ่านคำตอบด้วยเสียงน้องลัดดา']
+];
+
+function baht(x) { return '฿' + Number(x || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function nfmt(x) { return Number(x || 0).toLocaleString('th-TH'); }
+function ktok(x) { x = Number(x || 0); return x >= 1000000 ? (x / 1000000).toFixed(1) + 'M' : (x >= 1000 ? (x / 1000).toFixed(x >= 10000 ? 0 : 1) + 'K' : String(Math.round(x))); }
+function cvDate(k, long) { var p = String(k).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString('th-TH', long ? { day: 'numeric', month: 'long', year: 'numeric' } : { day: 'numeric', month: 'short' }); }
+function cvMonth(k) { var p = String(k).split('-'); return new Date(+p[0], +p[1] - 1, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' }); }
+function cvStep(label) { for (var i = 0; i < CV_STEP.length; i++) if (CV_STEP[i][0].test(label)) return CV_STEP[i][1]; return ''; }
+function cvGroup(c) { return CV_COLOR[c] ? c : 'other'; }
+function cvCard(label, v, sub, cls) { return '<div class="cv-card' + (cls ? ' ' + cls : '') + '"><div class="l">' + label + '</div><div class="v">' + v + '</div><div class="s">' + (sub || '') + '</div></div>'; }
+
+function openCost() {
+  costOpen = true;
+  document.getElementById('costv').classList.add('on');
+  loadCost(true);
+}
+function closeCost() {
+  costOpen = false;
+  document.getElementById('costv').classList.remove('on');
+}
+function loadCost(force) {
+  if (!KEY || !costOpen) return;
+  if (!force && Date.now() - costLast < 60000) return;
+  costLast = Date.now();
+  api('/admin/api/cost').then(function(d) { if (costOpen) renderCost(d); }).catch(function(e) {
+    if (e && e.auth) { closeCost(); signOut(e.message === 'รหัสไม่ถูกต้อง' ? 'รหัสแอดมินเปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่' : e.message); return; }
+    document.getElementById('cvbody').innerHTML = '<div class="cv-sec"><div class="cv-empty">โหลดตัวเลขไม่ได้: ' + esc(e.message) + '<br>กด ⟳ เพื่อลองใหม่</div></div>';
+  });
+}
+
+function cvChart(days) {
+  var max = 0;
+  days.forEach(function(x) { if (x.thb > max) max = x.thb; });
+  if (!max) return '<div class="cv-empty">ยังไม่มีค่าใช้จ่ายใน 30 วันนี้</div>';
+  var cols = '', labels = '', leg = '';
+  days.forEach(function(x, i) {
+    var tip = cvDate(x.day) + ': ' + baht(x.thb) + ' จาก ' + nfmt(x.turns) + ' ข้อความ';
+    var segs = '';
+    CV_GROUPS.forEach(function(g) {
+      var v = x.groups[g] || 0;
+      if (v <= 0) return;
+      segs += '<span style="height:' + Math.max(1.5, v / max * 100).toFixed(2) + '%;background:' + CV_COLOR[g] + '"></span>';
+      tip += ' · ' + CV_TH[g] + ' ' + baht(v);
+    });
+    cols += '<div class="cv-col" title="' + esc(tip) + '" data-tip="' + esc(tip) + '">' + segs + '</div>';
+    labels += '<span>' + ((days.length - 1 - i) % 7 === 0 ? '<em>' + cvDate(x.day) + '</em>' : '') + '</span>';
+  });
+  CV_GROUPS.forEach(function(g) { leg += '<span><i style="background:' + CV_COLOR[g] + '"></i>' + CV_TH[g] + '</span>'; });
+  return '<div class="cv-ymax">วันที่สูงสุด ' + baht(max) + '</div><div class="cv-chart">' + cols + '</div><div class="cv-xl">' + labels + '</div><div class="cv-leg">' + leg + '</div><div class="cv-tip" id="cvtip"></div>';
+}
+
+function cvItems(items) {
+  if (!items.length) return '<div class="cv-empty">ยังไม่มีข้อมูลใน 30 วันนี้</div>';
+  var h = '<div class="cv-scroll"><table class="cv-t"><tr><th>ขั้นตอน</th><th class="n">ครั้ง</th><th class="n mh">ใช้ต่อครั้ง</th><th class="n">ค่าใช้จ่าย</th><th class="mh" style="width:20%">สัดส่วน</th></tr>';
+  items.forEach(function(x) {
+    var per = '–';
+    if (x.cat === 'voice') per = x.avgSec ? x.avgSec + ' วินาที' : nfmt(x.avgChars) + ' ตัวอักษร';
+    else if (x.avgIn || x.avgOut) per = ktok(x.avgIn) + ' เข้า / ' + ktok(x.avgOut) + ' ออก';
+    else if (x.avgTokens) per = ktok(x.avgTokens) + ' token';
+    var sub = [cvStep(x.label)];
+    if (x.cat === 'search') sub.push('ค้นเว็บ ' + nfmt(x.searches) + ' ครั้ง');
+    if (x.credits) sub.push('เครดิต ElevenLabs ' + nfmt(x.credits));
+    if (x.model && x.cat !== 'voice') sub.push(esc(x.model));
+    h += '<tr><td><b>' + esc(x.label) + '</b><div class="cv-sub">' + sub.filter(Boolean).join(' · ') + '</div></td>'
+      + '<td class="n">' + nfmt(x.runs) + '</td><td class="n mh">' + per + '</td><td class="n"><b>' + baht(x.thb) + '</b><span class="cv-sub m-only">' + x.share + '%</span></td>'
+      + '<td class="mh"><div class="cv-pct">' + x.share + '%</div><div class="cv-bar"><b style="width:' + Math.min(100, x.share) + '%;background:' + CV_COLOR[cvGroup(x.cat)] + '"></b></div></td></tr>';
+  });
+  return h + '</table></div><div class="cv-sub" style="margin-top:8px">token เข้า = คำถาม ประวัติแชท และข้อมูลสินค้าที่ส่งให้ AI อ่าน · token ออก = ข้อความที่ AI เขียนและคิด ราคาต่อ token ขาออกแพงกว่าขาเข้า 5 เท่า</div>';
+}
+
+function cvKinds(k) {
+  var h = '<table class="cv-t"><tr><th>ชนิดคำถาม</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th></tr>';
+  ['text', 'image', 'voice'].forEach(function(x) {
+    var v = k[x] || {};
+    h += '<tr><td>' + CV_KIND[x] + '</td><td class="n">' + nfmt(v.turns) + '</td><td class="n">' + (v.turns ? baht(v.perMsg) : '–') + '</td><td class="n"><b>' + baht(v.thb) + '</b></td></tr>';
+  });
+  return h + '</table><div class="cv-sub" style="margin-top:8px">ข้อความเสียงรวมค่าถอดเสียงและค่าอ่านคำตอบเป็นเสียงแล้ว</div>';
+}
+
+function cvSearch(s, p) {
+  var pct = s.free ? Math.min(100, s.month / s.free * 100) : 0;
+  return '<div class="cv-big">' + nfmt(s.month) + ' <small>ครั้ง จากโควตาฟรี ' + nfmt(s.free) + ' ครั้ง</small></div>'
+    + '<div class="cv-bar" style="height:8px;margin-top:8px"><b style="width:' + pct.toFixed(1) + '%;background:' + CV_COLOR.search + '"></b></div>'
+    + '<div class="cv-sub" style="margin-top:8px">Google ให้ค้นเว็บฟรี ' + nfmt(s.free) + ' ครั้งต่อเดือน นับรวมทุกบอทที่ใช้ key เดียวกัน (รวม V.2) เกินแล้วคิด $' + p.searchUsdPer1k + ' ต่อ 1,000 ครั้ง'
+    + (s.overThb > 0 ? ' · ส่วนที่เกินเดือนนี้ประมาณ <b>' + baht(s.overThb) + '</b>' : ' · เดือนนี้ยังไม่เสียค่าค้นเว็บ')
+    + '<br>ค่า Gemini ของขั้นค้นเว็บอยู่ในตารางขั้นตอนด้านบนแล้ว</div>';
+}
+
+function cvRow(x) { return x.chat ? ' class="go" data-sid="' + esc(x.sid) + '"' : ''; }
+
+function cvTurns(list) {
+  if (!list.length) return '<div class="cv-empty">ยังไม่มีข้อมูลใน 7 วันนี้</div>';
+  var h = '<div class="cv-scroll"><table class="cv-t"><tr><th class="mh">เวลา</th><th>แชท และคำถาม</th><th class="mh">ขั้นที่ใช้เงินมากสุด</th><th class="n">ค่าใช้จ่าย</th></tr>';
+  list.forEach(function(x) {
+    var when = new Date(x.at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) + ' ' + hhmm(x.at);
+    var steps = (x.steps || []).map(function(s) { return esc(s.label) + ' ' + baht(s.thb); }).join('<br>');
+    h += '<tr' + cvRow(x) + '><td class="nw mh">' + when + '</td>'
+      + '<td><b>' + esc(x.name || (String(x.sid).slice(0, 10) + '…')) + '</b> <span class="cv-kind">' + (CV_KIND[x.kind] || '') + (x.search ? ' · 🔎 ค้นเว็บ' : '') + '</span>'
+      + '<div class="cv-sub">' + esc(x.q || (x.kind === 'image' ? '(ส่งรูปมาอย่างเดียว)' : '-')) + '</div><div class="cv-sub m-only">' + when + '</div></td>'
+      + '<td class="cv-sub mh">' + steps + '</td><td class="n"><b>' + baht(x.thb) + '</b><div class="cv-sub">' + ktok(x.tokens) + ' token</div></td></tr>';
+  });
+  return h + '</table></div>';
+}
+
+function cvChats(list) {
+  if (!list.length) return '<div class="cv-empty">ยังไม่มีข้อมูลในเดือนนี้</div>';
+  var h = '<div class="cv-scroll"><table class="cv-t"><tr><th>แชท</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th></tr>';
+  list.forEach(function(x) {
+    h += '<tr' + cvRow(x) + '><td>' + esc(x.name || (String(x.sid).slice(0, 10) + '…')) + '</td><td class="n">' + nfmt(x.turns) + '</td><td class="n">' + (x.turns ? baht(x.perMsg) : '–') + '</td><td class="n"><b>' + baht(x.thb) + '</b></td></tr>';
+  });
+  return h + '</table></div>';
+}
+
+function cvNotes(d) {
+  var p = d.prices || {};
+  var price = (p.models || []).map(function(m) {
+    return esc(m.model) + ' ส่งเข้า $' + m.in + ' / ตอบออก $' + m.out + ' ต่อ 1 ล้าน token' + (m.next ? ' (ตั้งแต่ ' + cvDate(m.next.from, true) + ' เป็น $' + m.next.in + ' / $' + m.next.out + ')' : '');
+  });
+  price.push('ค้นเว็บ Google Search ฟรี ' + nfmt(p.searchFreePerMonth) + ' ครั้งต่อเดือน จากนั้น $' + p.searchUsdPer1k + ' ต่อ 1,000 ครั้ง');
+  price.push('ElevenLabs อ่านเสียง $' + p.ttsUsdPer1kChars + ' ต่อ 1,000 ตัวอักษร ถอดเสียง $' + p.sttUsdPerHour + ' ต่อชั่วโมง');
+  price.push('Jev ผ่าน OpenRouter $' + p.apiUsdPerCall + ' ต่อครั้ง');
+  var since = d.since ? new Date(d.since).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  return '<div class="cv-sec cv-note"><h3>ตัวเลขนี้คิดอย่างไร</h3>'
+    + '• เป็นค่าประมาณ: นับ token ที่ Dify รายงานในทุกคำตอบ แล้วคูณราคาต่อหน่วยด้านล่าง ยอดในหน้า Spend ของ Google อาจต่างจากนี้เล็กน้อย และหน้านั้นรวมบอททดสอบ V.2 ที่ใช้ key เดียวกันด้วย<br>'
+    + '• นับเฉพาะคำถามที่ลูกค้าส่งเข้ามาทาง LINE OA นี้' + (since ? ' เริ่มนับ ' + since + ' น.' : '') + ' การทดสอบที่ส่งคำถามเข้า Dify โดยตรงไม่นับ<br>'
+    + '• ไม่รวมค่ารายเดือน: Dify, Railway, แพ็กเกจ ElevenLabs และ LINE OA<br>'
+    + '• ราคาที่ใช้: ' + price.join(' · ') + ' · 1 USD = ' + p.usdThb + ' บาท (แก้ได้ใน Railway ที่ COST_USD_THB และ COST_PRICES)'
+    + '</div>';
+}
+
+function renderCost(d) {
+  var h = '';
+  if (d.error) h += '<div class="cv-warn">⚠️ ' + esc(d.error) + '</div>';
+  if (!d.since) {
+    h += '<div class="cv-sec"><div class="cv-empty">ยังไม่มีข้อมูล ระบบเริ่มนับจากคำถามแรกที่ลูกค้าส่งเข้ามาหลังอัปเดตนี้<br>เมื่อบอทตอบแล้ว ตัวเลขจะขึ้นที่หน้านี้</div></div>' + cvNotes(d);
+    document.getElementById('cvbody').innerHTML = h;
+    return;
+  }
+  var mLabel = 'เดือนนี้ (' + cvMonth(d.month.key) + ')';
+  var pj = d.projection;
+  h += '<div class="cv-cards">'
+    + cvCard('วันนี้', baht(d.today.thb), nfmt(d.today.turns) + ' ข้อความ · เมื่อวาน ' + baht(d.yesterday.thb))
+    + cvCard('7 วันล่าสุด', baht(d.last7.thb), nfmt(d.last7.turns) + ' ข้อความ')
+    + cvCard(mLabel, baht(d.month.thb), nfmt(d.month.turns) + ' ข้อความ' + (d.prevMonth.turns ? ' · เดือนก่อน ' + baht(d.prevMonth.thb) : ''))
+    + cvCard('เฉลี่ยต่อข้อความ', baht(d.last30.perMsg), '30 วันล่าสุด ' + nfmt(d.last30.turns) + ' ข้อความ รวม ' + baht(d.last30.thb), 'hi')
+    + cvCard('ประมาณการต่อเดือน', pj ? baht(pj.month) : '–', pj ? 'จากค่าเฉลี่ย ' + pj.days + ' วันเต็มล่าสุด วันละ ' + baht(pj.perDay) : 'ต้องนับครบ 1 วันเต็มก่อน (ตัดวันแรกที่นับไม่เต็มวัน)')
+    + '</div>';
+  if (pj && pj.next) h += '<div class="cv-warn">📈 ราคา Gemini ปรับขึ้นตั้งแต่ ' + cvDate(pj.next.from, true) + ' ถ้าลูกค้าถามเท่าเดิม ค่าใช้จ่ายจะประมาณ <b>' + baht(pj.next.month) + ' ต่อเดือน</b></div>';
+  if (d.search && d.search.overThb > 0) h += '<div class="cv-warn">🔎 เดือนนี้ค้นเว็บ ' + nfmt(d.search.month) + ' ครั้ง เกินโควตาฟรี ' + nfmt(d.search.free) + ' ครั้งแล้ว ส่วนเกินประมาณ ' + baht(d.search.overThb) + ' รวมอยู่ในยอดเดือนนี้</div>';
+  h += '<div class="cv-sec"><h3>ค่าใช้จ่ายรายวัน 30 วันล่าสุด</h3><div class="d">ชี้หรือแตะที่แท่งเพื่อดูตัวเลขของวันนั้น</div>' + cvChart(d.daily) + '</div>';
+  h += '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากขั้นตอนไหน (30 วัน)</h3><div class="d">ทุกคำตอบผ่านหลายขั้นใน Dify แต่ละขั้นส่งข้อความให้ AI อ่านและเขียน คิดเงินตามจำนวน token</div>' + cvItems(d.items) + '</div>';
+  h += '<div class="cv-grid2"><div class="cv-sec"><h3>แยกตามชนิดคำถาม (30 วัน)</h3>' + cvKinds(d.byKind) + '</div><div class="cv-sec"><h3>ค้นเว็บเดือนนี้</h3>' + cvSearch(d.search, d.prices || {}) + '</div></div>';
+  h += '<div class="cv-sec"><h3>คำตอบที่ใช้เงินมากที่สุด 7 วันล่าสุด</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvTurns(d.topTurns) + '</div>';
+  h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด ' + esc(mLabel) + '</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvChats(d.topChats) + '</div>';
+  h += cvNotes(d);
+  document.getElementById('cvbody').innerHTML = h;
+}
+
+document.getElementById('costbtn').addEventListener('click', openCost);
+document.getElementById('costclose').addEventListener('click', closeCost);
+document.getElementById('costrf').addEventListener('click', function() { loadCost(true); });
+document.getElementById('cvbody').addEventListener('click', function(e) {
+  var t = e.target;
+  var col = t.closest ? t.closest('.cv-col') : null;
+  if (col) { var tip = document.getElementById('cvtip'); if (tip) tip.textContent = col.getAttribute('data-tip'); return; }
+  var tr = t.closest ? t.closest('tr.go') : null;
+  if (!tr) return;
+  var sid = tr.getAttribute('data-sid');
+  var found = false;
+  for (var i = 0; i < cache.length; i++) if (cache[i].id === sid) found = true;
+  if (!found) { alert('แชทนี้ไม่อยู่ใน 100 แชทล่าสุดของรายการ ลองค้นหาด้วยชื่อในช่องค้นหา'); return; }
+  closeCost();
+  selectChat(sid);
+});
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && costOpen) closeCost(); });
 document.getElementById('refreshbtn').addEventListener('click', function() { load(); });
 document.getElementById('backbtn').addEventListener('click', function() { document.getElementById('main').classList.remove('show'); });
 
@@ -3872,6 +4186,11 @@ function handleAdmin(req, res, path, body) {
       sseTokens.delete(oldest);
     }
     return sendJson(res, 200, { ok: true, token });
+  }
+
+  // v3.55: หน้า 💰 ค่าใช้จ่าย AI (ต้องใส่รหัสแอดมิน มี id แชทและคำถามสั้น ๆ)
+  if (path === '/admin/api/cost' && req.method === 'GET') {
+    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid) })));
   }
 
   if (path === '/admin/api/list' && req.method === 'GET') {
@@ -4124,7 +4443,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.54', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.55', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

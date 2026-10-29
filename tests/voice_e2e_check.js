@@ -76,6 +76,8 @@ const mockDify = () => listen(async (req, res) => {
     dify.chats.push(JSON.parse(b.toString('utf8') || '{}'));
     const ids = { conversation_id: 'conv-voice', message_id: 'msg-' + dify.chats.length };
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    // v3.55: token ของโหนดใน Dify สำหรับหน้าค่าใช้จ่าย
+    res.write('data: ' + JSON.stringify(Object.assign({ event: 'node_finished', data: { title: 'Gemini สรุปคำตอบ', node_type: 'llm', status: 'succeeded', process_data: { model_name: 'gemini-3.8-flash' }, outputs: { usage: { prompt_tokens: 16000, completion_tokens: 3000, total_tokens: 19000 } }, execution_metadata: { total_tokens: 19000, total_price: 0.02325, currency: 'USD' } } }, ids)) + '\n\n');
     res.write('data: ' + JSON.stringify(Object.assign({ event: 'message', answer: ANSWER }, ids)) + '\n\n');
     res.write('data: ' + JSON.stringify(Object.assign({ event: 'message_end' }, ids)) + '\n\n');
     return res.end();
@@ -267,6 +269,25 @@ async function waitHealth(port) {
     assert(msgs[0].type === 'text' && msgs[0].text.includes('แกนเตอร์'), JSON.stringify(msgs));
     assert(msgs.some((m) => m.type === 'audio'), 'รอบที่มีข้อความเสียงต้องแนบเสียง แม้ event ล่าสุดเป็นข้อความที่พิมพ์: ' + JSON.stringify(msgs));
     assert.strictEqual(el.tts.length, ttsBefore + 1, 'สร้างเสียงครั้งเดียวต่อรอบคำถาม');
+
+    // v3.55: หน้าค่าใช้จ่ายเห็นรอบนี้เป็นคำถามเสียง 1 ข้อความ มี token ของ Dify ค่าถอดเสียง 4 วินาที และค่าอ่านคำตอบเป็นเสียง
+    assert.strictEqual((await req(port, 'GET', '/admin/api/cost')).status, 401, 'หน้าค่าใช้จ่ายต้องใส่รหัสแอดมิน');
+    const costRes = await req(port, 'GET', '/admin/api/cost', null, { 'x-admin-key': 'test-admin' });
+    const cs = costRes.json;
+    assert(cs && cs.ok, 'cost api HTTP ' + costRes.status);
+    assert.strictEqual(cs.today.turns, 1, 'ถอดเสียงไม่นับเป็นข้อความแยก');
+    assert.strictEqual(cs.byKind.voice.turns, 1);
+    const step = (label) => cs.items.find((i) => i.label === label) || {};
+    assert.deepStrictEqual([step('Gemini สรุปคำตอบ').runs, step('Gemini สรุปคำตอบ').avgIn, step('Gemini สรุปคำตอบ').avgOut], [1, 16000, 3000], JSON.stringify(cs.items));
+    assert.deepStrictEqual([step('ElevenLabs ถอดข้อความเสียง').avgSec, step('ElevenLabs ถอดข้อความเสียง').credits], [4, 1], JSON.stringify(cs.items));
+    assert(step('ElevenLabs อ่านคำตอบเป็นเสียง').avgChars > 50 && step('ElevenLabs อ่านคำตอบเป็นเสียง').credits === 40, JSON.stringify(cs.items));
+    assert(cs.today.thb > 0 && cs.last30.perMsg === cs.today.thb, JSON.stringify(cs.today));
+    assert.strictEqual(cs.topTurns[0].sid, CUSTOMER);
+    assert.strictEqual(cs.topTurns[0].kind, 'voice');
+    assert(cs.topTurns[0].q.startsWith(el.heard + ' ใช้กับนาหว่าน'), 'คำถามในรายการต้องเป็นสิ่งที่ลูกค้าพูดและพิมพ์: ' + cs.topTurns[0].q);
+    assert.deepStrictEqual([cs.topChats[0].sid, cs.topChats[0].name, cs.topChats[0].chat], [CUSTOMER, 'ลูกค้าเสียง', true]);
+    const pub = JSON.stringify((await req(port, 'GET', '/health')).json);
+    assert(!pub.includes('topTurns') && !pub.includes(el.heard), '/health ที่เปิดสาธารณะต้องไม่มีค่าใช้จ่ายหรือคำถามลูกค้า');
 
     // Dify ตอบ HTTP 400 (ไม่มีคำตอบ): bridge ส่งข้อความระบบขัดข้องเป็นตัวอักษรอย่างเดียว ไม่แนบเสียงและไม่เรียก ElevenLabs สร้างเสียง
     dify.fail = true;
