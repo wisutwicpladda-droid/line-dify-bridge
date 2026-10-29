@@ -98,6 +98,9 @@
 //     v3.55: หน้า "💰 ค่าใช้จ่าย" ในเว็บแอดมิน (cost.js): ทุกคำตอบเก็บ token ของทุกโหนดใน Dify จาก stream จำนวนครั้งที่ค้นเว็บ
 //       และค่าเสียง ElevenLabs แล้วคิดเป็นบาท แสดงยอดวันนี้ 7 วัน เดือนนี้ เฉลี่ยต่อข้อความ ประมาณการต่อเดือน กราฟรายวัน
 //       ค่าใช้จ่ายแยกตามขั้นตอนและชนิดคำถาม คำตอบที่ใช้เงินมากที่สุด และแชทที่ใช้มากที่สุด (ตัวเลขเงินไม่อยู่ใน /health)
+//     v3.56: หน้าค่าใช้จ่ายรวมทุกที่มาที่ใช้ Gemini key เดียวกัน: V.2 และชุดทดสอบส่งบันทึกเข้ามาที่บอทจริง (cost_forward.js,
+//       POST /admin/api/cost/ingest ด้วย COST_INGEST_KEY) ตารางแยกตามที่มา ยอดย้อนหลังจาก Dify Monitoring
+//       และเช็กกับ LINE ว่า webhook ของ OA เปิดอยู่และชี้มาที่ bridge นี้ (/health lineWebhook) เพราะถ้าไม่ใช่ ลูกค้าทักแล้วบอทไม่เห็นข้อความเลย
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -149,6 +152,12 @@
 //  COST_PRICES                (ไม่บังคับ) JSON แก้ราคาที่ใช้คิดค่าใช้จ่าย (ค่าเริ่มดู DEFAULT_PRICES ใน cost.js) เช่น
 //                             {"models":{"gemini-3.8-flash":[{"in":0.75,"out":3.75},{"from":"2027-01-01","in":1.5,"out":7.5}]},"ttsUsdPer1kChars":0.08}
 //                             in/out = USD ต่อ 1 ล้าน token · from = วันที่เริ่มใช้ราคานั้น · ยอดที่บันทึกไปแล้วไม่เปลี่ยน
+//  COST_APP                   (ไม่บังคับ, v3.56) ชื่อแอปในหน้าค่าใช้จ่าย ค่าเริ่ม "บอทจริง" (V.2 ตั้ง "V.2")
+//  COST_SOURCE                (ไม่บังคับ) test = บันทึกทุกคำตอบเป็นชุดทดสอบ (ใช้กับ relay ในเครื่อง tests/bot/bridge_relay.js)
+//  COST_INGEST_KEY            (ไม่บังคับ, บอทจริง) รหัสยาว 16 ตัวขึ้นไป ให้ V.2 และชุดทดสอบส่งบันทึกค่าใช้จ่ายเข้ามาได้
+//  COST_FORWARD_URL / COST_FORWARD_KEY
+//                             (ไม่บังคับ, V.2 และ relay) ส่งบันทึกค่าใช้จ่ายต่อให้หน้าของบอทจริง
+//                             URL = https://<บอทจริง>/admin/api/cost/ingest · KEY = COST_INGEST_KEY ของบอทจริง
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -169,6 +178,10 @@ const quality = require('./quality').createQuality();
 // v3.55: ค่าใช้จ่าย AI ต่อคำตอบ สำหรับหน้า 💰 ในเว็บแอดมิน (ไม่อยู่ใน /health ที่เปิดสาธารณะ)
 const cost = require('./cost').createCost({ env: process.env });
 if (cost.error) console.log('[cost] ' + cost.error);
+// v3.56: ส่งบันทึกต่อให้หน้าของบอทจริง (V.2 และชุดทดสอบ) และรับบันทึกจาก bridge อื่น
+const costForward = require('./cost_forward').createForwarder({ url: process.env.COST_FORWARD_URL, key: process.env.COST_FORWARD_KEY, log: (m) => console.log(m) });
+const COST_INGEST_KEY = (process.env.COST_INGEST_KEY || '').trim().length >= 16 ? process.env.COST_INGEST_KEY.trim() : '';
+if (costForward.state.on) { let h = '?'; try { h = new URL(process.env.COST_FORWARD_URL).host; } catch (_) {} console.log('[cost] forward records to ' + h + ' as ' + cost.app + (cost.src === 'test' ? ' (test runs)' : '')); }
 let sheetAlertKeys = [];
 const { removeSystemWords, removeInternalNotes, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)"
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
@@ -2978,6 +2991,7 @@ function recordCost(t) {
   try {
     const rec = cost.record(t);
     if (!rec) return;
+    costForward.send(rec);
     console.log('[cost] ' + String(t.sid || '').slice(0, 8) + (rec.n ? ' answer ' : ' voice-in ') + cost.thb(rec.u).toFixed(2) + ' THB (' + rec.t + ' tokens' + (rec.s ? ', web search' : '') + ')');
     markDirty();
   } catch (e) { console.log('[cost] record error:', e.message); }
@@ -2989,6 +3003,34 @@ function costChatName(sid) {
   const s = sessions.get(sid);
   return (c && c.real_name) || (s && s.name && s.name !== '…' ? s.name : '');
 }
+
+// v3.56: เช็กกับ LINE ว่า webhook ของ OA เปิดอยู่และชี้มาที่ bridge นี้ ถ้าไม่ใช่ ลูกค้าทักแล้วบอทไม่เห็นข้อความเลย
+// (29 ต.ค. หน้าค่าใช้จ่ายว่างเพราะไม่มีข้อความเข้ามาตั้งแต่ 28 ต.ค. 11:41 ต้องแยกให้ออกว่าไม่มีคนทัก หรือข้อความไม่ถึง)
+// เช็กตอนเริ่มและทุก 30 นาที แสดงใน /health (lineWebhook) และหน้าค่าใช้จ่าย
+const lineWebhook = { checked: false, at: 0, active: null, here: null, host: '', error: '' };
+async function checkLineWebhook() {
+  if (!CH_TOKEN) return Object.assign(lineWebhook, { checked: true, at: Date.now(), error: 'no LINE token' });
+  try {
+    const r = await request('GET', LINE_API + '/v2/bot/channel/webhook/endpoint', { Authorization: 'Bearer ' + CH_TOKEN });
+    if (r.status !== 200 || !r.data || typeof r.data !== 'object') throw new Error('HTTP ' + r.status);
+    let host = '';
+    try { host = new URL(String(r.data.endpoint || '')).host; } catch (_) {}
+    let mine = '';
+    try { mine = PUBLIC_URL ? new URL(PUBLIC_URL).host : ''; } catch (_) {}
+    const active = r.data.active === true;
+    const here = mine ? !!host && host === mine : null;
+    const same = lineWebhook.checked && !lineWebhook.error && lineWebhook.active === active && lineWebhook.here === here;
+    Object.assign(lineWebhook, { checked: true, at: Date.now(), active, here, host, error: mine ? '' : 'no PUBLIC_URL' });
+    if (!same) console.log('[line-webhook] ' + (!active ? 'WARNING: LINE webhook is turned off, customer messages do not reach this bridge' : (here === false ? 'WARNING: LINE sends webhooks to ' + (host || '(none)') + ', not to this bridge' : 'ok: webhook on and points here')));
+  } catch (e) { Object.assign(lineWebhook, { checked: true, at: Date.now(), error: String(e.message || e).slice(0, 120) }); }
+  return lineWebhook;
+}
+function lineWebhookView() {
+  if (!lineWebhook.checked) return 'checking';
+  return { active: lineWebhook.active, here: lineWebhook.here, at: lineWebhook.at, error: lineWebhook.error || undefined };
+}
+setTimeout(() => { checkLineWebhook().catch(() => {}); }, 4000);
+setInterval(() => { checkLineWebhook().catch(() => {}); }, 30 * 60000);
 
 // ---------- หน้าแอดมิน (ดีไซน์แบบ LINE OA Manager) ----------
 const ADMIN_HTML = `<!DOCTYPE html>
@@ -3190,6 +3232,9 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .cv-grid2 { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; }
   .cv-grid2 > .cv-sec { margin-top: 12px; }
   .cv-empty { color: #98a2ad; text-align: center; padding: 22px 10px; font-size: 13px; line-height: 1.8; }
+  .cv-warn.bad { background: #fdeeee; border-color: #f5c6c6; color: #8a1f24; }
+  .cv-kind.app { background: #efe9fd; color: #5b3fb5; }
+  .cv-kind.test { background: #fff1dd; color: #a15c00; }
   .cv-t .m-only { display: none; }
   @media (max-width: 760px) {
     .cv-wrap { padding: 0 10px 30px; }
@@ -3965,6 +4010,44 @@ function cvSearch(s, p) {
 }
 
 function cvRow(x) { return x.chat ? ' class="go" data-sid="' + esc(x.sid) + '"' : ''; }
+var CV_SRC = { line: 'ข้อความจาก LINE', test: 'ชุดทดสอบอัตโนมัติ' };
+function cvSrcName(x) { return x.src === 'test' ? CV_SRC.test + ' · ' + esc(x.app) : esc(x.app) + ' · ' + (CV_SRC[x.src] || esc(x.src)); }
+function cvWho(x) {
+  var tag = (x.own ? '' : ' <span class="cv-kind app">' + esc(x.app) + '</span>') + (x.src === 'test' ? ' <span class="cv-kind test">ทดสอบ</span>' : '');
+  var name = x.own ? (x.name || (String(x.sid).slice(0, 10) + '…')) : (String(x.sid).slice(0, 9) + '…');
+  return '<b>' + esc(name) + '</b>' + tag;
+}
+function cvWebhook(d) {
+  var w = d.line && d.line.webhook;
+  if (!w || w.error || (w.active && w.here !== false)) return '';
+  var why = !w.active ? 'การส่งข้อความเข้า webhook ของ OA นี้ปิดอยู่ใน LINE' : 'LINE ส่งข้อความของ OA นี้ไปที่ ' + esc(w.host || '(ไม่ได้ตั้ง)') + ' ไม่ใช่บอทตัวนี้';
+  return '<div class="cv-warn bad">⚠️ ' + why + ' ลูกค้าทักมาแล้วบอทจะไม่เห็นข้อความและไม่ตอบ แก้ที่ LINE Developers > Messaging API > Webhook settings</div>';
+}
+function cvLastLine(d) {
+  var t = d.line && d.line.lastCustomerAt;
+  return t ? 'ข้อความล่าสุดที่เข้ามาทาง LINE: ' + new Date(t).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' น.' : 'ยังไม่มีข้อความจาก LINE';
+}
+function cvSources(list) {
+  if (!list || !list.length) return '';
+  var h = '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากไหน (30 วัน)</h3><div class="d">แยกตามบอทและที่มาของคำถาม ทุกบอทใช้ Gemini key และบิลเดียวกัน</div><div class="cv-scroll"><table class="cv-t"><tr><th>ที่มา</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th><th class="mh" style="width:20%">สัดส่วน</th></tr>';
+  list.forEach(function(x) {
+    var color = x.src === 'test' ? '#f59e0b' : (x.own ? '#06c755' : '#8b5cf6');
+    h += '<tr><td><b>' + cvSrcName(x) + '</b></td><td class="n">' + nfmt(x.turns) + '</td><td class="n">' + (x.turns ? baht(x.perMsg) : '–') + '</td><td class="n"><b>' + baht(x.thb) + '</b><span class="cv-sub m-only">' + x.share + '%</span></td>'
+      + '<td class="mh"><div class="cv-pct">' + x.share + '%</div><div class="cv-bar"><b style="width:' + Math.min(100, x.share) + '%;background:' + color + '"></b></div></td></tr>';
+  });
+  return h + '</table></div></div>';
+}
+function cvBaselines(list) {
+  if (!list || !list.length) return '';
+  var tot = 0;
+  var h = '<div class="cv-sec"><h3>ยอดย้อนหลังจาก Dify Monitoring</h3><div class="d">ยอดก่อนเริ่มนับในหน้านี้ รวมทุกทางที่คำถามเข้า Dify ทั้ง LINE ชุดทดสอบ และหน้าทดลองใน Dify</div><div class="cv-scroll"><table class="cv-t"><tr><th>แอป</th><th>ช่วงวันที่</th><th class="n">ข้อความ</th><th class="n mh">token</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th></tr>';
+  list.forEach(function(b) {
+    tot += b.thb;
+    h += '<tr><td><b>' + esc(b.app) + '</b>' + (b.note ? '<div class="cv-sub">' + esc(b.note) + '</div>' : '') + '</td><td class="nw">' + cvDate(b.from) + ' – ' + cvDate(b.to) + '</td><td class="n">' + nfmt(b.messages) + '</td><td class="n mh">' + ktok(b.tokens) + '</td><td class="n">' + (b.messages ? baht(b.perMsg) : '–') + '</td><td class="n"><b>' + baht(b.thb) + '</b></td></tr>';
+  });
+  if (list.length > 1) h += '<tr><td colspan="2"><b>รวม</b></td><td class="n"></td><td class="n mh"></td><td class="n"></td><td class="n"><b>' + baht(tot) + '</b></td></tr>';
+  return h + '</table></div></div>';
+}
 
 function cvTurns(list) {
   if (!list.length) return '<div class="cv-empty">ยังไม่มีข้อมูลใน 7 วันนี้</div>';
@@ -3973,7 +4056,7 @@ function cvTurns(list) {
     var when = new Date(x.at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) + ' ' + hhmm(x.at);
     var steps = (x.steps || []).map(function(s) { return esc(s.label) + ' ' + baht(s.thb); }).join('<br>');
     h += '<tr' + cvRow(x) + '><td class="nw mh">' + when + '</td>'
-      + '<td><b>' + esc(x.name || (String(x.sid).slice(0, 10) + '…')) + '</b> <span class="cv-kind">' + (CV_KIND[x.kind] || '') + (x.search ? ' · 🔎 ค้นเว็บ' : '') + '</span>'
+      + '<td>' + cvWho(x) + ' <span class="cv-kind">' + (CV_KIND[x.kind] || '') + (x.search ? ' · 🔎 ค้นเว็บ' : '') + '</span>'
       + '<div class="cv-sub">' + esc(x.q || (x.kind === 'image' ? '(ส่งรูปมาอย่างเดียว)' : '-')) + '</div><div class="cv-sub m-only">' + when + '</div></td>'
       + '<td class="cv-sub mh">' + steps + '</td><td class="n"><b>' + baht(x.thb) + '</b><div class="cv-sub">' + ktok(x.tokens) + ' token</div></td></tr>';
   });
@@ -3984,7 +4067,7 @@ function cvChats(list) {
   if (!list.length) return '<div class="cv-empty">ยังไม่มีข้อมูลในเดือนนี้</div>';
   var h = '<div class="cv-scroll"><table class="cv-t"><tr><th>แชท</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th></tr>';
   list.forEach(function(x) {
-    h += '<tr' + cvRow(x) + '><td>' + esc(x.name || (String(x.sid).slice(0, 10) + '…')) + '</td><td class="n">' + nfmt(x.turns) + '</td><td class="n">' + (x.turns ? baht(x.perMsg) : '–') + '</td><td class="n"><b>' + baht(x.thb) + '</b></td></tr>';
+    h += '<tr' + cvRow(x) + '><td>' + cvWho(x) + '</td><td class="n">' + nfmt(x.turns) + '</td><td class="n">' + (x.turns ? baht(x.perMsg) : '–') + '</td><td class="n"><b>' + baht(x.thb) + '</b></td></tr>';
   });
   return h + '</table></div>';
 }
@@ -4000,7 +4083,8 @@ function cvNotes(d) {
   var since = d.since ? new Date(d.since).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   return '<div class="cv-sec cv-note"><h3>ตัวเลขนี้คิดอย่างไร</h3>'
     + '• เป็นค่าประมาณ: นับ token ที่ Dify รายงานในทุกคำตอบ แล้วคูณราคาต่อหน่วยด้านล่าง ยอดในหน้า Spend ของ Google อาจต่างจากนี้เล็กน้อย และหน้านั้นรวมบอททดสอบ V.2 ที่ใช้ key เดียวกันด้วย<br>'
-    + '• นับเฉพาะคำถามที่ลูกค้าส่งเข้ามาทาง LINE OA นี้' + (since ? ' เริ่มนับ ' + since + ' น.' : '') + ' การทดสอบที่ส่งคำถามเข้า Dify โดยตรงไม่นับ<br>'
+    + '• นับคำถามที่เข้ามาทาง LINE OA ของบอทนี้' + (since ? ' เริ่มนับ ' + since + ' น.' : '') + ' และค่าใช้จ่ายที่ V.2 กับชุดทดสอบอัตโนมัติส่งเข้ามา (' + (d.ingest ? 'เปิดรับอยู่' : 'ยังไม่ได้เปิดรับ ต้องตั้ง COST_INGEST_KEY') + ') การทดลองในหน้า Dify เองไม่นับ<br>'
+    + (d.forward ? '• บอทนี้ส่งบันทึกค่าใช้จ่ายต่อให้หน้าของบอทจริงด้วย ส่งแล้ว ' + nfmt(d.forward.sent) + ' รายการ' + (d.forward.pending ? ' รอส่ง ' + nfmt(d.forward.pending) : '') + (d.forward.error ? ' (' + esc(d.forward.error) + ')' : '') + '<br>' : '')
     + '• ไม่รวมค่ารายเดือน: Dify, Railway, แพ็กเกจ ElevenLabs และ LINE OA<br>'
     + '• ราคาที่ใช้: ' + price.join(' · ') + ' · 1 USD = ' + p.usdThb + ' บาท (แก้ได้ใน Railway ที่ COST_USD_THB และ COST_PRICES)'
     + '</div>';
@@ -4009,8 +4093,9 @@ function cvNotes(d) {
 function renderCost(d) {
   var h = '';
   if (d.error) h += '<div class="cv-warn">⚠️ ' + esc(d.error) + '</div>';
+  h += cvWebhook(d);
   if (!d.since) {
-    h += '<div class="cv-sec"><div class="cv-empty">ยังไม่มีข้อมูล ระบบเริ่มนับจากคำถามแรกที่ลูกค้าส่งเข้ามาหลังอัปเดตนี้<br>เมื่อบอทตอบแล้ว ตัวเลขจะขึ้นที่หน้านี้</div></div>' + cvNotes(d);
+    h += '<div class="cv-sec"><div class="cv-empty">ยังไม่มีค่าใช้จ่ายที่นับได้ ระบบเริ่มนับจากคำถามแรกที่เข้ามาหลังอัปเดต<br>' + cvLastLine(d) + '</div></div>' + cvBaselines(d.baselines) + cvNotes(d);
     document.getElementById('cvbody').innerHTML = h;
     return;
   }
@@ -4025,11 +4110,13 @@ function renderCost(d) {
     + '</div>';
   if (pj && pj.next) h += '<div class="cv-warn">📈 ราคา Gemini ปรับขึ้นตั้งแต่ ' + cvDate(pj.next.from, true) + ' ถ้าลูกค้าถามเท่าเดิม ค่าใช้จ่ายจะประมาณ <b>' + baht(pj.next.month) + ' ต่อเดือน</b></div>';
   if (d.search && d.search.overThb > 0) h += '<div class="cv-warn">🔎 เดือนนี้ค้นเว็บ ' + nfmt(d.search.month) + ' ครั้ง เกินโควตาฟรี ' + nfmt(d.search.free) + ' ครั้งแล้ว ส่วนเกินประมาณ ' + baht(d.search.overThb) + ' รวมอยู่ในยอดเดือนนี้</div>';
+  h += cvSources(d.sources);
   h += '<div class="cv-sec"><h3>ค่าใช้จ่ายรายวัน 30 วันล่าสุด</h3><div class="d">ชี้หรือแตะที่แท่งเพื่อดูตัวเลขของวันนั้น</div>' + cvChart(d.daily) + '</div>';
   h += '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากขั้นตอนไหน (30 วัน)</h3><div class="d">ทุกคำตอบผ่านหลายขั้นใน Dify แต่ละขั้นส่งข้อความให้ AI อ่านและเขียน คิดเงินตามจำนวน token</div>' + cvItems(d.items) + '</div>';
   h += '<div class="cv-grid2"><div class="cv-sec"><h3>แยกตามชนิดคำถาม (30 วัน)</h3>' + cvKinds(d.byKind) + '</div><div class="cv-sec"><h3>ค้นเว็บเดือนนี้</h3>' + cvSearch(d.search, d.prices || {}) + '</div></div>';
   h += '<div class="cv-sec"><h3>คำตอบที่ใช้เงินมากที่สุด 7 วันล่าสุด</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvTurns(d.topTurns) + '</div>';
   h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด ' + esc(mLabel) + '</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvChats(d.topChats) + '</div>';
+  h += cvBaselines(d.baselines);
   h += cvNotes(d);
   document.getElementById('cvbody').innerHTML = h;
 }
@@ -4163,6 +4250,33 @@ function handleAdmin(req, res, path, body) {
     return;
   }
 
+  // v3.56: รับบันทึกค่าใช้จ่ายจาก bridge อื่น (V.2, ชุดทดสอบ) ด้วย COST_INGEST_KEY (header x-cost-key) หรือรหัสแอดมิน
+  if (path === '/admin/api/cost/ingest' && req.method === 'POST') {
+    const ip = adminGuard.clientIp(req);
+    const lockedMin = adminGuard.lockedFor(ip);
+    if (lockedMin) return sendJson(res, 429, { ok: false, error: 'locked', minutes: lockedMin });
+    const ck = String(req.headers['x-cost-key'] || '');
+    let okKey = false;
+    if (COST_INGEST_KEY && ck.length === COST_INGEST_KEY.length) { try { okKey = crypto.timingSafeEqual(Buffer.from(ck), Buffer.from(COST_INGEST_KEY)); } catch (_) {} }
+    if (!okKey && adminAuthed(req) === true) okKey = true;
+    if (!okKey) {
+      if (!COST_INGEST_KEY && !ADMIN_KEY) return sendJson(res, 503, { ok: false, error: 'COST_INGEST_KEY not set' });
+      adminGuard.fail(ip, ck || req.headers['x-admin-key'] || '');
+      return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    }
+    adminGuard.ok(ip);
+    if (body.length > 2000000) return sendJson(res, 413, { ok: false, error: 'too large' });
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8') || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'bad json' }); }
+    const out = Object.assign({ ok: true }, cost.ingest(Array.isArray(data.records) ? data.records.slice(0, 200) : []));
+    if (data.baseline && typeof data.baseline === 'object') out.baseline = cost.setBaseline(data.baseline);
+    if (out.accepted || (out.baseline && out.baseline.ok)) {
+      markDirty();
+      console.log('[cost] ingest ' + out.accepted + ' record(s)' + (out.duplicates ? ', ' + out.duplicates + ' duplicate(s)' : '') + (out.baseline && out.baseline.ok ? ', baseline ' + out.baseline.key : ''));
+    }
+    return sendJson(res, 200, out);
+  }
+
   // v3.42: IP ที่ใส่รหัสผิดเกิน ADMIN_MAX_FAILS ครั้งถูกล็อก ADMIN_LOCK_MIN นาที (ได้ 429 แม้รหัสถูก)
   const adminIp = adminGuard.clientIp(req);
   const lockedMin = adminGuard.lockedFor(adminIp);
@@ -4190,7 +4304,12 @@ function handleAdmin(req, res, path, body) {
 
   // v3.55: หน้า 💰 ค่าใช้จ่าย AI (ต้องใส่รหัสแอดมิน มี id แชทและคำถามสั้น ๆ)
   if (path === '/admin/api/cost' && req.method === 'GET') {
-    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid) })));
+    // v3.56: เวลาข้อความล่าสุดจาก LINE และสถานะ webhook ช่วยบอกว่าหน้าว่างเพราะไม่มีคนทัก หรือข้อความไม่ถึงบอท
+    let lastCustomerAt = 0;
+    for (const s of sessions.values()) if (s.type === 'user' && s.lastAt > lastCustomerAt) lastCustomerAt = s.lastAt;
+    const lw = lineWebhook.checked ? { active: lineWebhook.active, here: lineWebhook.here, host: lineWebhook.host, at: lineWebhook.at, error: lineWebhook.error } : null;
+    const fw = costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error, stopped: costForward.state.stopped } : null;
+    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid) }), { line: { lastCustomerAt: lastCustomerAt || null, webhook: lw }, forward: fw, ingest: !!COST_INGEST_KEY }));
   }
 
   if (path === '/admin/api/list' && req.method === 'GET') {
@@ -4443,7 +4562,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.55', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.56', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

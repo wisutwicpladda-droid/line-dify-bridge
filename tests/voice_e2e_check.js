@@ -19,6 +19,8 @@ const ANSWER = '"แกนเตอร์" ใช้กำจัดวัชพ�
 const sent = []; // { kind: 'reply' | 'push', to, messages }
 const el = { stt: [], tts: [], heard: 'แกนเตอร์ใช้ยังไงครับ', sttDelay: 0 };
 const dify = { chats: [], fail: false }; // payload ที่ bridge ส่งเข้า Dify จำลอง · fail = ตอบ HTTP 400 ทุกคำขอ
+const lineHook = { endpoint: '', active: true }; // v3.56: ที่อยู่ webhook ที่ LINE จำลองบอก bridge
+const INGEST_KEY = 'ingest-key-for-tests-0123456789';
 
 function fakeMp3(frames) {
   const f = Buffer.alloc(417);
@@ -36,6 +38,10 @@ function body(req) {
 
 const mockLine = () => listen(async (req, res) => {
   const b = await body(req);
+  if (req.method === 'GET' && req.url === '/v2/bot/channel/webhook/endpoint') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ endpoint: lineHook.endpoint, active: lineHook.active }));
+  }
   if (req.method === 'GET' && /\/v2\/bot\/message\/[^/]+\/content$/.test(req.url)) {
     res.writeHead(200, { 'Content-Type': 'audio/x-m4a' });
     return res.end(Buffer.from('fake-m4a-' + req.url));
@@ -246,7 +252,8 @@ async function waitHealth(port) {
 
   // 4) v3.44-v2 กับ Dify จำลอง: ข้อความที่พิมพ์ตามมาระหว่างยังถอดเสียง รวมเป็นคำถามเดียวตามลำดับที่ส่ง ได้คำตอบเดียวที่แนบเสียง
   port += 1;
-  b = startBridge(port, linePort, { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_VOICE_ID: 'voice-ladda', ELEVENLABS_API_BASE: elBase, FAKE_DIFY_ANSWER: '', DIFY_API_KEY: 'test-dify-key' });
+  lineHook.endpoint = 'http://127.0.0.1:' + port + '/webhook';
+  b = startBridge(port, linePort, { ELEVENLABS_API_KEY: 'test-key', ELEVENLABS_VOICE_ID: 'voice-ladda', ELEVENLABS_API_BASE: elBase, FAKE_DIFY_ANSWER: '', DIFY_API_KEY: 'test-dify-key', COST_INGEST_KEY: INGEST_KEY });
   try {
     const h = await waitHealth(port);
     assert.strictEqual(h.version, SOURCE_VERSION); // รุ่นใน /health ต้องตรงกับใน server.js
@@ -288,6 +295,22 @@ async function waitHealth(port) {
     assert.deepStrictEqual([cs.topChats[0].sid, cs.topChats[0].name, cs.topChats[0].chat], [CUSTOMER, 'ลูกค้าเสียง', true]);
     const pub = JSON.stringify((await req(port, 'GET', '/health')).json);
     assert(!pub.includes('topTurns') && !pub.includes(el.heard), '/health ที่เปิดสาธารณะต้องไม่มีค่าใช้จ่ายหรือคำถามลูกค้า');
+
+    // v3.56: บันทึกที่ V.2 หรือชุดทดสอบส่งเข้ามา (รหัสผิดไม่รับ ส่งซ้ำนับครั้งเดียว) ยอดย้อนหลังจาก Dify และสถานะ webhook ของ LINE
+    const fwdRec = { id: 'f00dfeed00000001', at: Date.now() - 60000, sid: 'Uv2tester', k: 'text', q: 'จาก V.2', n: 1, a: 'V.2', sr: 'line', it: [{ n: 'Gemini สรุปคำตอบ', c: 'ai', m: 'gemini-3.8-flash', i: 10000, o: 2000, t: 12000, u: 0.015, r: 1 }] };
+    let ig = await req(port, 'POST', '/admin/api/cost/ingest', JSON.stringify({ records: [fwdRec] }), { 'x-cost-key': 'wrong-key-wrong-key-wrong' });
+    assert.strictEqual(ig.status, 401, 'รหัสผิดต้องไม่รับบันทึก');
+    ig = await req(port, 'POST', '/admin/api/cost/ingest', JSON.stringify({ records: [fwdRec, fwdRec], baseline: { app: 'V.2', from: '2026-09-29', to: '2026-10-29', messages: 10, tokens: 1000000, usd: 1 } }), { 'x-cost-key': INGEST_KEY });
+    assert.deepStrictEqual([ig.status, ig.json && ig.json.accepted, ig.json && ig.json.duplicates, ig.json && ig.json.baseline && ig.json.baseline.ok], [200, 1, 1, true], ig.raw.toString());
+    const cs2 = (await req(port, 'GET', '/admin/api/cost', null, { 'x-admin-key': 'test-admin' })).json;
+    assert(cs2.sources.some((x) => x.app === 'V.2' && x.turns === 1 && !x.own) && cs2.sources.some((x) => x.app === 'บอทจริง' && x.turns === 1 && x.own), JSON.stringify(cs2.sources));
+    assert.deepStrictEqual([cs2.baselines.length, cs2.baselines[0].app, cs2.ingest], [1, 'V.2', true]);
+    assert(cs2.line && cs2.line.lastCustomerAt > 0, 'ต้องบอกเวลาข้อความล่าสุดจาก LINE');
+    let hw = null;
+    for (let i = 0; i < 40; i++) { hw = (await req(port, 'GET', '/health')).json; if (hw && hw.lineWebhook && hw.lineWebhook !== 'checking') break; await new Promise((ok) => setTimeout(ok, 200)); }
+    assert.deepStrictEqual([hw.lineWebhook.active, hw.lineWebhook.here], [true, true], 'webhook ของ LINE ต้องชี้มาที่ bridge นี้: ' + JSON.stringify(hw.lineWebhook));
+    assert.strictEqual(hw.costIngest, true);
+    assert.strictEqual(hw.costForward, false);
 
     // Dify ตอบ HTTP 400 (ไม่มีคำตอบ): bridge ส่งข้อความระบบขัดข้องเป็นตัวอักษรอย่างเดียว ไม่แนบเสียงและไม่เรียก ElevenLabs สร้างเสียง
     dify.fail = true;

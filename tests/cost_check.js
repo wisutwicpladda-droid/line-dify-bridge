@@ -150,4 +150,67 @@ assert.strictEqual(d7.recent.length, 400);
 assert.strictEqual(Object.keys(d7.days).length, 400);
 assert(Object.keys(d7.chats).length <= 3);
 
-console.log('PASS: cost tracking prices every Dify node, web search, Jev and ElevenLabs voice, totals by day/month/step/kind/chat, projects the month and the 2027 price, survives restarts and reads Railway price overrides');
+// 12) v3.56 ที่มาของค่าใช้จ่าย: บันทึกของแอปนี้ + บันทึกที่ V.2 และชุดทดสอบส่งมา (กันนับซ้ำด้วย id) + ยอดย้อนหลังจาก Dify
+let t8 = Date.parse('2026-10-29T09:00:00Z');
+const main = createCost({ now: () => t8, env: {} });
+const own1 = main.record({ sid: 'Ureal', kind: 'text', q: 'ลูกค้าจริงถาม', nodes: [llm('Gemini สรุปคำตอบ', 100000, 20000)] });
+assert(/^[a-f0-9]{16}$/.test(own1.id), 'บันทึกต้องมี id สำหรับกันนับซ้ำ');
+assert.deepStrictEqual([own1.a, own1.sr], ['บอทจริง', 'line']);
+let t9 = t8;
+const v2 = createCost({ now: () => t9, env: { COST_APP: 'V.2' } });
+const v2rec = v2.record({ sid: 'Uv2user', kind: 'voice', q: 'ทดสอบเสียงบน V.2', nodes: [llm('Gemini สรุปคำตอบ', 200000, 40000)] });
+const tester = createCost({ now: () => t9, env: { COST_SOURCE: 'test', COST_APP: 'บอทจริง' } });
+const testRecs = [1, 2, 3].map((i) => tester.record({ sid: 'Utest' + i, kind: 'text', q: 'ชุดทดสอบข้อ ' + i, nodes: [llm('Gemini คัดสินค้าจาก KB + ชีท', 300000, 10000)] }));
+assert.deepStrictEqual([testRecs[0].a, testRecs[0].sr, v2rec.a, v2rec.sr], ['บอทจริง', 'test', 'V.2', 'line']);
+const wire = JSON.parse(JSON.stringify([v2rec].concat(testRecs)));
+let ing = main.ingest(wire);
+assert.deepStrictEqual(ing, { accepted: 4, duplicates: 0, rejected: 0 });
+ing = main.ingest(wire); // ส่งซ้ำ (เช่นคิวลองใหม่) ต้องไม่นับซ้ำ
+assert.deepStrictEqual(ing, { accepted: 0, duplicates: 4, rejected: 0 });
+const bad = [
+  Object.assign({}, wire[0], { id: 'aaaaaaaaaaaaaaaa', at: t8 + 3600000 }), // อนาคต
+  Object.assign({}, wire[0], { id: 'bbbbbbbbbbbbbbbb', at: t8 - 401 * 86400000 }), // เก่ากว่า 400 วัน
+  Object.assign({}, wire[0], { id: 'cccccccccccccccc', it: [] }), // ไม่มีรายการ
+  Object.assign({}, wire[0], { id: 'dddddddddddddddd', a: '' }), // ไม่มีชื่อแอป
+  'not a record'
+];
+assert.deepStrictEqual(main.ingest(bad), { accepted: 0, duplicates: 0, rejected: 5 });
+s = main.summary({ nameOf: (id) => (id === 'Ureal' ? 'ลูกค้า A' : 'ชื่อที่ไม่ควรเห็น'), hasChat: () => true });
+const srcs = Object.fromEntries(s.sources.map((x) => [x.app + '|' + x.src, x]));
+assert.deepStrictEqual(Object.keys(srcs).sort(), ['V.2|line', 'บอทจริง|line', 'บอทจริง|test']);
+assert.deepStrictEqual([srcs['บอทจริง|line'].turns, srcs['V.2|line'].turns, srcs['บอทจริง|test'].turns], [1, 1, 3]);
+assert.strictEqual(srcs['V.2|line'].own, false);
+near(srcs['บอทจริง|test'].thb, Math.round(3 * (0.225 + 0.0375) * 33.8 * 100) / 100, 'test source THB');
+assert.strictEqual(s.sources[0].src, 'test', 'ที่มาที่ใช้เงินมากที่สุดอยู่บนสุด');
+assert.strictEqual(s.today.turns, 5, 'ยอดรวมนับทุกที่มา');
+const v2turn = s.topTurns.find((x) => x.app === 'V.2');
+assert.deepStrictEqual([v2turn.name, v2turn.chat, v2turn.own, v2turn.kind], ['', false, false, 'voice'], 'แชทของแอปอื่นไม่มีชื่อและกดเปิดไม่ได้');
+assert.strictEqual(s.topTurns.find((x) => x.sid === 'Ureal').name, 'ลูกค้า A');
+assert.strictEqual(s.topChats.find((x) => x.app === 'V.2').sid, 'Uv2user');
+assert.strictEqual(s.topChats.filter((x) => x.sid.startsWith('Utest')).length, 3);
+// ยอดย้อนหลังจาก Dify Monitoring
+assert.strictEqual(main.setBaseline({ app: 'บอทจริง', from: '2026-10-29', to: '2026-09-29' }).ok, false, 'from ต้องไม่หลัง to');
+assert.strictEqual(main.setBaseline({ from: '2026-09-29', to: '2026-10-29' }).ok, false, 'ต้องมีชื่อแอป');
+assert.strictEqual(main.setBaseline({ app: 'บอทจริง', from: '2026-09-29', to: '2026-10-29', messages: 1400, tokens: 100000000, usd: 80, note: 'Dify Monitoring' }).ok, true);
+assert.strictEqual(main.setBaseline({ app: 'บอทจริง', from: '2026-09-29', to: '2026-10-29', messages: 1451, tokens: 104579000, usd: 88.5268, note: 'Dify Monitoring 30 วัน' }).ok, true);
+main.setBaseline({ app: 'V.2', from: '2026-09-29', to: '2026-10-29', messages: 3146, tokens: 188500000, usd: 157.82 });
+s = main.summary();
+assert.strictEqual(s.baselines.length, 2, 'ช่วงเดิมของแอปเดิมต้องแทนที่ ไม่เพิ่มแถว');
+const bApp = s.baselines.find((b) => b.app === 'บอทจริง');
+assert.deepStrictEqual([bApp.messages, bApp.thb, bApp.perMsg, bApp.note], [1451, Math.round(88.5268 * 33.8 * 100) / 100, Math.round(88.5268 * 33.8 / 1451 * 100) / 100, 'Dify Monitoring 30 วัน']);
+assert.strictEqual(s.last30.turns, 5, 'ยอดย้อนหลังไม่ปนกับยอดรายวัน');
+// เก็บ/โหลดแล้ว id ที่รับไปแล้วยังกันนับซ้ำ และยอดย้อนหลังยังอยู่
+const main2 = createCost({ now: () => t8, env: {} });
+main2.load(JSON.parse(JSON.stringify(main.dump())));
+assert.deepStrictEqual(main2.ingest(wire), { accepted: 0, duplicates: 4, rejected: 0 });
+assert.deepStrictEqual(main2.summary(), main.summary());
+// ไฟล์ state จาก v3.55 (ไม่มีที่มาและ key แชทเป็น sid) โหลดได้ และนับเป็นของแอปนี้
+const old = createCost({ now: () => t8, env: { COST_APP: 'V.2' } });
+const oldDump = { v: 1, since: t8, days: { '2026-10-29': { n: 1, k: { text: 1 }, ku: { text: 0.06 }, u: 0.06, it: { 'ai|Gemini สรุปคำตอบ|gemini-3.8-flash': { n: 'Gemini สรุปคำตอบ', c: 'ai', m: 'gemini-3.8-flash', u: 0.06, i: 50000, o: 6000, t: 56000, r: 1 } } } }, recent: [{ at: t8, sid: 'Uold', k: 'text', q: 'เก่า', n: 1, u: 0.06, t: 56000, s: 0, it: [{ n: 'Gemini สรุปคำตอบ', c: 'ai', m: 'gemini-3.8-flash', u: 0.06, i: 50000, o: 6000, t: 56000, r: 1 }] }], chats: { '2026-10': { Uold: [1, 0.06] } } };
+assert.strictEqual(old.load(oldDump), true);
+s = old.summary({ nameOf: () => 'คนเก่า', hasChat: () => true });
+assert.deepStrictEqual(s.sources.map((x) => [x.app, x.src, x.turns]), [['V.2', 'line', 1]]);
+assert.deepStrictEqual([s.topChats[0].sid, s.topChats[0].name, s.topChats[0].chat], ['Uold', 'คนเก่า', true]);
+assert.deepStrictEqual([s.topTurns[0].app, s.topTurns[0].name], ['V.2', 'คนเก่า']);
+
+console.log('PASS: cost tracking prices every Dify node, web search, Jev and ElevenLabs voice, totals by day/month/step/kind/chat and by source (this bot, V.2, test runs), takes forwarded records once, keeps Dify baselines, projects the month and the 2027 price, survives restarts and reads Railway price overrides');
