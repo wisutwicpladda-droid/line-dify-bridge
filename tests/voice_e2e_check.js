@@ -312,6 +312,20 @@ async function waitHealth(port) {
     assert.strictEqual(hw.costIngest, true);
     assert.strictEqual(hw.costForward, false);
 
+    // v3.57: เลือกดูรายวัน (กราฟรายชั่วโมง) และรายเดือน (กราฟทุกวันของเดือน) ค่าที่ผิดหรืออยู่ในอนาคตกลับไปใช้ 30 วันล่าสุด
+    const thaiNow = new Date(Date.now() + 7 * 3600000).toISOString();
+    const thaiDay = thaiNow.slice(0, 10);
+    const costAt = async (q) => (await req(port, 'GET', '/admin/api/cost' + q, null, { 'x-admin-key': 'test-admin' })).json;
+    const csDay = await costAt('?day=' + thaiDay);
+    assert.deepStrictEqual([csDay.period.type, csDay.period.key, csDay.chart.unit, csDay.chart.points.length, csDay.chart.hasHours], ['day', thaiDay, 'hour', 24, true], JSON.stringify(csDay.period));
+    assert(csDay.period.total.turns >= 1 && csDay.chart.points.reduce((a, p) => a + p.turns, 0) === csDay.period.total.turns, 'ยอดรายชั่วโมงต้องรวมได้เท่ายอดทั้งวัน: ' + JSON.stringify(csDay.chart.points.filter((p) => p.turns)));
+    assert(csDay.topTurns.some((x) => x.sid === CUSTOMER) && csDay.topChats.some((x) => x.sid === CUSTOMER), 'ตารางของวันที่เลือกต้องมีแชทของลูกค้า');
+    const monthLen = new Date(Date.UTC(+thaiDay.slice(0, 4), +thaiDay.slice(5, 7), 0)).getUTCDate();
+    const csMonth = await costAt('?month=' + thaiDay.slice(0, 7));
+    assert.deepStrictEqual([csMonth.period.type, csMonth.period.key, csMonth.chart.unit, csMonth.chart.points.length], ['month', thaiDay.slice(0, 7), 'day', monthLen], JSON.stringify(csMonth.period));
+    assert.strictEqual(csMonth.available.today, thaiDay);
+    assert.deepStrictEqual([(await costAt('?day=2999-01-01')).period.type, (await costAt('?month=abc')).period.type, (await costAt('')).period.type], ['last30', 'last30', 'last30']);
+
     // Dify ตอบ HTTP 400 (ไม่มีคำตอบ): bridge ส่งข้อความระบบขัดข้องเป็นตัวอักษรอย่างเดียว ไม่แนบเสียงและไม่เรียก ElevenLabs สร้างเสียง
     dify.fail = true;
     const chatsBefore = dify.chats.length;

@@ -213,4 +213,84 @@ assert.deepStrictEqual(s.sources.map((x) => [x.app, x.src, x.turns]), [['V.2', '
 assert.deepStrictEqual([s.topChats[0].sid, s.topChats[0].name, s.topChats[0].chat], ['Uold', 'คนเก่า', true]);
 assert.deepStrictEqual([s.topTurns[0].app, s.topTurns[0].name], ['V.2', 'คนเก่า']);
 
-console.log('PASS: cost tracking prices every Dify node, web search, Jev and ElevenLabs voice, totals by day/month/step/kind/chat and by source (this bot, V.2, test runs), takes forwarded records once, keeps Dify baselines, projects the month and the 2027 price, survives restarts and reads Railway price overrides');
+// 13) v3.57 เลือกดูรายวัน (กราฟรายชั่วโมงเวลาไทย) และรายเดือน (ทุกวันของเดือน) ตารางทุกตารางคิดตามช่วงที่เลือก
+let t10 = Date.parse('2026-09-30T02:00:00Z'); // 30 ก.ย. 09:00 เวลาไทย
+const cp = createCost({ now: () => t10, env: {} });
+cp.record({ sid: 'Usep', kind: 'text', q: 'คำถามเดือนกันยา', nodes: [llm('Gemini สรุปคำตอบ', 100000, 20000)] }); // $0.15
+t10 = Date.parse('2026-10-28T23:30:00Z'); // 29 ต.ค. 06:30 เวลาไทย (ยังเป็นวันที่ 28 ตามเวลา UTC)
+cp.record({ sid: 'Uoct', kind: 'image', q: 'รูปใบไหม้', nodes: [llm('External Search (Gemini + Google Search)', 20000, 4000)] }); // $0.03
+t10 = Date.parse('2026-10-29T07:10:00Z'); // 29 ต.ค. 14:10 เวลาไทย
+cp.record({ sid: 'Uoct', kind: 'voice', q: 'ถามด้วยเสียง', nodes: [llm('Gemini สรุปคำตอบ', 10000, 2000)], tts: { chars: 500 } }); // $0.015 + เสียง $0.04
+cp.record({ sid: 'Uoct2', kind: 'text', q: 'อีกแชท', nodes: [llm('Gemini สรุปคำตอบ', 1000, 100)] }); // $0.001125
+const B = (usd) => Math.round(usd * 33.8 * 100) / 100;
+const DAY29 = { type: 'day', key: '2026-10-29' };
+let ps = cp.summary({ period: DAY29, nameOf: (id) => (id === 'Uoct' ? 'ลูกค้าตุลา' : ''), hasChat: () => true });
+assert.deepStrictEqual([ps.period.type, ps.period.key, ps.period.from, ps.period.to], ['day', '2026-10-29', '2026-10-29', '2026-10-29']);
+assert.deepStrictEqual([ps.chart.unit, ps.chart.hasHours, ps.chart.points.length, ps.chart.points[0].key, ps.chart.points[23].key], ['hour', true, 24, '00', '23']);
+const hourOf = (hh) => ps.chart.points.find((p) => p.key === hh);
+assert.deepStrictEqual([hourOf('06').turns, hourOf('14').turns, hourOf('09').turns, hourOf('23').turns], [1, 2, 0, 0], 'ชั่วโมงต้องเป็นเวลาไทย');
+assert.deepStrictEqual([hourOf('06').groups.search, hourOf('14').groups.voice, hourOf('14').groups.ai], [B(0.03), B(0.04), B(0.016125)]);
+assert.strictEqual(hourOf('14').thb, B(0.056125));
+assert.strictEqual(ps.period.total.turns, 3);
+near(ps.period.total.usd, 0.03 + 0.055 + 0.001125, 'day total');
+assert.deepStrictEqual([ps.search.period, ps.search.month], [1, 1]);
+assert.deepStrictEqual(ps.topTurns.map((x) => x.q), ['ถามด้วยเสียง', 'รูปใบไหม้', 'อีกแชท'], 'คำตอบที่แพงที่สุดของวันที่เลือก');
+assert.deepStrictEqual(ps.topChats.map((x) => [x.sid, x.turns]), [['Uoct', 2], ['Uoct2', 1]], 'แชทที่ใช้มากที่สุดของวันที่เลือก');
+assert.deepStrictEqual([ps.topChats[0].name, ps.topChats[0].chat], ['ลูกค้าตุลา', true]);
+assert.deepStrictEqual([ps.byKind.text.turns, ps.byKind.image.turns, ps.byKind.voice.turns], [1, 1, 1]);
+assert.deepStrictEqual(ps.sources.map((x) => x.turns), [3]);
+assert(ps.items.every((i) => i.label !== 'Gemini สรุปคำตอบ' || i.runs === 2), 'ตารางขั้นตอนนับเฉพาะวันที่เลือก');
+assert.deepStrictEqual([ps.today.turns, ps.month.turns, ps.last30.turns], [3, 3, 4], 'การ์ดภาพรวมไม่เปลี่ยนตามช่วงที่เลือก');
+assert.deepStrictEqual(ps.available, { firstDay: '2026-09-30', today: '2026-10-29', months: ['2026-10', '2026-09'] });
+ps = cp.summary({ period: { type: 'day', key: '2026-09-30' } });
+assert.deepStrictEqual([ps.chart.points.find((p) => p.key === '09').turns, ps.period.total.turns, ps.topTurns[0].sid, ps.topChats[0].sid], [1, 1, 'Usep', 'Usep']);
+ps = cp.summary({ period: { type: 'day', key: '2026-10-01' } }); // วันที่ไม่มีข้อมูล
+assert.deepStrictEqual([ps.period.type, ps.period.total.turns, ps.items.length, ps.topTurns.length, ps.topChats.length, ps.search.period], ['day', 0, 0, 0, 0, 0]);
+// รายเดือน: ทุกวันของเดือน (ก.ย. 30 วัน ต.ค. 31 วัน รวมวันที่ยังมาไม่ถึง)
+ps = cp.summary({ period: { type: 'month', key: '2026-09' } });
+assert.deepStrictEqual([ps.chart.unit, ps.chart.points.length, ps.chart.points[29].key, ps.chart.points[29].turns, ps.period.from, ps.period.to], ['day', 30, '2026-09-30', 1, '2026-09-01', '2026-09-30']);
+assert.deepStrictEqual([ps.period.total.turns, ps.topChats.map((x) => x.sid), ps.topTurns.map((x) => x.sid), ps.search.period], [1, ['Usep'], ['Usep'], 0]);
+ps = cp.summary({ period: { type: 'month', key: '2026-10' } });
+assert.deepStrictEqual([ps.chart.points.length, ps.chart.points[28].key, ps.chart.points[28].turns, ps.period.total.turns, ps.search.period], [31, '2026-10-29', 3, 3, 1]);
+assert.deepStrictEqual(ps.topChats.map((x) => x.sid), ['Uoct', 'Uoct2']);
+// ค่าเริ่ม 30 วันล่าสุด (30 ก.ย. - 29 ต.ค.) แชทที่ใช้มากที่สุดรวมยอดรายแชทของแต่ละวัน
+ps = cp.summary();
+assert.deepStrictEqual([ps.period.type, ps.period.from, ps.period.to, ps.chart.unit, ps.chart.points.length, ps.period.total.turns], ['last30', '2026-09-30', '2026-10-29', 'day', 30, 4]);
+assert.deepStrictEqual(ps.chart.points, ps.daily);
+assert.deepStrictEqual(ps.topChats.map((x) => [x.sid, x.turns]), [['Usep', 1], ['Uoct', 2], ['Uoct2', 1]]);
+assert.strictEqual(ps.topTurns[0].sid, 'Usep');
+// วันหรือเดือนในอนาคต หรือรูปแบบผิด = 30 วันล่าสุด
+for (const bad of [{ type: 'day', key: '2026-10-30' }, { type: 'month', key: '2026-11' }, { type: 'day', key: '29/10/2026' }, { type: 'week', key: '2026-10-29' }, { type: 'month', key: '2026-10-01' }]) {
+  assert.strictEqual(cp.summary({ period: bad }).period.type, 'last30', JSON.stringify(bad));
+}
+// เก็บแล้วโหลดคืน ทุกช่วงได้ผลเหมือนเดิม
+const PERIODS = [undefined, DAY29, { type: 'day', key: '2026-09-30' }, { type: 'month', key: '2026-09' }, { type: 'month', key: '2026-10' }];
+const cp2 = createCost({ now: () => t10, env: {} });
+assert.strictEqual(cp2.load(JSON.parse(JSON.stringify(cp.dump()))), true);
+for (const per of PERIODS) assert.deepStrictEqual(cp2.summary({ period: per }), cp.summary({ period: per }), 'dump/load ' + JSON.stringify(per));
+// ไฟล์ state ก่อน v3.57 (ไม่มี h, c, top): สร้างจากคำตอบล่าสุดที่เก็บรายละเอียดไว้ ได้ผลเท่ากับบันทึกแบบใหม่
+const pre357 = JSON.parse(JSON.stringify(cp.dump()));
+for (const d of Object.values(pre357.days)) { delete d.h; delete d.c; delete d.top; }
+const cp3 = createCost({ now: () => t10, env: {} });
+assert.strictEqual(cp3.load(pre357), true);
+for (const per of PERIODS) assert.deepStrictEqual(cp3.summary({ period: per }), cp.summary({ period: per }), 'backfill ' + JSON.stringify(per));
+assert.deepStrictEqual(Object.keys(cp3.dump().days['2026-10-29'].h).sort(), ['06', '14'], 'ยอดรายชั่วโมงที่สร้างต้องเก็บลงไฟล์ด้วย');
+// ไม่มีคำตอบเหลือในรายละเอียด: วันนั้นไม่มีรายชั่วโมง แชทที่ใช้มากที่สุดใช้ยอดรายเดือนแทน และคำตอบใหม่เริ่มเก็บรายชั่วโมงต่อ
+const bare = JSON.parse(JSON.stringify(pre357));
+bare.recent = [];
+const cp4 = createCost({ now: () => t10, env: {} });
+cp4.load(bare);
+ps = cp4.summary({ period: DAY29 });
+assert.deepStrictEqual([ps.chart.hasHours, ps.chart.points.every((p) => p.thb === 0), ps.period.total.turns, ps.topTurns.length], [false, true, 3, 0]);
+assert.deepStrictEqual(cp4.summary().topChats.map((x) => x.sid), ['Uoct', 'Uoct2'], 'ไม่มียอดรายแชทรายวัน ใช้ยอดของเดือนนี้');
+t10 = Date.parse('2026-10-29T08:05:00Z'); // 15:05 เวลาไทย
+cp4.record({ sid: 'Unew', kind: 'text', q: 'หลังอัปเดต', nodes: [llm('Gemini สรุปคำตอบ', 1000, 100)] });
+ps = cp4.summary({ period: DAY29 });
+assert.deepStrictEqual([ps.chart.hasHours, ps.chart.points.find((p) => p.key === '15').turns, ps.chart.points.reduce((a, p) => a + p.turns, 0), ps.period.total.turns], [true, 1, 1, 4], 'กราฟรายชั่วโมงไม่ครบยอดทั้งวัน หน้าแอดมินจะบอกส่วนที่ขาด');
+// รายเดือนรวมค่าค้นเว็บส่วนที่เกินโควตาฟรีของเดือนนั้น (c5 ตั้งโควตาฟรี 1 ครั้ง ค้นไป 2 ครั้ง)
+const s5 = c5.summary();
+const s5m = c5.summary({ period: { type: 'month', key: s5.month.key } });
+near(s5m.period.total.usd, s5.month.usd, 'month view includes the search overage');
+assert.strictEqual(s5m.search.period, 2);
+
+console.log('PASS: cost tracking prices every Dify node, web search, Jev and ElevenLabs voice, totals by day/month/step/kind/chat and by source (this bot, V.2, test runs), takes forwarded records once, keeps Dify baselines, projects the month and the 2027 price, survives restarts, reads Railway price overrides, and filters by day (hourly, Thai time) or month (every day) with older state files backfilled');

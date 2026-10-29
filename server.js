@@ -101,6 +101,9 @@
 //     v3.56: หน้าค่าใช้จ่ายรวมทุกที่มาที่ใช้ Gemini key เดียวกัน: V.2 และชุดทดสอบส่งบันทึกเข้ามาที่บอทจริง (cost_forward.js,
 //       POST /admin/api/cost/ingest ด้วย COST_INGEST_KEY) ตารางแยกตามที่มา ยอดย้อนหลังจาก Dify Monitoring
 //       และเช็กกับ LINE ว่า webhook ของ OA เปิดอยู่และชี้มาที่ bridge นี้ (/health lineWebhook) เพราะถ้าไม่ใช่ ลูกค้าทักแล้วบอทไม่เห็นข้อความเลย
+//     v3.57: หน้าค่าใช้จ่ายเลือกดูได้ 3 แบบ: 30 วันล่าสุด รายวัน (กราฟรายชั่วโมง) และรายเดือน (กราฟทุกวันของเดือน)
+//       ตารางทุกตารางคิดตามช่วงที่เลือก · /admin/api/cost?day=YYYY-MM-DD หรือ ?month=YYYY-MM
+//       เริ่มเก็บยอดรายชั่วโมงและรายแชทรายวันใน v3.57 (วันก่อนหน้าสร้างจากคำตอบล่าสุด 400 ครั้งตอนเปิดระบบ)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -3236,6 +3239,21 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .cv-kind.cv-app { background: #efe9fd; color: #5b3fb5; }
   .cv-kind.cv-test { background: #fff1dd; color: #a15c00; }
   .cv-t .m-only { display: none; }
+  /* v3.57: เลือกดู 30 วันล่าสุด / รายวัน / รายเดือน */
+  .cv-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; background: #fff; border-radius: 12px; padding: 10px 12px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .cv-fl { font-size: 12.5px; color: #6b7682; font-weight: 600; }
+  .cv-seg { display: inline-flex; background: #eef0f2; border-radius: 10px; padding: 3px; gap: 2px; }
+  .cv-segbtn { background: transparent; color: #55606b; border-radius: 8px; padding: 6px 14px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .cv-segbtn.on { background: #fff; color: #0a7a3a; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+  .cv-pick { display: inline-flex; align-items: center; gap: 6px; }
+  .cv-step { background: #fff; color: #1f2329; border: 1px solid #dfe3e8; border-radius: 8px; width: 34px; height: 34px; font-size: 17px; line-height: 1; flex: none; }
+  .cv-step:disabled { opacity: .35; cursor: default; }
+  .cv-pick input, .cv-pick select { border: 1px solid #dfe3e8; border-radius: 8px; height: 34px; padding: 0 8px; font-size: 14px; font-family: inherit; color: #1f2329; background: #fff; }
+  .cv-ptot { font-size: 22px; font-weight: 700; margin: 2px 0 4px; }
+  .cv-ptot small { font-size: 12.5px; font-weight: 400; color: #8a95a1; margin-left: 6px; }
+  .cv-link { background: none; color: #0a7a3a; font-weight: 700; font-size: 12.5px; padding: 0 0 0 8px; text-decoration: underline; }
+  .cv-col.sel { background: #e6f9ee; }
+  .cv-busy { opacity: .55; transition: opacity .15s; }
   @media (max-width: 760px) {
     .cv-wrap { padding: 0 10px 30px; }
     .cv-grid2 { grid-template-columns: 1fr; }
@@ -3250,6 +3268,14 @@ const ADMIN_HTML = `<!DOCTYPE html>
     .cv-t th, .cv-t td { padding: 6px 5px; }
     .cv-t .mh { display: none; }
     .cv-t .m-only { display: block; }
+    .cv-filter { padding: 8px; gap: 8px; }
+    .cv-fl { display: none; }
+    .cv-seg { display: flex; width: 100%; }
+    .cv-segbtn { flex: 1; padding: 7px 4px; }
+    .cv-pick { display: flex; width: 100%; }
+    .cv-pick input, .cv-pick select { flex: 1; min-width: 0; }
+    .cv-ptot { font-size: 19px; }
+    .cv-ptot small { display: block; margin: 2px 0 0; }
   }
   @media (max-width: 760px) {
     .app.on { display: block; }
@@ -3905,6 +3931,8 @@ document.getElementById('key').addEventListener('keydown', function(e) { if (e.k
 // ---------- v3.55: หน้าค่าใช้จ่าย AI ----------
 var costOpen = false;
 var costLast = 0;
+var costPeriod = { type: 'last30', key: '' }; // v3.57: ช่วงที่เลือกดู (30 วันล่าสุด / วัน / เดือน)
+var costData = null;
 var CV_GROUPS = ['ai', 'search', 'voice', 'other'];
 var CV_TH = { ai: 'ตอบคำถาม (Gemini)', search: 'ค้นเว็บ (Gemini + Google)', voice: 'เสียง (ElevenLabs)', other: 'อื่น ๆ' };
 var CV_COLOR = { ai: '#06c755', search: '#3b82f6', voice: '#8b5cf6', other: '#f59e0b' };
@@ -3931,6 +3959,17 @@ function cvMonth(k) { var p = String(k).split('-'); return new Date(+p[0], +p[1]
 function cvStep(label) { for (var i = 0; i < CV_STEP.length; i++) if (CV_STEP[i][0].test(label)) return CV_STEP[i][1]; return ''; }
 function cvGroup(c) { return CV_COLOR[c] ? c : 'other'; }
 function cvCard(label, v, sub, cls) { return '<div class="cv-card' + (cls ? ' ' + cls : '') + '"><div class="l">' + label + '</div><div class="v">' + v + '</div><div class="s">' + (sub || '') + '</div></div>'; }
+function cvPLabel(p) { return p.type === 'day' ? cvDate(p.key, true) : (p.type === 'month' ? cvMonth(p.key) : '30 วันล่าสุด'); }
+function cvShiftDay(k, n) { var p = String(k).split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n)).toISOString().slice(0, 10); }
+function cvAvail(d) { return d.available || { firstDay: d.today.day, today: d.today.day, months: [d.month.key] }; }
+function cvMonths(av, key) { var ms = (av.months || []).slice(); if (key && ms.indexOf(key) < 0) { ms.push(key); ms.sort(); ms.reverse(); } return ms; }
+function cvQuery() { return costPeriod.type === 'day' ? '?day=' + costPeriod.key : (costPeriod.type === 'month' ? '?month=' + costPeriod.key : ''); }
+function cvBusy(on) { var b = document.getElementById('cvbody'); if (b) b.classList.toggle('cv-busy', !!on); }
+function cvGo(type, key) {
+  costPeriod = { type: type, key: key || '' };
+  cvBusy(true);
+  loadCost(true);
+}
 
 function openCost() {
   costOpen = true;
@@ -3945,19 +3984,53 @@ function loadCost(force) {
   if (!KEY || !costOpen) return;
   if (!force && Date.now() - costLast < 60000) return;
   costLast = Date.now();
-  api('/admin/api/cost').then(function(d) { if (costOpen) renderCost(d); }).catch(function(e) {
+  var want = cvQuery();
+  api('/admin/api/cost' + want).then(function(d) {
+    if (!costOpen || want !== cvQuery()) return; // เลือกช่วงอื่นไปแล้วระหว่างรอ
+    cvBusy(false);
+    renderCost(d);
+  }).catch(function(e) {
+    cvBusy(false);
     if (e && e.auth) { closeCost(); signOut(e.message === 'รหัสไม่ถูกต้อง' ? 'รหัสแอดมินเปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่' : e.message); return; }
     document.getElementById('cvbody').innerHTML = '<div class="cv-sec"><div class="cv-empty">โหลดตัวเลขไม่ได้: ' + esc(e.message) + '<br>กด ⟳ เพื่อลองใหม่</div></div>';
   });
 }
 
-function cvChart(days) {
+// แถบเลือกช่วง: 30 วันล่าสุด / รายวัน (เลือกวันที่ เลื่อนทีละวัน) / รายเดือน (เลือกเดือน เลื่อนทีละเดือน)
+function cvFilter(d, per) {
+  var av = cvAvail(d);
+  var seg = [['last30', '30 วันล่าสุด'], ['day', 'รายวัน'], ['month', 'รายเดือน']].map(function(x) {
+    return '<button class="cv-segbtn' + (per.type === x[0] ? ' on' : '') + '" data-ptype="' + x[0] + '">' + x[1] + '</button>';
+  }).join('');
+  var pick = '';
+  if (per.type === 'day') {
+    pick = '<div class="cv-pick"><button class="cv-step" data-step="-1" title="วันก่อนหน้า"' + (per.key <= av.firstDay ? ' disabled' : '') + '>‹</button>'
+      + '<input type="date" id="cvday" value="' + esc(per.key) + '" min="' + esc(av.firstDay) + '" max="' + esc(av.today) + '" aria-label="เลือกวันที่">'
+      + '<button class="cv-step" data-step="1" title="วันถัดไป"' + (per.key >= av.today ? ' disabled' : '') + '>›</button></div>';
+  } else if (per.type === 'month') {
+    var ms = cvMonths(av, per.key);
+    var i = ms.indexOf(per.key);
+    pick = '<div class="cv-pick"><button class="cv-step" data-step="-1" title="เดือนก่อนหน้า"' + (i >= ms.length - 1 ? ' disabled' : '') + '>‹</button>'
+      + '<select id="cvmonth" aria-label="เลือกเดือน">' + ms.map(function(m) { return '<option value="' + esc(m) + '"' + (m === per.key ? ' selected' : '') + '>' + cvMonth(m) + '</option>'; }).join('') + '</select>'
+      + '<button class="cv-step" data-step="1" title="เดือนถัดไป"' + (i <= 0 ? ' disabled' : '') + '>›</button></div>';
+  }
+  return '<div class="cv-filter"><span class="cv-fl">ดูค่าใช้จ่าย</span><div class="cv-seg">' + seg + '</div>' + pick + '</div>';
+}
+
+// กราฟของช่วงที่เลือก: รายวัน (30 วัน หรือทุกวันของเดือน) หรือรายชั่วโมงของวันที่เลือก
+function cvChart(c, per) {
+  var pts = c.points || [];
+  var hour = c.unit === 'hour';
+  var today = costData ? cvAvail(costData).today : '';
   var max = 0;
-  days.forEach(function(x) { if (x.thb > max) max = x.thb; });
-  if (!max) return '<div class="cv-empty">ยังไม่มีค่าใช้จ่ายใน 30 วันนี้</div>';
+  pts.forEach(function(x) { if (x.thb > max) max = x.thb; });
+  if (!max) {
+    if (hour && per.total && per.total.thb > 0) return '<div class="cv-empty">วันนี้มีค่าใช้จ่าย ' + baht(per.total.thb) + ' แต่ไม่มียอดรายชั่วโมง เพราะบันทึกไว้ก่อนระบบเริ่มเก็บยอดรายชั่วโมง</div>';
+    return '<div class="cv-empty">ไม่มีค่าใช้จ่ายในช่วงนี้</div>';
+  }
   var cols = '', labels = '', leg = '';
-  days.forEach(function(x, i) {
-    var tip = cvDate(x.day) + ': ' + baht(x.thb) + ' จาก ' + nfmt(x.turns) + ' ข้อความ';
+  pts.forEach(function(x, i) {
+    var tip = (hour ? x.key + '.00–' + x.key + '.59 น.' : cvDate(x.key, true)) + ': ' + baht(x.thb) + ' จาก ' + nfmt(x.turns) + ' ข้อความ';
     var segs = '';
     CV_GROUPS.forEach(function(g) {
       var v = x.groups[g] || 0;
@@ -3965,15 +4038,26 @@ function cvChart(days) {
       segs += '<span style="height:' + Math.max(1.5, v / max * 100).toFixed(2) + '%;background:' + CV_COLOR[g] + '"></span>';
       tip += ' · ' + CV_TH[g] + ' ' + baht(v);
     });
-    cols += '<div class="cv-col" title="' + esc(tip) + '" data-tip="' + esc(tip) + '">' + segs + '</div>';
-    labels += '<span>' + ((days.length - 1 - i) % 7 === 0 ? '<em>' + cvDate(x.day) + '</em>' : '') + '</span>';
+    var drill = !hour && (x.thb > 0 || x.turns > 0) && (!today || x.key <= today);
+    var lab = hour ? (i % 6 === 0 ? x.key + '.00' : '') : (per.type === 'month' ? (i % 5 === 0 ? cvDate(x.key) : '') : ((pts.length - 1 - i) % 7 === 0 ? cvDate(x.key) : ''));
+    cols += '<div class="cv-col" title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' + (drill ? ' data-day="' + esc(x.key) + '"' : '') + '>' + segs + '</div>';
+    labels += '<span>' + (lab ? '<em>' + lab + '</em>' : '') + '</span>';
   });
   CV_GROUPS.forEach(function(g) { leg += '<span><i style="background:' + CV_COLOR[g] + '"></i>' + CV_TH[g] + '</span>'; });
-  return '<div class="cv-ymax">วันที่สูงสุด ' + baht(max) + '</div><div class="cv-chart">' + cols + '</div><div class="cv-xl">' + labels + '</div><div class="cv-leg">' + leg + '</div><div class="cv-tip" id="cvtip"></div>';
+  return '<div class="cv-ymax">' + (hour ? 'ชั่วโมงที่สูงสุด ' : 'วันที่สูงสุด ') + baht(max) + '</div><div class="cv-chart">' + cols + '</div><div class="cv-xl">' + labels + '</div><div class="cv-leg">' + leg + '</div><div class="cv-tip" id="cvtip"></div>';
+}
+
+// วันที่บันทึกก่อนเริ่มเก็บยอดรายชั่วโมง: บอกถ้ากราฟรายชั่วโมงรวมได้ไม่ครบยอดทั้งวัน
+function cvHourGap(c, tot) {
+  if (c.unit !== 'hour') return '';
+  var hs = 0;
+  (c.points || []).forEach(function(x) { hs += x.thb; });
+  if (hs <= 0 || tot.thb - hs <= Math.max(0.15, tot.thb * 0.01)) return '';
+  return '<div class="cv-sub" style="margin-top:6px">กราฟรายชั่วโมงรวมได้ ' + baht(hs) + ' จากยอดทั้งวัน ' + baht(tot.thb) + ' ส่วนที่ขาดบันทึกไว้ก่อนระบบเริ่มเก็บยอดรายชั่วโมง</div>';
 }
 
 function cvItems(items) {
-  if (!items.length) return '<div class="cv-empty">ยังไม่มีข้อมูลใน 30 วันนี้</div>';
+  if (!items.length) return '<div class="cv-empty">ไม่มีข้อมูลในช่วงนี้</div>';
   var h = '<div class="cv-scroll"><table class="cv-t"><tr><th>ขั้นตอน</th><th class="n">ครั้ง</th><th class="n mh">ใช้ต่อครั้ง</th><th class="n">ค่าใช้จ่าย</th><th class="mh" style="width:20%">สัดส่วน</th></tr>';
   items.forEach(function(x) {
     var per = '–';
@@ -4000,12 +4084,18 @@ function cvKinds(k) {
   return h + '</table><div class="cv-sub" style="margin-top:8px">ข้อความเสียงรวมค่าถอดเสียงและค่าอ่านคำตอบเป็นเสียงแล้ว</div>';
 }
 
-function cvSearch(s, p) {
-  var pct = s.free ? Math.min(100, s.month / s.free * 100) : 0;
-  return '<div class="cv-big">' + nfmt(s.month) + ' <small>ครั้ง จากโควตาฟรี ' + nfmt(s.free) + ' ครั้ง</small></div>'
+// เลือกรายเดือน = ยอดค้นเว็บของเดือนนั้นเทียบโควตาฟรี · ช่วงอื่น = เดือนนี้ และบอกจำนวนในช่วงที่เลือก
+function cvSearch(s, p, per, curMonth) {
+  var mon = per.type === 'month';
+  var n = mon ? (s.period || 0) : s.month;
+  var over = mon ? Math.max(0, n - s.free) * (p.searchUsdPer1k || 0) / 1000 * (p.usdThb || 0) : s.overThb;
+  var which = mon && per.key !== curMonth ? 'เดือนนั้น' : 'เดือนนี้';
+  var pct = s.free ? Math.min(100, n / s.free * 100) : 0;
+  return '<div class="cv-big">' + nfmt(n) + ' <small>ครั้ง จากโควตาฟรี ' + nfmt(s.free) + ' ครั้ง</small></div>'
     + '<div class="cv-bar" style="height:8px;margin-top:8px"><b style="width:' + pct.toFixed(1) + '%;background:' + CV_COLOR.search + '"></b></div>'
+    + (mon ? '' : '<div class="cv-sub" style="margin-top:6px">ในช่วงที่เลือก (' + cvPLabel(per) + ') ค้นเว็บ <b>' + nfmt(s.period || 0) + '</b> ครั้ง</div>')
     + '<div class="cv-sub" style="margin-top:8px">Google ให้ค้นเว็บฟรี ' + nfmt(s.free) + ' ครั้งต่อเดือน นับรวมทุกบอทที่ใช้ key เดียวกัน (รวม V.2) เกินแล้วคิด $' + p.searchUsdPer1k + ' ต่อ 1,000 ครั้ง'
-    + (s.overThb > 0 ? ' · ส่วนที่เกินเดือนนี้ประมาณ <b>' + baht(s.overThb) + '</b>' : ' · เดือนนี้ยังไม่เสียค่าค้นเว็บ')
+    + (over > 0 ? ' · ส่วนที่เกิน' + which + 'ประมาณ <b>' + baht(over) + '</b>' : ' · ' + which + 'ไม่เสียค่าค้นเว็บ')
     + '<br>ค่า Gemini ของขั้นค้นเว็บอยู่ในตารางขั้นตอนด้านบนแล้ว</div>';
 }
 
@@ -4027,9 +4117,9 @@ function cvLastLine(d) {
   var t = d.line && d.line.lastCustomerAt;
   return t ? 'ข้อความล่าสุดที่เข้ามาทาง LINE: ' + new Date(t).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' น.' : 'ยังไม่มีข้อความจาก LINE';
 }
-function cvSources(list) {
+function cvSources(list, label) {
   if (!list || !list.length) return '';
-  var h = '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากไหน (30 วัน)</h3><div class="d">แยกตามบอทและที่มาของคำถาม ทุกบอทใช้ Gemini key และบิลเดียวกัน</div><div class="cv-scroll"><table class="cv-t"><tr><th>ที่มา</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th><th class="mh" style="width:20%">สัดส่วน</th></tr>';
+  var h = '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากไหน (' + esc(label) + ')</h3><div class="d">แยกตามบอทและที่มาของคำถาม ทุกบอทใช้ Gemini key และบิลเดียวกัน</div><div class="cv-scroll"><table class="cv-t"><tr><th>ที่มา</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th><th class="mh" style="width:20%">สัดส่วน</th></tr>';
   list.forEach(function(x) {
     var color = x.src === 'test' ? '#f59e0b' : (x.own ? '#06c755' : '#8b5cf6');
     h += '<tr><td><b>' + cvSrcName(x) + '</b></td><td class="n">' + nfmt(x.turns) + '</td><td class="n">' + (x.turns ? baht(x.perMsg) : '–') + '</td><td class="n"><b>' + baht(x.thb) + '</b><span class="cv-sub m-only">' + x.share + '%</span></td>'
@@ -4050,7 +4140,7 @@ function cvBaselines(list) {
 }
 
 function cvTurns(list) {
-  if (!list.length) return '<div class="cv-empty">ยังไม่มีข้อมูลใน 7 วันนี้</div>';
+  if (!list.length) return '<div class="cv-empty">ไม่มีข้อมูลในช่วงนี้</div>';
   var h = '<div class="cv-scroll"><table class="cv-t"><tr><th class="mh">เวลา</th><th>แชท และคำถาม</th><th class="mh">ขั้นที่ใช้เงินมากสุด</th><th class="n">ค่าใช้จ่าย</th></tr>';
   list.forEach(function(x) {
     var when = new Date(x.at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) + ' ' + hhmm(x.at);
@@ -4064,7 +4154,7 @@ function cvTurns(list) {
 }
 
 function cvChats(list) {
-  if (!list.length) return '<div class="cv-empty">ยังไม่มีข้อมูลในเดือนนี้</div>';
+  if (!list.length) return '<div class="cv-empty">ไม่มีข้อมูลในช่วงนี้</div>';
   var h = '<div class="cv-scroll"><table class="cv-t"><tr><th>แชท</th><th class="n">ข้อความ</th><th class="n">เฉลี่ยต่อข้อความ</th><th class="n">รวม</th></tr>';
   list.forEach(function(x) {
     h += '<tr' + cvRow(x) + '><td>' + cvWho(x) + '</td><td class="n">' + nfmt(x.turns) + '</td><td class="n">' + (x.turns ? baht(x.perMsg) : '–') + '</td><td class="n"><b>' + baht(x.thb) + '</b></td></tr>';
@@ -4091,6 +4181,7 @@ function cvNotes(d) {
 }
 
 function renderCost(d) {
+  costData = d;
   var h = '';
   if (d.error) h += '<div class="cv-warn">⚠️ ' + esc(d.error) + '</div>';
   h += cvWebhook(d);
@@ -4099,6 +4190,12 @@ function renderCost(d) {
     document.getElementById('cvbody').innerHTML = h;
     return;
   }
+  // v3.57: ช่วงที่ระบบใช้จริง (วันหรือเดือนที่ผิดหรืออยู่ในอนาคต ระบบกลับไปใช้ 30 วันล่าสุด)
+  var per = d.period || { type: 'last30', key: '', total: d.last30 };
+  costPeriod = { type: per.type, key: per.key || '' };
+  var label = cvPLabel(per);
+  var chart = d.chart || { unit: 'day', points: d.daily };
+  var tot = per.total || { thb: 0, turns: 0, perMsg: 0 };
   var mLabel = 'เดือนนี้ (' + cvMonth(d.month.key) + ')';
   var pj = d.projection;
   h += '<div class="cv-cards">'
@@ -4110,12 +4207,16 @@ function renderCost(d) {
     + '</div>';
   if (pj && pj.next) h += '<div class="cv-warn">📈 ราคา Gemini ปรับขึ้นตั้งแต่ ' + cvDate(pj.next.from, true) + ' ถ้าลูกค้าถามเท่าเดิม ค่าใช้จ่ายจะประมาณ <b>' + baht(pj.next.month) + ' ต่อเดือน</b></div>';
   if (d.search && d.search.overThb > 0) h += '<div class="cv-warn">🔎 เดือนนี้ค้นเว็บ ' + nfmt(d.search.month) + ' ครั้ง เกินโควตาฟรี ' + nfmt(d.search.free) + ' ครั้งแล้ว ส่วนเกินประมาณ ' + baht(d.search.overThb) + ' รวมอยู่ในยอดเดือนนี้</div>';
-  h += cvSources(d.sources);
-  h += '<div class="cv-sec"><h3>ค่าใช้จ่ายรายวัน 30 วันล่าสุด</h3><div class="d">ชี้หรือแตะที่แท่งเพื่อดูตัวเลขของวันนั้น</div>' + cvChart(d.daily) + '</div>';
-  h += '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากขั้นตอนไหน (30 วัน)</h3><div class="d">ทุกคำตอบผ่านหลายขั้นใน Dify แต่ละขั้นส่งข้อความให้ AI อ่านและเขียน คิดเงินตามจำนวน token</div>' + cvItems(d.items) + '</div>';
-  h += '<div class="cv-grid2"><div class="cv-sec"><h3>แยกตามชนิดคำถาม (30 วัน)</h3>' + cvKinds(d.byKind) + '</div><div class="cv-sec"><h3>ค้นเว็บเดือนนี้</h3>' + cvSearch(d.search, d.prices || {}) + '</div></div>';
-  h += '<div class="cv-sec"><h3>คำตอบที่ใช้เงินมากที่สุด 7 วันล่าสุด</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvTurns(d.topTurns) + '</div>';
-  h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด ' + esc(mLabel) + '</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvChats(d.topChats) + '</div>';
+  h += cvFilter(d, per);
+  h += '<div class="cv-sec"><h3>' + (chart.unit === 'hour' ? 'ค่าใช้จ่ายรายชั่วโมง ' : 'ค่าใช้จ่ายรายวัน ') + esc(label) + '</h3>'
+    + '<div class="cv-ptot">' + baht(tot.thb) + '<small>' + nfmt(tot.turns) + ' ข้อความ · เฉลี่ย ' + (tot.turns ? baht(tot.perMsg) : '–') + ' ต่อข้อความ' + (d.search ? ' · ค้นเว็บ ' + nfmt(d.search.period || 0) + ' ครั้ง' : '') + '</small></div>'
+    + '<div class="d">' + (chart.unit === 'hour' ? 'แต่ละแท่งคือ 1 ชั่วโมง (เวลาไทย) ชี้หรือแตะที่แท่งเพื่อดูตัวเลข' : 'ชี้หรือแตะที่แท่งเพื่อดูตัวเลขของวันนั้น แล้วกดดูรายชั่วโมงของวันนั้นได้') + '</div>'
+    + cvChart(chart, per) + cvHourGap(chart, tot) + '</div>';
+  h += cvSources(d.sources, label);
+  h += '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากขั้นตอนไหน (' + esc(label) + ')</h3><div class="d">ทุกคำตอบผ่านหลายขั้นใน Dify แต่ละขั้นส่งข้อความให้ AI อ่านและเขียน คิดเงินตามจำนวน token</div>' + cvItems(d.items) + '</div>';
+  h += '<div class="cv-grid2"><div class="cv-sec"><h3>แยกตามชนิดคำถาม (' + esc(label) + ')</h3>' + cvKinds(d.byKind) + '</div><div class="cv-sec"><h3>' + (per.type === 'month' ? 'ค้นเว็บ ' + cvMonth(per.key) : 'ค้นเว็บเดือนนี้') + '</h3>' + cvSearch(d.search, d.prices || {}, per, d.month.key) + '</div></div>';
+  h += '<div class="cv-sec"><h3>คำตอบที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvTurns(d.topTurns) + '</div>';
+  h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvChats(d.topChats) + '</div>';
   h += cvBaselines(d.baselines);
   h += cvNotes(d);
   document.getElementById('cvbody').innerHTML = h;
@@ -4126,9 +4227,49 @@ document.getElementById('costclose').addEventListener('click', closeCost);
 document.getElementById('costrf').addEventListener('click', function() { loadCost(true); });
 document.getElementById('cvbody').addEventListener('click', function(e) {
   var t = e.target;
-  var col = t.closest ? t.closest('.cv-col') : null;
-  if (col) { var tip = document.getElementById('cvtip'); if (tip) tip.textContent = col.getAttribute('data-tip'); return; }
-  var tr = t.closest ? t.closest('tr.go') : null;
+  if (!t.closest) return;
+  // v3.57: แถบเลือกช่วง
+  var seg = t.closest('.cv-segbtn');
+  if (seg) {
+    var pt = seg.getAttribute('data-ptype');
+    if (pt === costPeriod.type || !costData) return;
+    var av = cvAvail(costData);
+    if (pt === 'day') cvGo('day', av.today);
+    else if (pt === 'month') cvGo('month', av.today.slice(0, 7));
+    else cvGo('last30', '');
+    return;
+  }
+  var stp = t.closest('.cv-step');
+  if (stp) {
+    if (stp.disabled || !costData) return;
+    var n = +stp.getAttribute('data-step');
+    var av2 = cvAvail(costData);
+    if (costPeriod.type === 'day') {
+      var k = cvShiftDay(costPeriod.key, n);
+      if (k >= av2.firstDay && k <= av2.today) cvGo('day', k);
+    } else if (costPeriod.type === 'month') {
+      var ms = cvMonths(av2, costPeriod.key);
+      var j = ms.indexOf(costPeriod.key) - n; // รายการเดือนเรียงใหม่ไปเก่า
+      if (j >= 0 && j < ms.length) cvGo('month', ms[j]);
+    }
+    return;
+  }
+  var link = t.closest('.cv-link');
+  if (link) { cvGo('day', link.getAttribute('data-day')); return; }
+  var col = t.closest('.cv-col');
+  if (col) {
+    var on = document.querySelectorAll('#cvbody .cv-col.sel');
+    for (var c = 0; c < on.length; c++) on[c].classList.remove('sel');
+    col.classList.add('sel');
+    var tip = document.getElementById('cvtip');
+    if (tip) {
+      tip.textContent = col.getAttribute('data-tip');
+      var dk = col.getAttribute('data-day');
+      if (dk) { var b = document.createElement('button'); b.className = 'cv-link'; b.setAttribute('data-day', dk); b.textContent = 'ดูรายชั่วโมงของ ' + cvDate(dk) + ' ›'; tip.appendChild(b); }
+    }
+    return;
+  }
+  var tr = t.closest('tr.go');
   if (!tr) return;
   var sid = tr.getAttribute('data-sid');
   var found = false;
@@ -4136,6 +4277,20 @@ document.getElementById('cvbody').addEventListener('click', function(e) {
   if (!found) { alert('แชทนี้ไม่อยู่ใน 100 แชทล่าสุดของรายการ ลองค้นหาด้วยชื่อในช่องค้นหา'); return; }
   closeCost();
   selectChat(sid);
+});
+document.getElementById('cvbody').addEventListener('change', function(e) {
+  var t = e.target;
+  if (!costData) return;
+  var av = cvAvail(costData);
+  if (t.id === 'cvday') {
+    var v = String(t.value || '');
+    if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v)) return;
+    if (v < av.firstDay) v = av.firstDay;
+    if (v > av.today) v = av.today;
+    if (v !== costPeriod.key) cvGo('day', v);
+  } else if (t.id === 'cvmonth') {
+    if (t.value && t.value !== costPeriod.key) cvGo('month', t.value);
+  }
 });
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && costOpen) closeCost(); });
 document.getElementById('refreshbtn').addEventListener('click', function() { load(); });
@@ -4309,7 +4464,10 @@ function handleAdmin(req, res, path, body) {
     for (const s of sessions.values()) if (s.type === 'user' && s.lastAt > lastCustomerAt) lastCustomerAt = s.lastAt;
     const lw = lineWebhook.checked ? { active: lineWebhook.active, here: lineWebhook.here, host: lineWebhook.host, at: lineWebhook.at, error: lineWebhook.error } : null;
     const fw = costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error, stopped: costForward.state.stopped } : null;
-    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid) }), { line: { lastCustomerAt: lastCustomerAt || null, webhook: lw }, forward: fw, ingest: !!COST_INGEST_KEY }));
+    // v3.57: ?day=YYYY-MM-DD หรือ ?month=YYYY-MM (ค่าที่ผิดหรืออยู่ในอนาคต = 30 วันล่าสุด)
+    const qp = new URL(req.url, 'http://x').searchParams;
+    const period = qp.get('day') ? { type: 'day', key: qp.get('day') } : (qp.get('month') ? { type: 'month', key: qp.get('month') } : null);
+    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid), period }), { line: { lastCustomerAt: lastCustomerAt || null, webhook: lw }, forward: fw, ingest: !!COST_INGEST_KEY }));
   }
 
   if (path === '/admin/api/list' && req.method === 'GET') {
@@ -4562,7 +4720,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.56', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.57', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading' }, productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
