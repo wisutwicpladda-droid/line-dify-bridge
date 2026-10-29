@@ -137,7 +137,16 @@ async function waitHealth(port, ok, what) {
     h = await waitHealth(portB, (x) => x.productMaster.ok, 'B product master via proxy');
     assert.deepStrictEqual([h.productMaster.products, h.sheetAuth.mode, h.sheetAuth.ok, h.sheetProxy], [2, 'proxy', true, false]);
     assert.strictEqual(G.tokens, tokensBefore, 'V.2 ไม่ขอ token จาก Google เอง');
-    assert.strictEqual((await req(portB, 'GET', DIFY, KEY)).status, 503, 'V.2 ไม่มีตัวกลางของตัวเอง');
+    assert.strictEqual((await req(portB, 'GET', DIFY, KEY)).status, 503, 'V.2 ไม่มีตัวกลางของตัวเอง (ไม่ได้ตั้ง SHEET_PROXY_KEY)');
+    b.child.kill();
+    b = null;
+
+    // บอทจริงที่ตั้ง SHEET_PROXY_KEY แล้วแต่ยังไม่มี key ของ Google: key ผิดได้ 401 key ถูกได้ 503 (ใช้ทดสอบโหนดใน Dify ก่อนใส่ key)
+    b = startBridge(portB, { SHEET_PROXY_KEY: PROXY_KEY, STATE_DIR: dirB });
+    await waitHealth(portB, (x) => x.sheetProxy && x.sheetProxy.ready === false, 'proxy without Google key');
+    assert.strictEqual((await req(portB, 'GET', DIFY, { 'x-sheet-key': 'wrong-key' })).status, 401);
+    r = await req(portB, 'GET', DIFY, KEY);
+    assert.deepStrictEqual([r.status, /GOOGLE_SA_JSON/.test(r.json.error.message)], [503, true]);
     b.child.kill();
     b = null;
 

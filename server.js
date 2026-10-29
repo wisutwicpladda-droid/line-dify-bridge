@@ -4469,11 +4469,13 @@ function sheetProxyFetch(full) {
 async function handleSheetProxy(req, res, path) {
   const send = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(body); };
   const fail = (status, message) => send(status, JSON.stringify({ error: { code: status, message } }));
-  if (!SHEET_PROXY_KEY || kbSync.sheets.mode !== 'service-account') return fail(503, 'sheet proxy is not configured (needs SHEET_PROXY_KEY and GOOGLE_SA_JSON)');
+  if (!SHEET_PROXY_KEY) return fail(503, 'sheet proxy is not configured (needs SHEET_PROXY_KEY)');
   const k = String(req.headers['x-sheet-key'] || '');
   let okKey = false;
   try { okKey = k.length === SHEET_PROXY_KEY.length && crypto.timingSafeEqual(Buffer.from(k), Buffer.from(SHEET_PROXY_KEY)); } catch (_) { okKey = false; }
   if (!okKey) { sheetProxy.denied++; return fail(401, 'invalid x-sheet-key'); }
+  // ตรวจ key ก่อน ผู้เรียกที่ key ถูกจึงรู้ว่ายังขาด GOOGLE_SA_JSON (ใช้ทดสอบโหนดใน Dify ได้ก่อนใส่ key ของ Google)
+  if (kbSync.sheets.mode !== 'service-account') return fail(503, 'sheet proxy has no Google service account yet (GOOGLE_SA_JSON)');
   if (req.method !== 'GET') return fail(405, 'GET only');
   const rest = path.slice('/sheets'.length);
   const m = rest.match(/^\/v4\/spreadsheets\/([^/]+?)(?:\/values:batchGet|\/values\/[^/]+)?$/);
