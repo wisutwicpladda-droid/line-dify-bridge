@@ -45,7 +45,7 @@ function startBridge(port, linePort, env) {
       FAKE_DIFY_ANSWER: '"แกนเตอร์" ใช้กำจัดวัชพืชในนาข้าวช่วง 7-12 วันหลังหว่านข้าวค่ะ',
       SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', POS_TABLE: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', IMAGE_WAIT_SECONDS: '0',
       // v3.44-v2: คิวรอบคำถามรอ 1 วินาที (ค่าเริ่ม 4) และทุกบริการเป็น mock ในเครื่อง รวม Dify ที่ bridge ใช้ดึงประวัติของแชทใหม่
-      LINE_TEXT_WAIT_SECONDS: '1', DIFY_API_BASE: 'http://127.0.0.1:' + linePort + '/v1', DIFY_RESPONSE_MODE: '', DIFY_DATASET_KEY: '',
+      LINE_TEXT_WAIT_SECONDS: '1', LINE_FRAGMENT_WAIT_SECONDS: '1', DIFY_API_BASE: 'http://127.0.0.1:' + linePort + '/v1', DIFY_RESPONSE_MODE: '', DIFY_DATASET_KEY: '',
       PRODUCT_SHEET_ID: 'offline-test', TEAM_SHEET_URL: 'http://127.0.0.1:' + linePort + '/team-sheet'
     }, env),
     stdio: ['ignore', 'pipe', 'pipe']

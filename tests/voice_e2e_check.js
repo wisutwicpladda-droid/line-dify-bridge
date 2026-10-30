@@ -103,7 +103,7 @@ function startBridge(port, linePort, env) {
       ELEVENLABS_API_KEY: '', ELEVENLABS_VOICE_ID: '', VOICE_REPLY: '',
       SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', POS_TABLE: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', LINE_IMAGE_WAIT_SECONDS: '0',
       // v3.44-v2: คิวรอบคำถามรอ 1 วินาที (ค่าเริ่ม 4) และทุกบริการเป็น mock ในเครื่อง รวม Dify ที่ bridge ใช้ดึงประวัติของแชทใหม่
-      LINE_TEXT_WAIT_SECONDS: '1', DIFY_API_BASE: difyBase, DIFY_RESPONSE_MODE: '', DIFY_DATASET_KEY: '',
+      LINE_TEXT_WAIT_SECONDS: '1', LINE_FRAGMENT_WAIT_SECONDS: '1', DIFY_API_BASE: difyBase, DIFY_RESPONSE_MODE: '', DIFY_DATASET_KEY: '',
       PRODUCT_SHEET_ID: 'offline-test', TEAM_SHEET_URL: 'http://127.0.0.1:' + linePort + '/team-sheet'
     }, env),
     stdio: ['ignore', 'pipe', 'pipe']

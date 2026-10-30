@@ -5,6 +5,7 @@
 //    ตัดเฉพาะเมื่อพูดถึงข้อมูล/คำแนะนำ หรือขึ้นต้นประโยคว่ายังไม่มี คำอย่าง "ในระบบราก" "ในระบบท่อน้ำ" "ในระบบประสาท" ยังอยู่
 // 2) รายชื่อพนักงานขายที่ลูกค้าเห็นไม่มีรหัสตำแหน่ง ME/MR (เจ้าของตัดสิน 27 ต.ค. 2569)
 // 3) v3.53: หมายเหตุภายใน "(ไม่มีรูป)" ในชื่อสินค้าของชีท (นิวเพน) หลุดไปในคำตอบคุมหญ้าพริกและหอมแบ่ง ตัดออก
+// 4) v3.59 (ชุดทดสอบรอบ 2): คำผิดที่โมเดลพิมพ์ "ก่อนเก็บเก็บ" และชื่อที่ไม่มีเว้นวรรคก่อนวงเล็บ "พรสุข(พิมพลอย)"
 
 const SYSTEM_WORD_END = '(?=$|[\\s.,!?)\\]"\'”]|ค่ะ|คะ|นะ|ครับ|เลย|ตอนนี้|ขณะนี้|แล้ว|ด้วย|เท่านั้น|ยัง|ไม่|จึง|แต่|และ|หรือ|ซึ่ง|ที่|โดย|ให้|เพื่อ)';
 const SYSTEM_OWNER = '(?:ของ(?:เรา|บริษัท|น้องลัดดา|ลัดดา))?';
@@ -26,7 +27,19 @@ function removeInternalNotes(text) {
 }
 
 function stripStaffCode(name) {
-  return String(name == null ? '' : name).replace(/^\s*M[ER]\b\s*/, '');
+  return spaceBeforeParen(String(name == null ? '' : name).replace(/^\s*M[ER]\b\s*/, ''));
+}
+
+// "กมลชนก พรสุข(พิมพลอย)" -> "กมลชนก พรสุข (พิมพลอย)" (เฉพาะอักษรไทยชิดวงเล็บที่ข้างในเป็นคำไทยสั้น ๆ)
+function spaceBeforeParen(text) {
+  const s = String(text == null ? '' : text);
+  return s.includes('(') ? s.replace(/([\u0E01-\u0E59])\((?=[\u0E01-\u0E59][^()\n]{0,30}\))/g, '$1 (') : s;
+}
+
+function fixCommonText(text) {
+  let s = String(text == null ? '' : text);
+  if (s.includes('เก็บเก็บ')) s = s.replace(/เก็บเก็บ(?!เกี่ยว)/g, 'เก็บเกี่ยว');
+  return spaceBeforeParen(s);
 }
 
 // ทีมงานประจำเขต -> แถว {name, phone} (จากสตริง ZONE_TEAM เช่น "ME ชื่อ 061-xxx-xxxx · MR ชื่อ 092-xxx-xxxx / ชื่อ")
@@ -55,4 +68,4 @@ function customerTeamText(team) {
   return '📍 ' + team.title + '\n' + team.rows.map((r) => '• ' + r.name + (r.phone ? ' ' + r.phone : '')).join('\n');
 }
 
-module.exports = { removeSystemWords, removeInternalNotes, stripStaffCode, zoneTeamRows, customerTeam, customerTeamText };
+module.exports = { removeSystemWords, removeInternalNotes, stripStaffCode, zoneTeamRows, customerTeam, customerTeamText, fixCommonText, spaceBeforeParen };

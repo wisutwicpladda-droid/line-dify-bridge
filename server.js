@@ -107,6 +107,10 @@
 //     v3.58: ชีทสินค้าเป็นส่วนตัวแล้ว (29 ต.ค. เจ้าของปิด "ทุกคนที่มีลิงก์ดูได้") bridge อ่านชีทด้วย service account (google_sheets.js)
 //       บอทจริงเป็นตัวกลาง /sheets/v4/... ให้โหนดอ่านชีทของ Dify และ bridge V.2 อ่านผ่าน (SHEET_PROXY_KEY)
 //       เก็บข้อมูลชีทชุดล่าสุดใน Volume (product-sheet-cache.json) ใช้ตอนเริ่มระบบถ้าอ่านชีทไม่ได้ และลองอ่านใหม่ทุก 5 นาทีเมื่ออ่านไม่ได้
+//     v3.59 (ชุดทดสอบรอบ 2, 31 ต.ค.): ข้อความที่ยังไม่เป็นคำถามรอข้อความถัดไป 8 วินาที (LINE_FRAGMENT_WAIT_SECONDS) ข้อความที่ถามแล้วรอ 4 วินาที
+//       ข้อความใหม่ที่มาก่อนส่งคำตอบ (ภายใน LINE_MERGE_WINDOW_SECONDS ค่าเริ่ม 45) หยุดคำตอบเดิมแล้วตอบรวมทุกข้อความ
+//       ย่อรูปลูกค้าด้านยาวไม่เกิน IMAGE_MAX_SIDE (2048) ก่อนส่ง Dify เพราะรูป 5.7 MB ทำให้ Gemini ล้ม · Dify ล้มแล้วลองใหม่ได้ถ้าเวลารวมไม่เกิน DIFY_RETRY_WITHIN_SEC (70)
+//       log error ของโหนดยาวขึ้น · แก้คำ "ก่อนเก็บเก็บ" และเว้นวรรคก่อนวงเล็บชื่อเล่นพนักงาน · ส่งหลายรูปให้บอกทีละรูป
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -194,7 +198,7 @@ const costForward = require('./cost_forward').createForwarder({ url: process.env
 const COST_INGEST_KEY = (process.env.COST_INGEST_KEY || '').trim().length >= 16 ? process.env.COST_INGEST_KEY.trim() : '';
 if (costForward.state.on) { let h = '?'; try { h = new URL(process.env.COST_FORWARD_URL).host; } catch (_) {} console.log('[cost] forward records to ' + h + ' as ' + cost.app + (cost.src === 'test' ? ' (test runs)' : '')); }
 let sheetAlertKeys = [];
-const { removeSystemWords, removeInternalNotes, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)"
+const { removeSystemWords, removeInternalNotes, stripStaffCode, fixCommonText, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)" · v3.59: คำผิดและเว้นวรรคก่อนวงเล็บ
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
 const { provinceMatch, PROVINCE_WORDS } = require('./province_match'); // v3.45-v2: เลย/แพร่/ตาก นับเป็นจังหวัดเมื่อมี จ./จังหวัด หรือพิมพ์มาแค่ชื่อจังหวัด
 const imageButtons = require('./image_buttons');
@@ -263,6 +267,13 @@ const VOICE_DIR = (() => {
   return '';
 })();
 const voiceMsgs = new WeakSet(); // ข้อความเสียงที่บอทแนบ: ถ้า LINE ไม่รับ ส่งซ้ำแบบไม่มีเสียง
+// v3.59 (ชุดทดสอบรอบ 2 แถว 57): ภาพย่อรูปที่ลูกค้าส่ง ให้หน้าแชทหลังบ้านแสดงรูปแทนข้อความ "(รูปภาพจากลูกค้า)" เก็บล่าสุด 3,000 รูป
+const UIMG_DIR = (() => {
+  for (const d of [pathmod.join(STATE_DIR, 'uimg'), pathmod.join(require('os').tmpdir(), 'ladda-uimg')]) {
+    try { fs.mkdirSync(d, { recursive: true }); fs.accessSync(d, fs.constants.W_OK); return d; } catch (_) {}
+  }
+  return '';
+})();
 console.log(VOICE.sttOn
   ? `[voice] on: stt=${VOICE.sttModel} tts=${VOICE.ttsOn ? VOICE.ttsModel : 'off'} reply=${VOICE.mode} files=${VOICE_DIR || 'none'}`
   : '[voice] off: ไม่มี ELEVENLABS_API_KEY ข้อความเสียงจะได้คำตอบให้พิมพ์แทน');
@@ -429,8 +440,9 @@ function touchSession(id, type, text) {
   return s;
 }
 
-function pushHist(s, role, text) {
-  s.history.push({ r: role, t: String(text).slice(0, 600), at: Date.now() });
+// v3.59: extra = { img } รูปที่ลูกค้าส่ง, { pimg } รูปสินค้าที่บอทส่ง, { qr } ปุ่มที่บอทเสนอ (แสดงในหน้าแชทหลังบ้าน)
+function pushHist(s, role, text, extra) {
+  s.history.push(Object.assign({ r: role, t: String(text).slice(0, 600), at: Date.now() }, extra || {}));
   if (s.history.length > HIST_MAX) s.history.splice(0, s.history.length - HIST_MAX);
   markDirty();
   broadcast();
@@ -618,6 +630,41 @@ function imageExtension(contentType) {
   return t === 'image/png' ? 'png' : t === 'image/webp' ? 'webp' : t === 'image/gif' ? 'gif' : 'jpg';
 }
 
+// v3.59 (ชุดทดสอบรอบ 2 แถว 47): ย่อรูปลูกค้าด้านยาวไม่เกิน IMAGE_MAX_SIDE (ค่าเริ่ม 2048) ก่อนส่ง Dify (image_shrink.js)
+const imageShrink = require('./image_shrink').createShrinker({ maxSide: process.env.IMAGE_MAX_SIDE || 2048, log: (m) => console.log(m) });
+if (!imageShrink.available) console.log('[image] sharp not available, photos go to Dify at original size: ' + imageShrink.loadError);
+const shrinkImage = imageShrink.shrink;
+const UIMG_KEEP = 3000;
+let uimgSaves = 0;
+function uimgFile(id) { const safe = String(id || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64); return safe && UIMG_DIR ? pathmod.join(UIMG_DIR, safe + '.jpg') : ''; }
+async function saveCustomerThumb(messageId, buf) {
+  const file = uimgFile(messageId);
+  if (!file || !imageShrink.available) return;
+  try {
+    const t = await imageShrink.thumb(buf, 360);
+    if (!t) return;
+    await fs.promises.writeFile(file, t);
+    if (++uimgSaves % 100 === 0) {
+      const names = (await fs.promises.readdir(UIMG_DIR)).filter((n) => n.endsWith('.jpg'));
+      if (names.length > UIMG_KEEP) {
+        const dated = await Promise.all(names.map(async (n) => ({ n, t: (await fs.promises.stat(pathmod.join(UIMG_DIR, n))).mtimeMs })));
+        dated.sort((a, b) => a.t - b.t);
+        for (const x of dated.slice(0, names.length - UIMG_KEEP)) await fs.promises.unlink(pathmod.join(UIMG_DIR, x.n)).catch(() => {});
+      }
+    }
+  } catch (e) { console.log('[image] thumbnail failed: ' + e.message); }
+}
+// v3.59: รูปสินค้าที่บอทส่ง (ลิงก์สาธารณะ /img/p/) และปุ่มตอบด่วน เก็บคู่กับประวัติแชทให้หน้าแชทหลังบ้านแสดง
+function histExtra(t) {
+  if (!t || typeof t !== 'object') return undefined;
+  const ex = {};
+  if (t.type === 'image' && (t.previewImageUrl || t.originalContentUrl)) ex.pimg = String(t.previewImageUrl || t.originalContentUrl);
+  const items = t.quickReply && Array.isArray(t.quickReply.items) ? t.quickReply.items : [];
+  const labels = items.map((it) => it && it.action && it.action.label).filter(Boolean).slice(0, 13);
+  if (labels.length) ex.qr = labels;
+  return Object.keys(ex).length ? ex : undefined;
+}
+
 async function uploadLineImageToDify(messageId, sessionId) {
   if (!CH_TOKEN || !DIFY_KEY) throw new Error('missing LINE/Dify credentials');
   const sid = String(sessionId).slice(0, 8);
@@ -629,7 +676,7 @@ async function uploadLineImageToDify(messageId, sessionId) {
         'GET',
         `${LINE_DATA_API}/v2/bot/message/${encodeURIComponent(messageId)}/content`,
         { Authorization: 'Bearer ' + CH_TOKEN },
-        10 * 1024 * 1024
+        25 * 1024 * 1024 // v3.59: รูปความละเอียดเดิมจากมือถือใหม่ ๆ เกิน 10 MB ได้ (ย่อก่อนส่ง Dify)
       );
       if (r.status === 200 && r.body.length) raw = r;
       else lastErr = new Error(`LINE image download failed (${r.status})`);
@@ -640,7 +687,11 @@ async function uploadLineImageToDify(messageId, sessionId) {
   const contentType = String(raw.headers['content-type'] || 'image/jpeg').split(';')[0].trim();
   if (!contentType.startsWith('image/')) throw new Error(`LINE content is not an image (${contentType})`);
   console.log(`[image] ${sid} ${messageId} ${contentType} ${Math.round(raw.body.length / 1024)}KB`);
-  const form = multipartImageBody(raw.body, `line-${messageId}.${imageExtension(contentType)}`, contentType, sessionId);
+  saveCustomerThumb(messageId, raw.body); // v3.59: ภาพย่อสำหรับหน้าแชทหลังบ้าน (ไม่รอ)
+  const small = await shrinkImage(raw.body, sid);
+  const sendBody = small ? small.body : raw.body;
+  const sendType = small ? small.type : contentType;
+  const form = multipartImageBody(sendBody, `line-${messageId}.${imageExtension(sendType)}`, sendType, sessionId);
   let uploaded = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -723,6 +774,8 @@ async function voiceReplyMsg(answer, sessionId, info) {
 const DIFY_MODE = process.env.DIFY_RESPONSE_MODE === 'blocking' ? 'blocking' : 'streaming';
 const DIFY_TIMEOUT_MS = Math.max(60, parseInt(process.env.DIFY_TIMEOUT_SEC || '240', 10) || 240) * 1000;
 const DIFY_RECOVER_MS = Math.max(0, parseInt(process.env.DIFY_RECOVER_SEC || '90', 10) || 0) * 1000;
+// v3.59: Dify ล้มแล้วลองใหม่ 1 ครั้งถ้าเวลารวมยังไม่เกินค่านี้ (เดิมไม่ลองถ้าล้มหลังวินาทีที่ 30 รอบ 2 แถว 38 ล้มที่วินาทีที่ 40 ลูกค้าได้ "ระบบขัดข้อง")
+const DIFY_RETRY_WITHIN_MS = Math.max(0, parseFloat(process.env.DIFY_RETRY_WITHIN_SEC || '70') || 0) * 1000;
 const LEGACY_POINTER = 'ส่วนตัวเลขอัตราหรือจำนวนที่ละไว้ รบกวนสอบถามทีมขายในพื้นที่เพื่อยืนยันอีกครั้งนะคะ';
 const RATE_POINTER = 'ส่วนอัตราใช้ที่แน่นอนสำหรับกรณีนี้ รบกวนสอบถามทีมขายในพื้นที่เพิ่มเติมนะคะ';
 
@@ -772,7 +825,10 @@ async function askDify(sessionId, text, files, opts) {
   };
   if (Array.isArray(files) && files.length) payload.files = files;
   let answer = '';
+  const tFirst = Date.now();
+  const signal = o.signal; // v3.59: ลูกค้าส่งข้อความเพิ่มก่อนได้คำตอบ -> ยกเลิกรอบนี้ (turn_queue.js)
   for (let attempt = 1; attempt <= 2 && !answer; attempt++) {
+    if (signal && signal.aborted) break;
     const t0 = Date.now();
     try {
       if (DIFY_MODE === 'blocking') {
@@ -782,12 +838,13 @@ async function askDify(sessionId, text, files, opts) {
         if (bu) info.message = { title: '', type: 'llm', status: 'succeeded', model: '', inTok: Number(bu.prompt_tokens) || 0, outTok: Number(bu.completion_tokens) || 0, tokens: Number(bu.total_tokens) || 0, difyUsd: Number(bu.total_price) || 0 };
         else { console.log('dify error:', r.status, JSON.stringify(r.data).slice(0, 300)); kbHealth.checkSoon(JSON.stringify(r.data)); }
       } else {
-        const r = await streamChat({ base: DIFY_BASE, key: DIFY_KEY, payload, timeoutMs: DIFY_TIMEOUT_MS });
+        const r = await streamChat({ base: DIFY_BASE, key: DIFY_KEY, payload, timeoutMs: DIFY_TIMEOUT_MS, signal });
         for (const x of r.nodeIssues || []) info.issues.push(x.title + ' (' + x.status + ')');
         for (const x of r.nodeRetries || []) info.retries.push(x);
         for (const x of r.usage || []) info.nodes.push(x);
         if (r.messageUsage) info.message = r.messageUsage;
-        if ((r.nodeIssues || []).length) console.log(`[dify] ${sid} node issue: ${r.nodeIssues.map((x) => x.title + ' ' + x.status + (x.error ? ' ' + x.error.slice(0, 80) : '')).join(' | ')}`);
+        if ((r.nodeIssues || []).length) console.log(`[dify] ${sid} node issue: ${r.nodeIssues.map((x) => x.title + ' ' + x.status + (x.error ? ' ' + x.error.slice(0, 400) : '')).join(' | ')}`);
+        if (r.aborted) { console.log(`[dify] ${sid} cancelled after ${Math.round((Date.now() - t0) / 1000)}s: the customer sent another line`); break; }
         if (r.answer.trim() && !r.error) answer = r.answer;
         else {
           console.log(`[dify] ${sid} stream failed after ${Math.round((Date.now() - t0) / 1000)}s: ${r.error || 'empty answer'}`);
@@ -800,7 +857,8 @@ async function askDify(sessionId, text, files, opts) {
         }
       }
     } catch (e) { console.log('dify fetch error:', e.message); }
-    if (!answer && Date.now() - t0 > 30000) break; // ล้มหลังรอนานแล้ว ไม่ลองซ้ำให้ลูกค้ารอเพิ่ม
+    if (!answer && signal && signal.aborted) break;
+    if (!answer && Date.now() - tFirst > DIFY_RETRY_WITHIN_MS) { console.log(`[dify] ${sid} no retry: ${Math.round((Date.now() - tFirst) / 1000)}s already`); break; } // v3.59: เดิมตัดที่ 30 วินาทีต่อรอบ
     if (!answer && attempt === 1) console.log(`[dify] ${sid} retry once`);
   }
   if (own) recordCost({ sid: sessionId, kind: hasImage ? 'image' : 'text', q: o.userText != null ? o.userText : text, nodes: info.nodes, message: info.message });
@@ -1161,7 +1219,7 @@ async function sendAllProductImages(s, ev, pushTarget, names) {
   for (let i = 4; i < imgs.length; i += 5) {
     const batch = imgs.slice(i, i + 5);
     const ok = await linePush(pushTarget, batch);
-    batch.forEach((m) => pushHist(s, 'b', '(รูปสินค้า: ' + (pimgNames.get(m) || '-') + ')'));
+    batch.forEach((m) => pushHist(s, 'b', '(รูปสินค้า: ' + (pimgNames.get(m) || '-') + ')', histExtra(m)));
     console.log(`[pimg] all-category push ${i + 1}-${Math.min(i + batch.length, imgs.length)} ok=${ok}`);
   }
   return true;
@@ -1213,7 +1271,7 @@ function guardInternal(answer, sessionId) {
 
 // v3.50 (28 Oct 2026): ตัดคำภายใน "ในระบบ" ออกจากคำตอบ (customer_text.js) · v3.53: ตัด "(ไม่มีรูป)" ท้ายชื่อสินค้าด้วย
 function guardSystemWords(answer, sessionId) {
-  const out = removeInternalNotes(removeSystemWords(answer));
+  const out = fixCommonText(removeInternalNotes(removeSystemWords(answer)));
   if (out !== String(answer)) console.log('[guard] ' + String(sessionId || '').slice(0, 8) + ' removed internal words');
   return out;
 }
@@ -1290,16 +1348,22 @@ const IMAGE_QUERY = 'ลูกค้าส่งรูปภาพมา กร�
 // v3.38 (FB-02): ข้อความที่ส่งติดกันภายใน LINE_TEXT_WAIT_SECONDS (ค่าเริ่ม 4) รวมเป็นคำถามเดียว
 // รูปอย่างเดียวรอคำอธิบาย LINE_IMAGE_WAIT_SECONDS · LINE_JOIN_MESSAGES=off = ตอบทุกข้อความทันทีแบบเดิม
 const TEXT_WAIT_MS = Math.max(0, Math.min(15, parseFloat(process.env.LINE_TEXT_WAIT_SECONDS || '4') || 0)) * 1000;
+// v3.59: ข้อความที่ยังไม่เป็นคำถาม (สวัสดี / ปลูกพริก / คู่มือการใช้) รอข้อความถัดไปนานกว่า และข้อความใหม่ที่มาก่อนส่งคำตอบ
+// (ภายใน LINE_MERGE_WINDOW_SECONDS หลังเริ่มทำคำตอบ, 0 = ปิด) หยุดคำตอบเดิมแล้วตอบรวมทุกข้อความ
+const FRAGMENT_WAIT_MS = Math.max(TEXT_WAIT_MS, Math.min(20, parseFloat(process.env.LINE_FRAGMENT_WAIT_SECONDS || '8') || 0) * 1000);
+const MERGE_WINDOW_MS = Math.max(0, Math.min(120, parseFloat(process.env.LINE_MERGE_WINDOW_SECONDS || '45') || 0)) * 1000;
 const TURN_JOIN_ON = process.env.LINE_JOIN_MESSAGES !== 'off';
 const STICKER_QUERY = '(ผู้ใช้ส่งสติกเกอร์มา ทักทายกลับสั้นๆ อย่างเป็นมิตร)';
 const turns = createTurnQueue({
   textWaitMs: TEXT_WAIT_MS,
+  fragmentWaitMs: FRAGMENT_WAIT_MS,
+  mergeWindowMs: MERGE_WINDOW_MS,
   imageWaitMs: IMG_WAIT_MS,
   log: (m) => console.log(m),
-  run: (ctx, items) => {
+  run: (ctx, items, turn) => {
     const s = ctx.s;
     if (s.handoff || (s.mutedUntil && s.mutedUntil > Date.now())) { console.log(`[turn] ${ctx.sessionId.slice(0, 8)} skip ${items.length} message(s): admin took over`); return Promise.resolve(); }
-    return runTurn(ctx, items);
+    return runTurn(ctx, items, turn);
   }
 });
 
@@ -2471,7 +2535,7 @@ function teamZoneFor(province, district) {
 }
 // รายชื่อสำหรับลูกค้า: ตัด ME/MR ที่นำหน้าชื่อในตาราง (การ์ดเคสของทีมขายใน leads.js ยังแสดงตามเดิม)
 function teamLines(z) {
-  return zoneTeamRows(z).map((r) => `• ${r.name.replace(/^M[ER]\b\s*/, '')}${r.phone ? ' ' + r.phone : ''}`);
+  return zoneTeamRows(z).map((r) => `• ${stripStaffCode(r.name)}${r.phone ? ' ' + r.phone : ''}`);
 }
 function teamReply(c, provinceHint) {
   const prov = provinceHint || (c && (c.province || (c.auto && c.auto.province))) || '';
@@ -2658,7 +2722,7 @@ function notifyAdmins(id, s, isNew) {
 async function sendAnswer(s, ev, fallbackTo, text, opts) {
   const arr = (Array.isArray(text) ? text : [text]).filter((t) => t != null && (typeof t === 'object' ? !!t.type : String(t).trim()));
   const skip = opts && opts.system === true ? arr.length : (opts && typeof opts.system === 'number' ? opts.system : 0);
-  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า: ' + (pimgNames.get(t) || t.originalContentUrl || '-') + ')' : (t.type === 'audio' ? '🔊 (เสียงน้องลัดดาอ่านคำตอบ)' : '(ข้อความแบบปุ่ม)'))) : t; pushHist(s, 'b', ht); if (i >= skip && !(typeof t === 'object' && t.type === 'audio')) detectBotPromise(fallbackTo || 'unknown', s, ht); });
+  arr.forEach((t, i) => { const ht = typeof t === 'object' ? (t.altText || t.text || (t.type === 'image' ? '(รูปสินค้า: ' + (pimgNames.get(t) || t.originalContentUrl || '-') + ')' : (t.type === 'audio' ? '🔊 (เสียงน้องลัดดาอ่านคำตอบ)' : '(ข้อความแบบปุ่ม)'))) : t; pushHist(s, 'b', ht, histExtra(t)); if (i >= skip && !(typeof t === 'object' && t.type === 'audio')) detectBotPromise(fallbackTo || 'unknown', s, ht); });
   let ok = await lineReply(ev.replyToken, arr);
   if (!ok && arr.some((m) => pimgMsgs.has(m) || voiceMsgs.has(m))) { // v3.11: การ์ดรูปมีปัญหา ส่งเฉพาะข้อความ (v3.37-voice: รวมข้อความเสียง)
     console.log('[pimg] reply with images/voice failed, retry text only');
@@ -2759,7 +2823,7 @@ async function handleEvent(ev) {
   const shown = ev.voiceIn ? '🎤 ' + text : (ev.message.type === 'text' ? text : (ev.message.type === 'image' ? '(รูปภาพจากลูกค้า)' : '(สติกเกอร์)'));
   const s = touchSession(sessionId, stype, shown);
   const isNewChat = s.history.length === 0 && !s.bf;
-  pushHist(s, 'u', shown);
+  pushHist(s, 'u', shown, ev.message.type === 'image' && ev.message.id ? { img: String(ev.message.id) } : undefined); // v3.59: ภาพย่อในหน้าแชทหลังบ้าน
   fetchProfile(s, userId);
   // ลูกค้าทิ้งเบอร์ -> ธงรอติดต่อกลับ + เก็บเบอร์ (ยกเว้นตอนกำลังตอบแบบฟอร์มลงทะเบียน — เบอร์นั้นไม่ใช่การขอให้โทรกลับ)
   const inReg = stype === 'user' && REG_MODE === 'on' && (!!s.reg || regNeeded(crmGet(sessionId)));
@@ -2947,17 +3011,18 @@ async function handleEvent(ev) {
   if (ev.voiceIn) item.voice = true; // v3.44-v2: ข้อความที่ถอดจากเสียง -> คำตอบของรอบนี้แนบเสียง
   const ctx = { s, ev, sessionId, userId, pushTarget, stype };
   if (stype !== 'user' || !TURN_JOIN_ON) return runTurn(ctx, [item]);
-  if (turns.push(sessionId, ctx, item) === 'first') lineLoading(userId); // ให้เห็นว่ากำลังพิมพ์ระหว่างรอข้อความถัดไป
+  const joined = turns.push(sessionId, ctx, item);
+  if (joined === 'first' || joined === 'merged') lineLoading(userId); // ให้เห็นว่ากำลังพิมพ์ระหว่างรอข้อความถัดไป
 }
 
 // v3.38: หนึ่งรอบคำถาม = ข้อความ/รูปทั้งหมดที่ลูกค้าส่งติดกัน -> เรียก Dify ครั้งเดียว -> ตอบด้วย event ล่าสุด
 const NO_IMAGE_SEEN_RX = /(ยัง)?ไม่(ได้)?เห็นรูป|ยังไม่เห็นภาพ|ไม่ได้รับรูป|มองไม่เห็นรูป|ไม่พบรูปภาพ/;
 // v3.43: จุด "กำลังพิมพ์" แสดงต่อเนื่องตั้งแต่เริ่มถาม Dify จนกว่าจะส่งคำตอบ (หยุดเสมอแม้เกิด error)
-async function runTurn(ctx, items) {
+async function runTurn(ctx, items, turn) {
   const stopLoading = ctx.stype === 'user' ? keepLoading(ctx.userId) : null;
-  try { return await answerTurn(ctx, items, stopLoading); } finally { if (stopLoading) await stopLoading(); }
+  try { return await answerTurn(ctx, items, stopLoading, turn); } finally { if (stopLoading) await stopLoading(); }
 }
-async function answerTurn(ctx, items, stopLoading) {
+async function answerTurn(ctx, items, stopLoading, turn) {
   const { s, ev, sessionId, userId, pushTarget, stype } = ctx;
   const { query, images, userText } = turnQuery(items, IMAGE_QUERY, STICKER_QUERY);
   const turnStart = Date.now();
@@ -2971,7 +3036,7 @@ async function answerTurn(ctx, items, stopLoading) {
   if (images.length) {
     try {
       const files = await Promise.all(images.slice(-3).map((id) => uploadLineImageToDify(id, sessionId))); // Dify รับสูงสุด 3 รูป
-      answer = await askDify(sessionId, query, files, { userText, info: difyInfo });
+      answer = await askDify(sessionId, query, files, { userText, info: difyInfo, signal: turn && turn.signal });
       fromDify = !!answer;
       if (answer && NO_IMAGE_SEEN_RX.test(answer)) console.log(`[image] ${sessionId.slice(0, 8)} WARNING: Dify answered as if it did not see ${files.length} attached image(s) — check that File Upload is enabled in the published Dify app`);
     } catch (e) {
@@ -2980,8 +3045,14 @@ async function answerTurn(ctx, items, stopLoading) {
       fallbackKind = 'image-open-failed';
     }
   } else {
-    answer = await askDify(sessionId, query, undefined, { userText, info: difyInfo });
+    answer = await askDify(sessionId, query, undefined, { userText, info: difyInfo, signal: turn && turn.signal });
     fromDify = !!answer;
+  }
+  // v3.59: ลูกค้าส่งข้อความเพิ่มก่อนได้คำตอบ -> รอบนี้ยกเลิก ไม่ส่งอะไร ข้อความทั้งหมดถูกตอบรวมในรอบถัดไป
+  if (turn && turn.aborted) {
+    console.log(`[turn] ${sessionId.slice(0, 8)} cancelled after ${Math.round((Date.now() - turnStart) / 1000)}s, all lines will be answered together`);
+    recordCost({ sid: sessionId, kind: images.length ? 'image' : 'text', q: userText, nodes: difyInfo.nodes, message: difyInfo.message });
+    return;
   }
   if (!answer) { answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏'; fallbackKind = fallbackKind || 'no-answer'; }
   const msgs = [answer.slice(0, 4900)];
@@ -3027,6 +3098,11 @@ async function answerTurn(ctx, items, stopLoading) {
     }
   }
   if (stopLoading) await stopLoading(); // หยุดต่อเวลาก่อนส่ง (คำตอบที่มาถึงทำให้จุดหายเอง)
+  if (turn && !turn.commit()) { // v3.59: ลูกค้าส่งข้อความเพิ่มระหว่างเตรียมส่ง -> ไม่ส่ง ตอบรวมในรอบถัดไป
+    console.log(`[turn] ${sessionId.slice(0, 8)} answer was ready but the customer sent another line: answering all lines together`);
+    recordCost({ sid: sessionId, kind: images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text'), q: userText, nodes: difyInfo.nodes, message: difyInfo.message, tts: difyInfo.tts });
+    return;
+  }
   const delivery = await sendAnswer(s, ev, pushTarget, msgs);
   // v3.50: สถิติคุณภาพ (ไม่เก็บข้อความหรือ userId) งานตรวจรายวันอ่านจาก /health · v3.52: เก็บผลการส่งด้วย
   const turnKind = images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text');
@@ -3221,6 +3297,11 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .bub { max-width: 62%; padding: 9px 13px; border-radius: 15px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
   .user .bub { background: #f1f2f4; border-top-left-radius: 4px; }
   .bot .bub { background: #cce4ff; border-top-right-radius: 4px; }
+  .bub img.uimg { display: block; max-width: 220px; max-height: 260px; border-radius: 10px; margin-bottom: 4px; background: #e8eaed; min-width: 60px; min-height: 40px; }
+  .bub img.pimg { display: block; max-width: 140px; max-height: 160px; border-radius: 8px; margin-bottom: 4px; background: #fff; }
+  .bub .cap { font-size: 12px; color: #55606b; }
+  .bub .qrs { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .bub .qr { font-size: 12px; background: #fff; border: 1px solid #9cc3ee; border-radius: 12px; padding: 1px 8px; color: #1f4f86; white-space: nowrap; }
   .mtime { font-size: 10.5px; color: #98a2ad; flex: none; padding-bottom: 2px; }
   .bot .bub.ab { background: #d4f5dd; }
   .chat-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #b3bcc5; gap: 10px; }
@@ -3917,18 +3998,38 @@ function fetchHist(id) {
       if (dl !== lastDay) { h += '<div class="day"><span>' + dl + '</span></div>'; lastDay = dl; }
       if (m.r === 'u') {
         var mav = s.pic ? '<img src="' + esc(s.pic) + '" alt="">' : (s.type === 'group' ? '👥' : '👤');
-        h += '<div class="mrow user"><div class="mav">' + mav + '</div><div class="bub">' + esc(m.t) + '</div><div class="mtime">' + hhmm(m.at) + '</div></div>';
+        h += '<div class="mrow user"><div class="mav">' + mav + '</div><div class="bub">' + (m.img ? '<img class="uimg" data-uimg="' + esc(m.img) + '" alt=""><div class="cap">' + esc(m.t) + '</div>' : esc(m.t)) + '</div><div class="mtime">' + hhmm(m.at) + '</div></div>';
       } else {
         var isAdm = m.r === 'a';
-        h += '<div class="mrow bot"><div class="mtime">' + (isAdm ? '🧑‍💼 แอดมิน · ' : '🤖 ') + hhmm(m.at) + '</div><div class="bub' + (isAdm ? ' ab' : '') + '">' + esc(m.t) + '</div></div>';
+        var bb = (m.pimg ? '<img class="pimg" src="' + esc(m.pimg) + '" alt="" loading="lazy"><div class="cap">' + esc(m.t) + '</div>' : esc(m.t))
+          + (m.qr && m.qr.length ? '<div class="qrs">' + m.qr.map(function(x) { return '<span class="qr">' + esc(x) + '</span>'; }).join('') + '</div>' : '');
+        h += '<div class="mrow bot"><div class="mtime">' + (isAdm ? '🧑‍💼 แอดมิน · ' : '🤖 ') + hhmm(m.at) + '</div><div class="bub' + (isAdm ? ' ab' : '') + '">' + bb + '</div></div>';
       }
     }
     var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     var wasFilled = el.dataset.for === id;
     el.innerHTML = h;
+    loadThumbs(el); // v3.59: ภาพย่อรูปที่ลูกค้าส่ง
     if (!wasFilled || atBottom) el.scrollTop = el.scrollHeight;
     el.dataset.for = id;
   }).catch(function() {});
+}
+
+// v3.59: ภาพย่อรูปที่ลูกค้าส่ง ดึงด้วยรหัสแอดมินแล้วแสดงในฟองแชท (ยังไม่มีภาพย่อ = ซ่อนรูป ลองใหม่ทีหลัง)
+var thumbCache = {};
+function loadThumbs(el) {
+  var imgs = el.querySelectorAll('img[data-uimg]');
+  for (var i = 0; i < imgs.length; i++) (function(img) {
+    var id = img.getAttribute('data-uimg');
+    var c = thumbCache[id];
+    if (c && c.url) { img.src = c.url; return; }
+    img.style.display = 'none';
+    if (c && c.failedAt && Date.now() - c.failedAt < 30000) return;
+    fetch('/admin/api/uimg?id=' + encodeURIComponent(id), { headers: { 'x-admin-key': KEY } })
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+      .then(function(b) { thumbCache[id] = { url: URL.createObjectURL(b) }; img.src = thumbCache[id].url; img.style.display = ''; })
+      .catch(function() { thumbCache[id] = { failedAt: Date.now() }; });
+  })(imgs[i]);
 }
 
 function selectChat(id) {
@@ -4764,6 +4865,16 @@ function handleAdmin(req, res, path, body) {
     return sendJson(res, 200, { ok: true, id, history: s.history });
   }
 
+  // v3.59: ภาพย่อรูปที่ลูกค้าส่ง (หน้าแชทหลังบ้าน)
+  if (path === '/admin/api/uimg' && req.method === 'GET') {
+    const file = uimgFile(new URL(req.url, 'http://x').searchParams.get('id') || '');
+    let buf = null;
+    try { buf = file ? fs.readFileSync(file) : null; } catch (_) {}
+    if (!buf) return sendJson(res, 404, { ok: false, error: 'no thumbnail' });
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=86400' });
+    return res.end(buf);
+  }
+
   if (path === '/admin/api/mute' && req.method === 'POST') {
     let data = {};
     try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
@@ -4843,7 +4954,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.58', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.59', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

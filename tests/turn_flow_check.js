@@ -1,8 +1,8 @@
 'use strict';
 
 // v3.38 end-to-end check: the real server.js against mock LINE and Dify servers.
-//  FB-02     two messages sent together -> one Dify run and one reply; a message sent while
-//            the answer is being prepared waits and is answered next
+//  FB-02     two messages sent together -> one Dify run and one reply; v3.59: a message sent while
+//            the answer is being prepared cancels that run (Dify is asked to stop) and both lines get one answer
 //  FB-05/10  a photo and its caption reach Dify as one question with the photo attached
 //  FB-09     a stream that breaks after Dify started still delivers the finished answer
 //  FB-11     "ขอเบอทีมขาย" with no known province asks once, then answers from the team table
@@ -22,7 +22,9 @@ const uid = (k) => 'U' + crypto.createHash('md5').update(k).digest('hex');
 const USER = { join: uid('join'), busy: uid('busy'), photo: uid('photo'), team: uid('team'), cut: uid('cut'), norec: uid('norec'), ayut: uid('ayut') };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const seen = { replies: [], pushes: [], chats: [], uploads: 0, loading: [] };
+const seen = { replies: [], pushes: [], chats: [], uploads: 0, loading: [], stops: [] };
+let PHOTO = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0xff, 0xd9]); // v3.59: a real JPEG when sharp is installed (thumbnail check)
+let haveSharp = false;
 const activeByUser = {};
 let overlap = false;
 
@@ -34,11 +36,13 @@ function chat(p, res) {
   const u = p.user;
   activeByUser[u] = (activeByUser[u] || 0) + 1;
   if (activeByUser[u] > 1) overlap = true;
-  const done = () => { activeByUser[u]--; };
+  let finished = false;
+  const done = () => { if (finished) return; finished = true; activeByUser[u]--; };
+  res.on('close', done); // v3.59: the bridge closes the stream when it cancels a run
   if (p.response_mode !== 'streaming') { done(); return json(res, 400, { message: 'expected streaming' }); }
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const cut = /CUT/.test(p.query);
-  const ids = cut ? { conversation_id: 'conv-cut', message_id: 'msg-cut' } : { conversation_id: 'conv-' + u.slice(1, 7), message_id: 'msg-' + seen.chats.length };
+  const ids = cut ? { conversation_id: 'conv-cut', message_id: 'msg-cut' } : { conversation_id: 'conv-' + u.slice(1, 7), message_id: 'msg-' + seen.chats.length, task_id: 'task-' + seen.chats.length };
   res.write(sseLine(Object.assign({ event: 'workflow_started' }, ids)));
   if (cut) {
     res.write(sseLine(Object.assign({ event: 'message', answer: 'คำตอบที่ Dify' }, ids)));
@@ -46,6 +50,7 @@ function chat(p, res) {
   }
   const answer = /NOREC/.test(p.query) ? 'ตอนนี้ยังไม่มีคำแนะนำสินค้าสำหรับโรคนี้ค่ะ' : 'รับคำถามแล้วค่ะ: ' + p.query.split('\n')[0];
   setTimeout(() => {
+    if (finished) return; // cancelled by the bridge
     res.write('event: ping\n\n');
     res.write(sseLine(Object.assign({ event: 'message', answer }, ids)));
     res.write(sseLine(Object.assign({ event: 'message_end' }, ids)));
@@ -64,13 +69,14 @@ const mock = http.createServer((req, res) => {
     if (url.startsWith('/v2/bot/message/push')) { seen.pushes.push(body()); return json(res, 200, {}); }
     if (url.startsWith('/v2/bot/chat/loading')) { seen.loading.push({ chatId: body().chatId, at: Date.now() }); return json(res, 202, {}); }
     if (url.startsWith('/v2/bot/profile/')) return json(res, 200, { displayName: 'ลูกค้าทดสอบ' });
-    if (/^\/v2\/bot\/message\/[^/]+\/content/.test(url)) { res.writeHead(200, { 'Content-Type': 'image/jpeg' }); return res.end(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0xff, 0xd9])); }
+    if (/^\/v2\/bot\/message\/[^/]+\/content/.test(url)) { res.writeHead(200, { 'Content-Type': 'image/jpeg' }); return res.end(PHOTO); }
     if (url.startsWith('/v1/files/upload')) { seen.uploads++; return json(res, 201, { id: 'file-' + seen.uploads }); }
     if (url.startsWith('/v1/conversations')) return json(res, 200, { data: [] });
     if (url.startsWith('/v1/messages')) {
       const conv = new URL(url, 'http://x').searchParams.get('conversation_id');
       return json(res, 200, { data: conv === 'conv-cut' ? [{ id: 'msg-cut', answer: 'คำตอบที่ Dify ทำเสร็จแล้วค่ะ' }] : [] });
     }
+    if (/^\/v1\/chat-messages\/[^/]+\/stop/.test(url)) { seen.stops.push(url.split('/')[3]); return json(res, 200, { result: 'success' }); }
     if (url.startsWith('/v1/chat-messages')) return chat(body(), res);
     json(res, 404, {});
   });
@@ -96,6 +102,15 @@ function health(port) {
     http.get({ host: '127.0.0.1', port, path: '/' }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => { try { resolve(JSON.parse(d)); } catch (_) { resolve(null); } }); }).on('error', () => resolve(null));
   });
 }
+// v3.59: GET an admin API path with a key
+function adminGet(port, p, key) {
+  return new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port, path: p, headers: { 'x-admin-key': key || '' } }, (res) => {
+      const c = []; res.on('data', (d) => c.push(d));
+      res.on('end', () => { const b = Buffer.concat(c); let j = {}; try { j = JSON.parse(b.toString('utf8')); } catch (_) {} resolve({ status: res.statusCode, type: res.headers['content-type'] || '', bytes: b.length, json: j }); });
+    }).on('error', () => resolve({ status: 0, type: '', bytes: 0, json: {} }));
+  });
+}
 function freePort() {
   return new Promise((resolve) => { const s = http.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 }
@@ -105,14 +120,15 @@ const textOf = (token) => repliesFor(token).map((r) => r.messages.map((m) => m.t
 const chatsFor = (user) => seen.chats.filter((c) => c.user === user);
 
 mock.listen(0, '127.0.0.1', async () => {
+  try { PHOTO = await require('sharp')({ create: { width: 400, height: 300, channels: 3, background: { r: 60, g: 140, b: 60 } } }).jpeg().toBuffer(); haveSharp = true; } catch (_) {}
   const mockBase = 'http://127.0.0.1:' + mock.address().port;
   const port = await freePort();
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ladda-turn-'));
   const env = Object.assign({}, process.env, {
-    PORT: String(port), LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'test-token', DIFY_API_KEY: 'test-key',
+    PORT: String(port), LINE_CHANNEL_SECRET: SECRET, LINE_CHANNEL_ACCESS_TOKEN: 'test-token', DIFY_API_KEY: 'test-key', ADMIN_KEY: 'turn-flow-admin-key',
     LINE_API_BASE: mockBase, LINE_DATA_API_BASE: mockBase, DIFY_API_BASE: mockBase + '/v1',
     TEAM_SHEET_URL: mockBase + '/team-sheet', PRODUCT_SHEET_ID: 'offline-test', STATE_DIR: stateDir,
-    REGISTER: 'off', LINE_LOADING_SECONDS: '5', LINE_LOADING_REFRESH_SEC: '1', LINE_TEXT_WAIT_SECONDS: '1', LINE_IMAGE_WAIT_SECONDS: '3', DIFY_RECOVER_SEC: '20',
+    REGISTER: 'off', LINE_LOADING_SECONDS: '5', LINE_LOADING_REFRESH_SEC: '1', LINE_TEXT_WAIT_SECONDS: '1', LINE_FRAGMENT_WAIT_SECONDS: '1', LINE_IMAGE_WAIT_SECONDS: '3', DIFY_RECOVER_SEC: '20',
     DIFY_RESPONSE_MODE: '', FAKE_DIFY_ANSWER: '', LINE_JOIN_MESSAGES: '', SUPABASE_URL: '', SUPABASE_KEY: '', SUPABASE_SERVICE_KEY: '',
     DIFY_DATASET_KEY: '', LIFF_ID: '', ADMIN_NOTIFY_IDS: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', RAILWAY_VOLUME_MOUNT_PATH: ''
   });
@@ -154,8 +170,13 @@ mock.listen(0, '127.0.0.1', async () => {
     assert.deepStrictEqual(chatsFor(USER.join).map((c) => c.query), ['หอมแดงเป็นโรคใบไหม้\nใช้ยาอะไรดีคะ']);
     assert.strictEqual(repliesFor(a1).length, 0, 'first line got its own answer');
     assert.strictEqual(repliesFor(a2).length, 1);
-    assert.deepStrictEqual(chatsFor(USER.busy).map((c) => c.query), ['SLOW ข้าวโพดหนอนกินใบ', 'แล้วใช้ช่วงไหนดี']);
-    assert.strictEqual(repliesFor(b1).length + repliesFor(b2).length, 2);
+    // v3.59: the second line came while the first answer was being prepared -> that run is cancelled and both lines get one answer
+    assert.deepStrictEqual(chatsFor(USER.busy).map((c) => c.query), ['SLOW ข้าวโพดหนอนกินใบ', 'SLOW ข้าวโพดหนอนกินใบ\nแล้วใช้ช่วงไหนดี']);
+    assert.strictEqual(repliesFor(b1).length, 0, 'the cancelled run must not answer');
+    assert.strictEqual(repliesFor(b2).length, 1);
+    const firstBusyTask = 'task-' + (seen.chats.indexOf(chatsFor(USER.busy)[0]) + 1);
+    assert(seen.stops.includes(firstBusyTask), 'the cancelled run should ask Dify to stop: ' + JSON.stringify(seen.stops));
+    assert(textOf(b2).includes('SLOW ข้าวโพดหนอนกินใบ') && !textOf(b2).includes('ระบบขัดข้อง'), textOf(b2));
     assert.strictEqual(overlap, false, 'one chat ran two Dify calls at once');
     // FB-05/FB-10
     const pc = chatsFor(USER.photo);
@@ -164,6 +185,18 @@ mock.listen(0, '127.0.0.1', async () => {
     assert(pc[0].query.startsWith('ใบทุเรียนเป็นจุดแบบนี้คือโรคอะไร\n') && pc[0].query.includes('รูปภาพ 1 รูป'), pc[0].query);
     assert.strictEqual(repliesFor(c1).length, 0);
     assert.strictEqual(repliesFor(c2).length, 1);
+    // v3.59: the admin chat page gets the customer's photo as a thumbnail and the buttons the bot offered
+    const hist = await adminGet(port, '/admin/api/history?id=' + USER.photo, 'turn-flow-admin-key');
+    const photoEntry = (hist.json.history || []).find((x) => x.r === 'u' && x.img);
+    assert(photoEntry, 'customer photo entry should carry its LINE message id: ' + JSON.stringify(hist.json.history));
+    if (haveSharp) {
+      const th = await adminGet(port, '/admin/api/uimg?id=' + photoEntry.img, 'turn-flow-admin-key');
+      assert.strictEqual(th.status, 200, 'thumbnail ' + th.status);
+      assert(/image\/jpeg/.test(th.type) && th.bytes > 200, th.type + ' ' + th.bytes);
+    }
+    assert.strictEqual((await adminGet(port, '/admin/api/uimg?id=' + photoEntry.img, 'wrong-key')).status, 401);
+    const nh = await adminGet(port, '/admin/api/history?id=' + USER.norec, 'turn-flow-admin-key');
+    assert((nh.json.history || []).some((x) => x.r === 'b' && Array.isArray(x.qr) && x.qr.includes('📞 ทีมขายในพื้นที่')), 'offered buttons should be kept for the admin page: ' + JSON.stringify(nh.json.history));
     // FB-11 / FB-04
     assert.strictEqual(chatsFor(USER.team).length, 0, 'team request went to Dify');
     assert(textOf(d2).includes('พนักงานขายที่ดูแล จ.ราชบุรี') && textOf(d2).includes('063-205-9076'), textOf(d2));
