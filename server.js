@@ -119,6 +119,11 @@
 //     v3.61 (2 พ.ย. 2569 เจ้าของสั่ง): ไม่มีระบบสมาชิกแล้ว (REGISTER=off) ลูกค้ากดปุ่ม "ทีมงานในพื้นที่" หรือขอทีมขายโดยไม่บอกจังหวัด
 //       บอทถามจังหวัดก่อนทุกครั้ง แล้วตอบพนักงานขายของจังหวัดที่ลูกค้าพิมพ์ ไม่ใช้จังหวัดที่ระบบจำไว้ (ข้อมูลลงทะเบียนเดิม
 //       หรือจังหวัดที่เคยพิมพ์ในแชท) · โหมดที่ยังมีการลงทะเบียน (REGISTER=on/soft) ตอบจากจังหวัดในโปรไฟล์ตามเดิม
+//     v3.62 (2 พ.ย. 2569 เจ้าของสั่ง): ยกเลิกการผูกทีมขายกับสมาชิกเดิม — REGISTER=off ไม่ใช้จังหวัดในโปรไฟล์ (ข้อมูลลงทะเบียนเดิม
+//       แอดมิน POS หรือแชทเก่า) เลือกพนักงานขาย: Dify ได้ customer_province เฉพาะจังหวัดที่ลูกค้าพิมพ์ในแชท 48 ชม. (ว่าง = ถามจังหวัดก่อน)
+//       การ์ดเคสฝ่ายขายเลือกทีมจากจังหวัดในแชท และแสดงจังหวัดในโปรไฟล์เป็น "จังหวัดในข้อมูลเดิม" · ลิงก์ฟอร์ม LIFF เดิมเปิดแล้ว
+//       เจอหน้าบอกว่าไม่ต้องลงทะเบียน และไม่รับสมัครหรือส่งข้อมูลทีมขาย · ข้อความ "ลงทะเบียนเรียบร้อยแล้ว" ได้คำตอบว่าไม่ต้องลงทะเบียน
+//       (เดิมส่งข้อความยืนยันที่มีทีมขาย) · ข้อมูลลูกค้าใน CRM และ POS ไม่ลบ หน้าแอดมินยังแสดงเขตตามจังหวัดในโปรไฟล์ให้แอดมินดู
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -824,7 +829,8 @@ async function askDify(sessionId, text, files, opts) {
   if (difyQuery !== text) console.log(`[sheet-context] ${sid} attached verified sugarcane herbicide matches`);
   const payload = {
     // v3.30: ส่งจังหวัดจากโปรไฟล์ CRM ให้ Dify เลือกทีมขายประจำเขตได้โดยไม่ต้องถามซ้ำ
-    inputs: { customer_province: crmProvince(sessionId) },
+    // v3.62: REGISTER=off ส่งเฉพาะจังหวัดที่ลูกค้าพิมพ์ในแชท 48 ชม. ไม่ผูกทีมขายจากข้อมูลสมาชิกเดิม (ว่าง = Dify ถามจังหวัดก่อน)
+    inputs: { customer_province: difyProvince(sessionId) },
     query: difyQuery,
     response_mode: DIFY_MODE,
     user: sessionId,
@@ -1484,6 +1490,17 @@ const CROP_WORDS = ['ทุเรียน', 'นาข้าว', 'ข้าว
 function crmProvince(id) {
   const c = crm.get(id);
   return c && c.province ? String(c.province).trim().slice(0, 100) : '';
+}
+// v3.62 (เจ้าของสั่ง 2 พ.ย. 2569): ยกเลิกการผูกทีมขายกับสมาชิกเดิม — REGISTER=off ใช้เฉพาะจังหวัดที่ลูกค้าพิมพ์ในแชทเองภายใน 48 ชม.
+// (ข้อความล่าสุดก่อน) ไม่ใช้จังหวัดในโปรไฟล์ที่มาจากการลงทะเบียนเดิม แอดมิน POS หรือแชทเก่า
+const CHAT_PROVINCE_MS = 48 * 3600000;
+function chatProvinceOf(s, now) {
+  const t = now || Date.now();
+  return ((s && s.history) || []).filter((h) => h && h.r === 'u' && h.at && t - h.at <= CHAT_PROVINCE_MS)
+    .map((h) => provinceOf(h.t)).filter(Boolean).pop() || '';
+}
+function difyProvince(id) {
+  return REG_MODE === 'off' ? chatProvinceOf(sessions.get(id)).slice(0, 100) : crmProvince(id);
 }
 
 // v3.45-v2: รุ่นก่อนเดาจังหวัดจากคำทั่วไป ("เต็มเลย" -> จ.เลย, "แพร่ระบาด" -> จ.แพร่, "ตากแดด" -> จ.ตาก) แล้วเก็บเป็นจังหวัดของลูกค้า
@@ -2575,8 +2592,24 @@ function attachTeamButton(msgs, answer) {
   }
 }
 
+// v3.62 (เจ้าของสั่ง 2 พ.ย. 2569): REGISTER=off ไม่มีระบบสมาชิกแล้ว ลิงก์ฟอร์มเดิม (ปุ่มในแชทเก่า) เปิดหน้านี้แทนฟอร์ม
+function liffClosedPage() {
+  const id = LIFF_ID.replace(/[^\w-]/g, '');
+  return '<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>น้องลัดดา ICP Ladda</title>'
+    + '<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;700&display=swap" rel="stylesheet">'
+    + '<style>body{margin:0;font-family:"Noto Sans Thai",system-ui,-apple-system,sans-serif;background:#f6f5f0;color:#111827}.card{max-width:430px;margin:0 auto;padding:44px 24px;text-align:center;line-height:1.7}'
+    + 'h1{font-size:19px;margin:10px 0 10px}p{font-size:15px;color:#374151;margin:0 0 10px}.btn{margin-top:14px;padding:12px 30px;border:0;border-radius:12px;background:#16a34a;color:#fff;font-size:16px;font-weight:700;font-family:inherit}</style></head>'
+    + '<body><div class="card"><div style="font-size:46px">🌾</div><h1>ตอนนี้ไม่ต้องลงทะเบียนแล้วค่ะ</h1>'
+    + '<p>คุยกับน้องลัดดาในแชทได้เลย ถามเรื่องสินค้า โรค แมลง วัชพืช หรือวิธีใช้ยาได้ทุกเรื่องค่ะ</p>'
+    + '<p>อยากรู้ว่าพนักงานขายคนไหนดูแลพื้นที่ของคุณ กดเมนู "ทีมงานในพื้นที่" ในแชท แล้วบอกจังหวัดกับน้องลัดดาได้เลยค่ะ</p>'
+    + (id ? '<button class="btn" id="close" style="display:none">กลับไปที่แชท</button></div><script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>'
+      + '<script>liff.init({ liffId: ' + JSON.stringify(id) + ' }).then(function () { if (liff.isInClient()) { var b = document.getElementById("close"); b.style.display = "inline-block"; b.onclick = function () { liff.closeWindow(); }; } }).catch(function () {});</script>'
+      : '</div>')
+    + '</body></html>';
+}
 let liffHtmlCache = null;
 function liffPage() {
+  if (REG_MODE === 'off') return liffClosedPage();
   if (liffHtmlCache === null) {
     try { liffHtmlCache = fs.readFileSync(pathmod.join(__dirname, 'liff.html'), 'utf8'); }
     catch (e) { liffHtmlCache = ''; console.log('[liff] liff.html not found next to server.js:', e.message); }
@@ -2606,7 +2639,7 @@ async function handleLiff(req, res, path, body) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(liffPage());
   }
-  if (req.method === 'GET' && path === '/liff/config') return sendJson(res, 200, { ok: true, liffId: LIFF_ID, url: LIFF_URL, on: REG_UI === 'liff' });
+  if (req.method === 'GET' && path === '/liff/config') return sendJson(res, 200, { ok: true, liffId: LIFF_ID, url: LIFF_URL, on: REG_UI === 'liff' && REG_MODE !== 'off' });
   if (req.method === 'GET' && path === '/liff/locations.json') {
     loadLocations();
     if (!locBuf) return sendJson(res, 404, { ok: false, error: 'locations not available' });
@@ -2615,6 +2648,8 @@ async function handleLiff(req, res, path, body) {
     return res.end(gz ? locGz : locBuf);
   }
   if (req.method !== 'POST') return sendJson(res, 404, { ok: false, error: 'not found' });
+  // v3.62: REGISTER=off ไม่รับสมัคร ไม่แก้ข้อมูล และไม่ส่งข้อมูลโปรไฟล์หรือทีมขายให้หน้า LIFF
+  if (REG_MODE === 'off') return sendJson(res, 409, { ok: false, closed: true, error: REG_OFF_REPLY });
   const data = readJson(body);
   const who = await liffVerify(data.idToken, data.accessToken);
   if (!who) return sendJson(res, 401, { ok: false, error: 'ยืนยันตัวตนกับ LINE ไม่สำเร็จ (token ไม่ถูกต้อง/หมดอายุ หรือ LINE Login channel ไม่ตรง)' });
@@ -2682,6 +2717,7 @@ function detectPhone(id, s, text) {
 }
 
 // v3.31: ลูกค้าทิ้งเบอร์ + มีสัญญาณสนใจซื้อ -> สรุปเป็นเคสส่งกลุ่ม LINE ฝ่ายขาย (ทีมเขตตามจังหวัดใน CRM)
+// v3.62: REGISTER=off เลือกทีมจากจังหวัดที่ลูกค้าพิมพ์ในแชท 48 ชม. เท่านั้น จังหวัดในโปรไฟล์แสดงเป็นข้อมูลเดิม
 function maybeSendLead(id, s, phone) {
   if (!LEAD_TARGETS.length || !s || s.type !== 'user' || !phone) return false;
   const now = Date.now();
@@ -2689,16 +2725,17 @@ function maybeSendLead(id, s, phone) {
   if (!info.interested) { console.log(`[lead] ${id.slice(0, 8)} phone without purchase context — admin flag only`); return false; }
   if (!leads.shouldSend(s, phone, now)) return false;
   const c = crmGet(id);
-  const province = c.province || (c.auto && c.auto.province) || '';
-  const z = zoneInfo(province);
+  const profileProvince = c.province || (c.auto && c.auto.province) || '';
   // จังหวัดล่าสุดที่ลูกค้าพิมพ์ในแชท 48 ชม. (อาจต่างจากจังหวัดที่ลงทะเบียนไว้)
-  const chatProvince = (s.history || []).filter((h) => h && h.r === 'u' && (!h.at || now - h.at <= 48 * 3600000))
-    .map((h) => provinceOf(h.t)).filter(Boolean).pop() || '';
+  const chatProvince = chatProvinceOf(s, now);
+  const province = REG_MODE === 'off' ? chatProvince : profileProvince;
+  const oldProvince = REG_MODE === 'off' && profileProvince !== chatProvince ? profileProvince : '';
+  const z = zoneInfo(province);
   const cz = chatProvince ? zoneInfo(chatProvince) : null;
   const card = leads.buildCard({
     name: leads.cleanName(c.real_name, s.name, c.display_name), phone,
     phoneNote: (c.auto && c.auto.phone_ctx) || '', province, zone: z ? z.zone : '', team: z ? z.team : '',
-    chatProvince, chatZone: cz ? cz.zone : '',
+    chatProvince, chatZone: cz ? cz.zone : '', oldProvince,
     crops: c.crops || (c.auto && c.auto.crops) || '', products: info.products, questions: info.questions,
     promised: !!(s.cb && s.cb.src === 'bot'), at: now, adminUrl: PUBLIC_URL ? PUBLIC_URL + '/admin' : ''
   });
@@ -2889,7 +2926,8 @@ async function handleEvent(ev) {
     const liffOn = REG_UI === 'liff' && !!LIFF_URL;
     let cmd = ev.message.type === 'text' ? regCmd(text) : '';
     // ลูกค้ากด "ลงทะเบียนเรียบร้อยแล้ว ✅" จากหน้า LIFF (liff.sendMessages) -> ตอบยืนยัน + ตอบคำถามที่ค้างไว้ (ใช้ Reply ไม่กินโควต้า)
-    if (ev.message.type === 'text' && /^ลงทะเบียนเรียบร้อยแล้ว/.test(text.trim()) && regDone(c)) {
+    // v3.62: REGISTER=off ไม่ส่งข้อความยืนยันเดิม (มีทีมขายของสมาชิก) ให้ไปได้คำตอบว่าไม่ต้องลงทะเบียนด้านล่าง
+    if (REG_MODE !== 'off' && ev.message.type === 'text' && /^ลงทะเบียนเรียบร้อยแล้ว/.test(text.trim()) && regDone(c)) {
       c.auto = c.auto || {};
       const msgs = [(c.auto.reg && c.auto.reg.msg) || `✅ ลงทะเบียนเรียบร้อยค่ะ ขอบคุณค่ะ 🙏 (${regSummaryText(c)})\n\nสอบถามเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾`];
       if (s.regPending) { const ans = await askDify(sessionId, s.regPending); if (ans) msgs.push(ans.slice(0, 4900)); s.regPending = ''; }
@@ -2919,7 +2957,7 @@ async function handleEvent(ev) {
     // และเลิกถามข้อมูลที่ค้างไว้จากตอนบังคับลงทะเบียน (ลูกค้าที่กรอกไม่จบ)
     if (REG_MODE === 'off') {
       if (s.reg) { s.reg = null; s.regPending = ''; markDirty(); }
-      if (cmd || (ev.message.type === 'text' && /^(ขอ)?(ลงทะเบียน|สมัคร)(ผ่าน|ใน|ทาง)แชท/.test(text.trim()))) {
+      if (cmd || (ev.message.type === 'text' && /^(ขอ)?(ลงทะเบียน|สมัคร)(ผ่าน|ใน|ทาง)แชท|^ลงทะเบียนเรียบร้อยแล้ว/.test(text.trim()))) {
         console.log('[reg] ' + sessionId.slice(0, 8) + ' ' + (cmd || 'chat') + ' -> registration is off');
         await sendAnswer(s, ev, pushTarget, REG_OFF_REPLY, { system: true });
         return;
@@ -4985,7 +5023,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.61', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.62', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

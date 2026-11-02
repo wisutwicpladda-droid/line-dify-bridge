@@ -76,6 +76,8 @@ function buildCard(x) {
   if (x.chatProvince && x.chatProvince !== x.province) {
     lines.push('• ในแชทลูกค้าพิมพ์ว่าอยู่: ' + place(x.chatProvince, x.chatZone));
   }
+  // v3.62: ไม่มีระบบสมาชิกแล้ว จังหวัดในโปรไฟล์ (ข้อมูลลงทะเบียนเดิม) เป็นข้อมูลประกอบ ไม่ใช้เลือกทีม
+  if (x.oldProvince) lines.push('• จังหวัดในข้อมูลเดิม: จ.' + x.oldProvince + ' (ลูกค้ายังไม่ได้บอกในแชท)');
   if (x.crops) lines.push('• พืช: ' + x.crops);
   if (x.phoneNote && !questions.some((q) => q.includes(x.phoneNote))) lines.push('• ข้อความตอนให้เบอร์: ' + x.phoneNote);
 

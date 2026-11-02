@@ -59,6 +59,10 @@ assert.strictEqual(cleanName('วิส\uFFFD\uFFFDธิ์', '…', 'Wisut'), 
 const moved = buildCard({ name: 'ก', phone: '0812345678', province: 'ชุมพร', zone: 'A06', chatProvince: 'ลพบุรี', chatZone: 'A05', at: now });
 assert(moved.includes('• จังหวัด: จ.ชุมพร (เขต A06)\n• ในแชทลูกค้าพิมพ์ว่าอยู่: จ.ลพบุรี (เขต A05)'), 'ไม่แสดงจังหวัดจากแชท');
 assert(moved.includes('ยังไม่ทราบเขต'), 'ไม่มีทีม ต้องบอกให้แอดมินกระจายเคส');
+// v3.62: ไม่มีระบบสมาชิกแล้ว จังหวัดในข้อมูลเดิมแสดงเป็นข้อมูลประกอบ และไม่ใช้เลือกทีม
+const unbound = buildCard({ name: 'ข', phone: '0812345678', province: '', zone: '', team: '', oldProvince: 'ราชบุรี', at: now });
+assert(unbound.includes('• จังหวัด: ยังไม่ทราบ\n• จังหวัดในข้อมูลเดิม: จ.ราชบุรี (ลูกค้ายังไม่ได้บอกในแชท)'), 'จังหวัดในข้อมูลเดิมต้องแสดงเป็นข้อมูลประกอบ: ' + unbound);
+assert(unbound.includes('• ยังไม่ทราบเขต') && !unbound.includes('(เขต '), 'ข้อมูลเดิมต้องไม่เลือกทีม: ' + unbound);
 
 // server.js: ส่งเคสหลังอัปเดต CRM, เงียบในกลุ่มรับเคส, log groupId ตอน OA เข้ากลุ่ม, จำสถานะส่งแล้วข้ามการ restart
 const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -69,4 +73,4 @@ assert(server.includes('lead: (s.lead && typeof s.lead'), 'สถานะเค
 assert(server.includes('linePush(to, card, LEAD_LINE_TOKEN)'), 'การ์ดเคสยังไม่ส่งผ่าน OA แจ้งเตือนแยก');
 assert(server.includes('leads.cleanName(c.real_name, s.name, c.display_name)'), 'ชื่อลูกค้าที่ encoding เสียยังหลุดเข้าการ์ด');
 
-console.log('PASS: sales lead cards — interest detection, 48h window, 24h dedup, card fields, group silence');
+console.log('PASS: sales lead cards — interest detection, 48h window, 24h dedup, card fields, group silence, old member province shown without a team');

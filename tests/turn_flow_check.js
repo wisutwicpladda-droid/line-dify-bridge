@@ -13,6 +13,9 @@
 //            without Dify, the photo rules sit in an internal block, and the rich menu has one area
 //  v3.61     no membership: the team button and the team quick reply ask the province first, even when the
 //            bot remembers one, then answer for the province the customer types
+//  v3.62     the sales team is no longer tied to old member data: a former member's profile province does not reach
+//            Dify or pick the team on the sales lead card, "ลงทะเบียนเรียบร้อยแล้ว" gets "no need to register",
+//            and the old LIFF form link shows that registration is closed and takes no registrations
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -24,6 +27,7 @@ const { spawn } = require('child_process');
 const SECRET = 'turn-flow-secret';
 const uid = (k) => 'U' + crypto.createHash('md5').update(k).digest('hex');
 const USER = { join: uid('join'), busy: uid('busy'), photo: uid('photo'), team: uid('team'), cut: uid('cut'), norec: uid('norec'), ayut: uid('ayut') };
+const LEADG = 'C' + crypto.createHash('md5').update('lead-group').digest('hex'); // v3.62: sales group that gets lead cards
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const seen = { replies: [], pushes: [], chats: [], uploads: 0, loading: [], stops: [] };
@@ -130,6 +134,24 @@ function adminGet(port, p, key) {
     }).on('error', () => resolve({ status: 0, type: '', bytes: 0, json: {} }));
   });
 }
+// v3.62: POST JSON (admin API with a key, or the LIFF API) and GET a page as text
+function postJson(port, p, data, key) {
+  const body = JSON.stringify(data);
+  return new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': key || '', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+      const c = []; res.on('data', (d) => c.push(d));
+      res.on('end', () => { let j = {}; try { j = JSON.parse(Buffer.concat(c).toString('utf8')); } catch (_) {} resolve({ status: res.statusCode, json: j }); });
+    });
+    req.on('error', () => resolve({ status: 0, json: {} }));
+    req.end(body);
+  });
+}
+function getText(port, p) {
+  return new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port, path: p }, (res) => { const c = []; res.on('data', (d) => c.push(d)); res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(c).toString('utf8') })); })
+      .on('error', () => resolve({ status: 0, text: '' }));
+  });
+}
 function freePort() {
   return new Promise((resolve) => { const s = http.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 }
@@ -149,7 +171,7 @@ mock.listen(0, '127.0.0.1', async () => {
     TEAM_SHEET_URL: mockBase + '/team-sheet', PRODUCT_SHEET_ID: 'offline-test', STATE_DIR: stateDir,
     REGISTER: 'off', LINE_LOADING_SECONDS: '5', LINE_LOADING_REFRESH_SEC: '1', LINE_TEXT_WAIT_SECONDS: '1', LINE_FRAGMENT_WAIT_SECONDS: '1', LINE_IMAGE_WAIT_SECONDS: '3', DIFY_RECOVER_SEC: '20',
     DIFY_RESPONSE_MODE: '', FAKE_DIFY_ANSWER: '', LINE_JOIN_MESSAGES: '', SUPABASE_URL: '', SUPABASE_KEY: '', SUPABASE_SERVICE_KEY: '',
-    DIFY_DATASET_KEY: '', LIFF_ID: '', ADMIN_NOTIFY_IDS: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', RAILWAY_VOLUME_MOUNT_PATH: ''
+    DIFY_DATASET_KEY: '', LIFF_ID: '', ADMIN_NOTIFY_IDS: '', SALES_LEAD_TARGETS: LEADG, LEAD_LINE_TOKEN: '', RAILWAY_VOLUME_MOUNT_PATH: ''
   });
   const app = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { cwd: path.join(__dirname, '..'), env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
@@ -277,6 +299,28 @@ mock.listen(0, '127.0.0.1', async () => {
     const k4 = await waitReply(await post(port, MEM, { type: 'text', text: 'ขอเบอร์ทีมขายในพื้นที่' })); // the "📞 ทีมขายในพื้นที่" quick reply
     assert(/จังหวัดไหน/.test(k4) && !k4.includes('พนักงานขายที่ดูแล'), 'team quick reply must ask the province first: ' + k4);
     assert.strictEqual(chatsFor(MEM).length, 0, 'team requests went to Dify');
+    // v3.62 (owner 2 Nov 2026): cancel the sales team bindings of former members
+    const OLDM = uid('former-member');
+    await waitReply(await postEvent(port, { type: 'follow', source: { type: 'user', userId: OLDM } }));
+    const saved = await postJson(port, '/admin/api/crm', { id: OLDM, real_name: 'สมาชิก ทดสอบ', phone: '0899999999', province: 'ราชบุรี' }, 'turn-flow-admin-key');
+    assert(saved.json.ok && saved.json.profile.province === 'ราชบุรี' && saved.json.profile.auto && saved.json.profile.auto.reg, 'admin should be able to make a former member: ' + JSON.stringify(saved.json));
+    await waitReply(await post(port, OLDM, { type: 'text', text: 'ซื้อได้ที่ไหนคะ' }));
+    assert.strictEqual(chatsFor(OLDM).length, 1, 'the question should go to Dify');
+    assert.strictEqual(chatsFor(OLDM)[0].inputs.customer_province, '', 'a former member\'s profile province must not reach Dify: ' + JSON.stringify(chatsFor(OLDM)[0].inputs));
+    await waitReply(await post(port, OLDM, { type: 'text', text: 'สนใจซื้อค่ะ โทร 0812345678' }));
+    let lead = null;
+    for (let i = 0; i < 50 && !lead; i++) { lead = seen.pushes.find((x) => x.to === LEADG); if (!lead) await sleep(100); }
+    const card = lead ? lead.messages.map((m) => m.text || '').join('\n') : '(no lead card)';
+    assert(card.includes('• จังหวัด: ยังไม่ทราบ') && card.includes('• จังหวัดในข้อมูลเดิม: จ.ราชบุรี') && card.includes('• ยังไม่ทราบเขต') && !card.includes('(เขต '), 'lead card must not pick the team from old member data: ' + card);
+    await waitReply(await post(port, OLDM, { type: 'text', text: 'อยู่ลพบุรีค่ะ ซื้อยาได้ที่ไหน' }));
+    assert.strictEqual(chatsFor(OLDM).slice(-1)[0].inputs.customer_province, 'ลพบุรี', 'a province typed in chat should reach Dify');
+    const done = await waitReply(await post(port, OLDM, { type: 'text', text: 'ลงทะเบียนเรียบร้อยแล้ว ✅' }));
+    assert(done.includes('ไม่ต้องลงทะเบียน') && !done.includes('ราชบุรี'), 'the old registration confirmation must not come back: ' + done);
+    assert.strictEqual(chatsFor(OLDM).length, 3, 'only the three questions should go to Dify');
+    const lp = await getText(port, '/liff');
+    assert(lp.status === 200 && lp.text.includes('ตอนนี้ไม่ต้องลงทะเบียนแล้วค่ะ') && !lp.text.includes('ยืนยันการลงทะเบียน'), 'the LIFF link should say registration is closed: ' + lp.status);
+    const lr = await postJson(port, '/liff/register', { idToken: 'x', first_name: 'ก', last_name: 'ข', phone: '0811111111', province: 'ราชบุรี', consent: true });
+    assert(lr.status === 409 && lr.json.closed === true, 'LIFF registration should be closed: ' + lr.status + ' ' + JSON.stringify(lr.json));
   } catch (e) { failed = e; }
   app.kill();
   mock.close();
@@ -286,7 +330,7 @@ mock.listen(0, '127.0.0.1', async () => {
     console.error('--- server log ---\n' + log.slice(-5000));
     process.exitCode = 1;
   } else {
-    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer, no registration, one-button menu, team button asks the province)');
+    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer, no registration, one-button menu, team button asks the province, former members not tied to a team)');
   }
   setTimeout(() => process.exit(), 200);
 });
