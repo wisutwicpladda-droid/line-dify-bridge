@@ -24,7 +24,7 @@
 //     + แจ้งเตือนเข้า LINE แอดมินได้ (ตั้ง ADMIN_NOTIFY_IDS) และแสดงจำนวนใน title หน้าเว็บ
 //  9. v2.9: CRM-lite ในหน้าแอดมิน — ปุ่ม 👤 โปรไฟล์ ในแต่ละแชท: ชื่อจริง เบอร์ จังหวัด/อำเภอ พืชที่ปลูก
 //     จำนวนไร่ ร้านที่ซื้อประจำ สถานะ (ใหม่/สนใจ/เสนอราคา/ซื้อแล้ว/เงียบ) แท็ก โน้ต + บันทึกการติดตาม
-//     ระบบเติมให้เองจากแชท: เบอร์ จังหวัด พืชที่พูดถึง + โชว์ผู้ดูแลเขต ME/MR ตามจังหวัด
+//     ระบบเติมให้เองจากแชท: เบอร์ จังหวัด พืชที่พูดถึง (v3.63 เจ้าของสั่ง 2 พ.ย. 2569: เลิกแสดงผู้ดูแลเขต ME/MR ในโปรไฟล์)
 //     ช่องค้นหาในลิสต์ (ชื่อ/เบอร์/แท็ก/จังหวัด) + ส่งออก CSV เปิดใน Excel
 //     เก็บใน Supabase ถ้าตั้ง SUPABASE_URL + SUPABASE_SERVICE_KEY (ตาราง crm_customers, crm_notes)
 //     ไม่ตั้งก็ทำงานได้ โดยเก็บใน state file บน Volume
@@ -124,6 +124,8 @@
 //       การ์ดเคสฝ่ายขายเลือกทีมจากจังหวัดในแชท และแสดงจังหวัดในโปรไฟล์เป็น "จังหวัดในข้อมูลเดิม" · ลิงก์ฟอร์ม LIFF เดิมเปิดแล้ว
 //       เจอหน้าบอกว่าไม่ต้องลงทะเบียน และไม่รับสมัครหรือส่งข้อมูลทีมขาย · ข้อความ "ลงทะเบียนเรียบร้อยแล้ว" ได้คำตอบว่าไม่ต้องลงทะเบียน
 //       (เดิมส่งข้อความยืนยันที่มีทีมขาย) · ข้อมูลลูกค้าใน CRM และ POS ไม่ลบ หน้าแอดมินยังแสดงเขตตามจังหวัดในโปรไฟล์ให้แอดมินดู
+//     v3.63 (2 พ.ย. 2569 เจ้าของสั่ง): เอาช่องผู้ดูแลเขต ME/MR ออกจากแผงโปรไฟล์ลูกค้าในหน้าแอดมิน และ API โปรไฟล์ของแอดมิน
+//       (ดูโปรไฟล์ บันทึก ผูก/ยกเลิกผูก POS) ไม่ส่งเขตและทีมขายแล้ว · การ์ดเคสฝ่ายขายยังบอกทีมตามจังหวัดที่ลูกค้าพิมพ์ในแชท (v3.62)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -1387,7 +1389,7 @@ const turns = createTurnQueue({
 // ---------- CRM-lite (โปรไฟล์ลูกค้า + แท็ก + โน้ต) : Supabase หรือ state file ----------
 const CRM_FIELDS = ['real_name', 'phone', 'province', 'district', 'crops', 'farm_rai', 'shop', 'status', 'tags', 'note'];
 const CRM_STATUS = ['new', 'interested', 'quoted', 'customer', 'inactive'];
-// จังหวัด -> เขตขาย (จากไฟล์ทีมขาย ME/MR) เพื่อโชว์ผู้ดูแลเขตในโปรไฟล์
+// จังหวัด -> เขตขาย (จากไฟล์ทีมขาย ME/MR) ใช้หาพนักงานขายตามจังหวัด (v3.63: หน้าแอดมินไม่แสดงผู้ดูแลเขตในโปรไฟล์แล้ว)
 const ZONE_OF = {};
 [['A01', 'แม่ฮ่องสอน เชียงใหม่ เชียงราย ลำพูน ลำปาง พะเยา ตาก แพร่ น่าน'],
  ['A02', 'นครสวรรค์ พิจิตร พิษณุโลก กำแพงเพชร'],
@@ -3805,7 +3807,6 @@ function renderCrm(d) {
   var statusOpts = '';
   var keys = ['new', 'interested', 'quoted', 'customer', 'inactive'];
   for (var i = 0; i < keys.length; i++) statusOpts += '<option value="' + keys[i] + '"' + (p.status === keys[i] ? ' selected' : '') + '>' + STATUS_TH[keys[i]] + '</option>';
-  var zone = d.zone ? '<b>เขต ' + esc(d.zone.zone) + '</b> — ' + esc(d.zone.team) : '<span style="color:#98a2ad">ใส่จังหวัดแล้วระบบจะบอกผู้ดูแลเขตให้</span>';
   var rg = d.reg || {};
   var regHtml = '';
   if (rg.mode === 'off') regHtml = '<div class="auto" style="color:#98a2ad;margin-bottom:6px">📝 ระบบลงทะเบียน: ปิด (REGISTER=off)</div>';
@@ -3823,7 +3824,6 @@ function renderCrm(d) {
     + '<label>โน้ตสรุป (สิ่งที่ควรรู้เกี่ยวกับลูกค้ารายนี้)</label><textarea id="cf_note">' + esc(p.note || '') + '</textarea>'
     + '<button class="savebtn" id="cf_save">💾 บันทึกโปรไฟล์</button><div class="saved" id="cf_saved"></div>'
     + '<h4>🔗 ระบบ POS (รายชื่อเกษตรกร)</h4><div id="cf_pos"></div>'
-    + '<h4>ผู้ดูแลเขต (ME/MR)</h4><div class="auto" id="cf_zone">' + zone + '</div>'
     + '<h4>ข้อมูลอัตโนมัติจากแชท</h4><div class="auto">'
     + 'LINE: ' + esc(s.name || '-') + ' <span style="color:#98a2ad;font-size:10.5px">' + esc(p.line_user_id || '') + '</span><br>'
     + 'ทักครั้งแรก: <b>' + (p.first_seen_at ? dayLabel(Date.parse(p.first_seen_at)) + ' ' + hhmm(Date.parse(p.first_seen_at)) : '-') + '</b> · ล่าสุด: <b>' + (p.last_chat_at ? dayLabel(Date.parse(p.last_chat_at)) + ' ' + hhmm(Date.parse(p.last_chat_at)) : '-') + '</b><br>'
@@ -3982,8 +3982,6 @@ function saveCrm() {
   api('/admin/api/crm', { method: 'POST', body: JSON.stringify(body) }).then(function(d) {
     btn.disabled = false;
     document.getElementById('cf_saved').textContent = '✓ บันทึกแล้ว ' + hhmm(Date.now()) + (crmData && crmData.sb ? (d.synced ? ' · ซิงก์ Supabase แล้ว' : ' · ⚠️ ซิงก์ Supabase ไม่สำเร็จ (เก็บในเครื่องไว้ก่อน)') : ' (เก็บในเครื่อง)');
-    var z = document.getElementById('cf_zone');
-    if (z) z.innerHTML = d.zone ? '<b>เขต ' + esc(d.zone.zone) + '</b> — ' + esc(d.zone.team) : '<span style="color:#98a2ad">ใส่จังหวัดแล้วระบบจะบอกผู้ดูแลเขตให้</span>';
     load();
   }).catch(function(e) { btn.disabled = false; alert('บันทึกไม่สำเร็จ: ' + e.message); });
 }
@@ -4776,8 +4774,8 @@ function handleAdmin(req, res, path, body) {
     if (!id || !sessions.has(id)) return sendJson(res, 404, { ok: false, error: 'chat not found' });
     const c = crmGet(id);
     const s = sessions.get(id);
-    crmListNotes(id).then((notes) => sendJson(res, 200, { ok: true, profile: c, notes, zone: zoneInfo(c.province || (c.auto && c.auto.province) || ''), sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c), reg: regInfo(s, c) }))
-      .catch(() => sendJson(res, 200, { ok: true, profile: c, notes: [], zone: zoneInfo(c.province || ''), sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c), reg: regInfo(s, c) }));
+    crmListNotes(id).then((notes) => sendJson(res, 200, { ok: true, profile: c, notes, sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c), reg: regInfo(s, c) }))
+      .catch(() => sendJson(res, 200, { ok: true, profile: c, notes: [], sb: SB_ON, statuses: CRM_STATUS, pos: posInfoFor(c), reg: regInfo(s, c) }));
     return;
   }
   // ---- ลงทะเบียน: action = 'done' (ถือว่าลงทะเบียนแล้ว) | 'reset' (ให้บอทถามใหม่) ----
@@ -4848,7 +4846,7 @@ function handleAdmin(req, res, path, body) {
     posCreate(id, 'admin').then((r) => {
       const c = crmGet(id);
       console.log(`[admin] ${id.slice(0, 8)} pos create -> ${r.ok ? r.rec.id : 'fail: ' + r.err}`);
-      sendJson(res, r.ok ? 200 : 400, Object.assign({ ok: r.ok, error: r.ok ? undefined : r.err }, r.ok ? { pos: posInfoFor(c), profile: c, zone: zoneInfo(c.province || '') } : {}));
+      sendJson(res, r.ok ? 200 : 400, Object.assign({ ok: r.ok, error: r.ok ? undefined : r.err }, r.ok ? { pos: posInfoFor(c), profile: c } : {}));
     });
     return;
   }
@@ -4881,7 +4879,7 @@ function handleAdmin(req, res, path, body) {
     if (c.pos_id && String(c.pos_id) !== rec.id) posUnlink(id);
     if (String(c.pos_id) !== rec.id) posLink(id, rec, 'admin');
     console.log(`[admin] ${id.slice(0, 8)} pos link -> ${rec.id}`);
-    return sendJson(res, 200, { ok: true, pos: posInfoFor(c), profile: c, zone: zoneInfo(c.province || '') });
+    return sendJson(res, 200, { ok: true, pos: posInfoFor(c), profile: c });
   }
   if (path === '/admin/api/crm' && req.method === 'POST') {
     let data = {};
@@ -4891,7 +4889,7 @@ function handleAdmin(req, res, path, body) {
     crmUpdate(id, data).then((saved) => {
       const c = crmGet(id);
       console.log(`[crm] ${id.slice(0, 8)} profile updated (sb=${saved})`);
-      sendJson(res, 200, { ok: true, profile: c, synced: saved, zone: zoneInfo(c.province || '') });
+      sendJson(res, 200, { ok: true, profile: c, synced: saved });
     });
     return;
   }
@@ -5023,7 +5021,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.62', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.63', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
