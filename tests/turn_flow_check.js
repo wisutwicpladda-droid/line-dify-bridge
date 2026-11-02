@@ -11,6 +11,8 @@
 //  v3.43     the typing indicator is renewed while a slow answer is prepared and never renewed after the answer
 //  v3.60     REGISTER=off: a new follower gets a welcome (not "welcome back"), "ลงทะเบียน" gets "no need to register"
 //            without Dify, the photo rules sit in an internal block, and the rich menu has one area
+//  v3.61     no membership: the team button and the team quick reply ask the province first, even when the
+//            bot remembers one, then answer for the province the customer types
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -260,6 +262,21 @@ mock.listen(0, '127.0.0.1', async () => {
     const rm = await adminGet(port, '/admin/api/richmenu', 'turn-flow-admin-key');
     const areas = (rm.json.spec && rm.json.spec.areas) || [];
     assert(areas.length === 1 && areas[0].action.text === 'ทีมงานในพื้นที่ของฉัน' && areas[0].bounds.width === 2500, 'rich menu: ' + JSON.stringify(rm.json.spec));
+    // v3.61 (owner 2 Nov 2026): no membership, so the team button asks the province first even when the bot
+    // remembers one from an earlier message, then lists the people for the province the customer types
+    const MEM = uid('remembered');
+    const waitReply = async (t) => { for (let i = 0; i < 50 && !repliesFor(t).length; i++) await sleep(100); return textOf(t); };
+    const k1 = await waitReply(await post(port, MEM, { type: 'text', text: 'ขอเบอร์ทีมขายราชบุรีค่ะ' }));
+    assert(k1.startsWith('📍 พนักงานขายที่ดูแล จ.ราชบุรี\n'), 'team request that names a province: ' + k1);
+    const prof = await adminGet(port, '/admin/api/crm?id=' + MEM, 'turn-flow-admin-key');
+    assert.strictEqual(prof.json.profile && prof.json.profile.province, 'ราชบุรี', 'the bot should remember the province for this check: ' + JSON.stringify(prof.json));
+    const k2 = await waitReply(await post(port, MEM, { type: 'text', text: 'ทีมงานในพื้นที่ของฉัน' }));
+    assert(/จังหวัดไหน/.test(k2) && !k2.includes('พนักงานขายที่ดูแล'), 'team button must ask the province first: ' + k2);
+    const k3 = await waitReply(await post(port, MEM, { type: 'text', text: 'ลพบุรีค่ะ' }));
+    assert(k3.startsWith('📍 พนักงานขายที่ดูแล จ.ลพบุรี\n') && k3.includes('065-525-5687') && !k3.includes('063-205-9076'), 'reply for the typed province: ' + k3);
+    const k4 = await waitReply(await post(port, MEM, { type: 'text', text: 'ขอเบอร์ทีมขายในพื้นที่' })); // the "📞 ทีมขายในพื้นที่" quick reply
+    assert(/จังหวัดไหน/.test(k4) && !k4.includes('พนักงานขายที่ดูแล'), 'team quick reply must ask the province first: ' + k4);
+    assert.strictEqual(chatsFor(MEM).length, 0, 'team requests went to Dify');
   } catch (e) { failed = e; }
   app.kill();
   mock.close();
@@ -269,7 +286,7 @@ mock.listen(0, '127.0.0.1', async () => {
     console.error('--- server log ---\n' + log.slice(-5000));
     process.exitCode = 1;
   } else {
-    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer, no registration, one-button menu)');
+    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer, no registration, one-button menu, team button asks the province)');
   }
   setTimeout(() => process.exit(), 200);
 });
