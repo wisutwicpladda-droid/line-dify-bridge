@@ -128,6 +128,9 @@
 //       (ดูโปรไฟล์ บันทึก ผูก/ยกเลิกผูก POS) ไม่ส่งเขตและทีมขายแล้ว · การ์ดเคสฝ่ายขายยังบอกทีมตามจังหวัดที่ลูกค้าพิมพ์ในแชท (v3.62)
 //     v3.64 (2 พ.ย. 2569 เจ้าของสั่ง): พนักงานขายไม่มี LINE มีแต่เบอร์โทร รายชื่อพนักงานขายตามจังหวัดปิดท้ายด้วย
 //       "โทรหาพนักงานขายได้เลยนะคะ" (เดิม "โทรหรือทัก LINE ทีมขายได้เลยนะคะ")
+//     v3.65 (2 พ.ย. 2569 เจ้าของสั่ง): เติม "(บอทใช้งาน)" ท้ายชื่อแท็บที่บอทอ่านได้ — ตัวกลาง /sheets หาแท็บที่ Dify ขอ
+//       (products_master, product_usage, product_packages, doa_rates) จาก gid แล้วเปลี่ยนชื่อใน range ของคำตอบกลับเป็นชื่อที่ Dify ขอ
+//       และการอ่านชีทด้วย gid ของ bridge อ่านชื่อแท็บใหม่ทันทีเมื่อ Google ตอบ 400 (ไม่ต้องรอ 10 นาที)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -4613,19 +4616,85 @@ function sendJson(res, status, obj) {
 const SHEET_PROXY_KEY = (process.env.SHEET_PROXY_KEY || '').trim().length >= 24 ? process.env.SHEET_PROXY_KEY.trim() : '';
 const SHEET_PROXY_TTL_MS = Math.max(1, parseInt(process.env.SHEET_PROXY_TTL_SECONDS || '60', 10) || 60) * 1000;
 const SHEET_PROXY_STALE_MS = 24 * 3600000;
-const sheetProxy = { cache: new Map(), inflight: new Map(), calls: 0, google: 0, errors: 0, denied: 0, lastError: '', lastErrorAt: 0 };
+const sheetProxy = { cache: new Map(), inflight: new Map(), calls: 0, google: 0, errors: 0, denied: 0, renamed: 0, lastError: '', lastErrorAt: 0 };
 function sheetProxyError(msg) {
   sheetProxy.errors++;
   sheetProxy.lastError = String(msg).replace(/\s+/g, ' ').slice(0, 200);
   sheetProxy.lastErrorAt = Date.now();
 }
-function sheetProxyFetch(full) {
+// v3.65: Dify ขอแท็บด้วยชื่อเดิม (เช่น products_master!A:Q) และโค้ดใน Dify ตรวจชื่อแท็บจาก range ของคำตอบ
+// ตัวกลางจึงหาแท็บจาก gid แล้วถาม Google ด้วยชื่อแท็บปัจจุบัน และเปลี่ยนชื่อใน range ของคำตอบกลับเป็นชื่อที่ Dify ขอ
+// เจ้าของจึงเปลี่ยนชื่อแท็บได้ (เช่น เติม "(บอทใช้งาน)") โดยไม่ต้องแก้ Dify
+const SHEET_TAB_GIDS = { products_master: kbSync.GIDS.master, product_usage: kbSync.GIDS.usage, product_packages: kbSync.GIDS.packages, doa_rates: process.env.PRODUCT_GID_DOA || '710000010' };
+const ownTab = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+function sheetRangeParts(r) {
+  const s = String(r || '');
+  if (s[0] === "'") {
+    let i = 1;
+    let t = '';
+    while (i < s.length) {
+      if (s[i] === "'" && s[i + 1] === "'") { t += "'"; i += 2; continue; }
+      if (s[i] === "'") break;
+      t += s[i];
+      i++;
+    }
+    return { tab: t, rest: s.slice(i + 1) };
+  }
+  const k = s.indexOf('!');
+  return k < 0 ? { tab: s, rest: '' } : { tab: s.slice(0, k), rest: s.slice(k) };
+}
+const sheetQuote = (t) => "'" + String(t).replace(/'/g, "''") + "'";
+async function sheetProxyResolve(rest, q, force) {
+  const plain = { path: rest + (q ? '?' + q : ''), back: {}, ours: 0 };
+  if (!q || !/\/values:batchGet$/.test(rest)) return plain;
+  const sp = new URLSearchParams(q);
+  const ranges = sp.getAll('ranges');
+  const ours = ranges.filter((r) => ownTab(SHEET_TAB_GIDS, sheetRangeParts(r).tab)).length;
+  if (!ours) return plain;
+  plain.ours = ours;
+  let map = null;
+  try { map = await kbSync.sheets.titles(kbSync.SHEET_ID, force); } catch (_) { return plain; } // อ่านชื่อแท็บไม่ได้ ถามตามชื่อที่ขอ
+  const back = {};
+  const out = ranges.map((r) => {
+    const x = sheetRangeParts(r);
+    const cur = ownTab(SHEET_TAB_GIDS, x.tab) ? map[String(SHEET_TAB_GIDS[x.tab])] : '';
+    if (!cur || cur === x.tab) return r;
+    back[cur] = x.tab;
+    return sheetQuote(cur) + x.rest;
+  });
+  if (!Object.keys(back).length) return plain;
+  sp.delete('ranges');
+  const other = sp.toString();
+  return { path: rest + '?' + out.map((r) => 'ranges=' + encodeURIComponent(r)).join('&') + (other ? '&' + other : ''), back, ours };
+}
+function sheetProxyRename(body, back) {
+  if (!Object.keys(back).length) return body;
+  let j = null;
+  try { j = JSON.parse(body.toString('utf8')); } catch (_) { return body; }
+  if (!j || !Array.isArray(j.valueRanges)) return body;
+  for (const v of j.valueRanges) {
+    if (!v || typeof v.range !== 'string') continue;
+    const x = sheetRangeParts(v.range);
+    if (ownTab(back, x.tab)) v.range = back[x.tab] + x.rest;
+  }
+  return Buffer.from(JSON.stringify(j));
+}
+function sheetProxyFetch(full, rest, q) {
   if (sheetProxy.inflight.has(full)) return sheetProxy.inflight.get(full);
   const p = (async () => {
     sheetProxy.google++;
-    const r = await kbSync.sheets.get(full);
-    const body = Buffer.from(await r.arrayBuffer());
+    let rv = await sheetProxyResolve(rest, q, false);
+    let r = await kbSync.sheets.get(rv.path);
+    let body = Buffer.from(await r.arrayBuffer());
+    if (r.status === 400 && rv.ours && /Unable to parse range/i.test(body.toString('utf8'))) {
+      // ชื่อแท็บที่จำไว้เก่าแล้ว (เพิ่งเปลี่ยนชื่อ) อ่านชื่อแท็บใหม่แล้วถามอีกครั้ง
+      rv = await sheetProxyResolve(rest, q, true);
+      r = await kbSync.sheets.get(rv.path);
+      body = Buffer.from(await r.arrayBuffer());
+    }
     if (r.status === 200) {
+      body = sheetProxyRename(body, rv.back);
+      if (rv.ours) sheetProxy.renamed = Object.keys(rv.back).length;
       sheetProxy.cache.set(full, { at: Date.now(), body });
       if (sheetProxy.cache.size > 30) sheetProxy.cache.delete(sheetProxy.cache.keys().next().value);
     } else {
@@ -4659,11 +4728,11 @@ async function handleSheetProxy(req, res, path) {
   const age = hit ? Date.now() - hit.at : Infinity;
   if (hit && age < SHEET_PROXY_TTL_MS) return send(200, hit.body);
   if (hit && age < SHEET_PROXY_STALE_MS) {
-    sheetProxyFetch(full).catch((e) => sheetProxyError(e.message));
+    sheetProxyFetch(full, rest, q).catch((e) => sheetProxyError(e.message));
     return send(200, hit.body);
   }
   try {
-    const r = await sheetProxyFetch(full);
+    const r = await sheetProxyFetch(full, rest, q);
     return send(r.status, r.body);
   } catch (e) {
     sheetProxyError(e.message);
@@ -4672,7 +4741,7 @@ async function handleSheetProxy(req, res, path) {
 }
 function sheetProxyView() {
   if (!SHEET_PROXY_KEY) return false;
-  return { ready: kbSync.sheets.mode === 'service-account', calls: sheetProxy.calls, google: sheetProxy.google, errors: sheetProxy.errors, denied: sheetProxy.denied, lastError: sheetProxy.lastError || undefined, lastErrorAt: sheetProxy.lastErrorAt || undefined };
+  return { ready: kbSync.sheets.mode === 'service-account', calls: sheetProxy.calls, google: sheetProxy.google, errors: sheetProxy.errors, denied: sheetProxy.denied, renamedTabs: sheetProxy.renamed, lastError: sheetProxy.lastError || undefined, lastErrorAt: sheetProxy.lastErrorAt || undefined };
 }
 
 function handleAdmin(req, res, path, body) {
@@ -5024,7 +5093,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.64', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.65', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

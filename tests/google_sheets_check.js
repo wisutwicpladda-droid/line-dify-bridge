@@ -56,9 +56,12 @@ const G = { tokens: [], calls: [], revokeOnce: false, failNext: 0, token: '' };
     }
     if (u.pathname === '/v4/spreadsheets/sheet-x/values:batchGet') {
       assert.deepStrictEqual([u.searchParams.get('majorDimension'), u.searchParams.get('valueRenderOption')], ['ROWS', 'FORMATTED_VALUE']);
+      const nameOf = (r) => r.replace(/^'|'$/g, '').replace(/''/g, "'");
+      // แบบ Google จริง: ขอแท็บด้วยชื่อที่ไม่มีแล้ว (เช่น เพิ่งเปลี่ยนชื่อ) ได้ 400
+      const miss = u.searchParams.getAll('ranges').find((r) => !byTitle(nameOf(r)));
+      if (miss) return json(400, { error: { code: 400, message: 'Unable to parse range: ' + miss, status: 'INVALID_ARGUMENT' } });
       return json(200, { spreadsheetId: 'sheet-x', valueRanges: u.searchParams.getAll('ranges').map((r) => {
-        const name = r.replace(/^'|'$/g, '').replace(/''/g, "'");
-        const t = byTitle(name);
+        const t = byTitle(nameOf(r));
         return { range: r + '!A1:Z9', majorDimension: 'ROWS', values: t ? t.values : [] };
       }) });
     }
@@ -89,6 +92,16 @@ const G = { tokens: [], calls: [], revokeOnce: false, failNext: 0, token: '' };
     sh = await c.readTabs('sheet-x', GIDS);
     assert.strictEqual(G.tokens.length, 1, 'token ยังไม่หมดอายุ ต้องใช้ซ้ำ');
     assert.strictEqual(G.calls.length, calls + 1, 'ชื่อแท็บจำไว้ 10 นาที อ่านแค่ค่าในแท็บ');
+    // v3.65: เจ้าของเปลี่ยนชื่อแท็บ (เติม "(บอทใช้งาน)") ระหว่างที่ยังจำชื่อเดิมอยู่: Google ตอบ 400 ต้องอ่านชื่อแท็บใหม่แล้วลองอีกครั้ง
+    TABS[111].title = 'products_master (บอทใช้งาน)';
+    TABS[333].title = "product package's (บอทใช้งาน)";
+    const callsR = G.calls.length;
+    sh = await c.readTabs('sheet-x', GIDS);
+    assert.deepStrictEqual([sh.master[1][1], sh.usage[1][3], sh.packages[1][1]], ['แกนเตอร์', '200', '1 ลิตร']);
+    assert.strictEqual(G.calls.length, callsR + 3, 'ลองชื่อเดิม 1 ครั้ง อ่านชื่อแท็บใหม่ 1 ครั้ง แล้วอ่านค่า');
+    assert.strictEqual(c.status().ok, true);
+    TABS[111].title = 'products_master';
+    TABS[333].title = 'product package';
     // token ใกล้หมดอายุ (เหลือน้อยกว่า 1 นาที) ขอใหม่
     clock += 59.5 * 60000;
     await c.readTabs('sheet-x', GIDS);

@@ -23,7 +23,8 @@ const MASTER = [HEAD_M,
   ['P3', 'ตัวใหม่', 'Insecticide', '', '', '', '', '', '', '', '', '', '', 'Standard', 'เดือนธันวาคม']];
 const USAGE = [HEAD_U, ['U1', 'P1', 'แกนเตอร์', 'ข้าว', 'นาหว่านน้ำตม', 'วัชพืช', 'หญ้าข้าวนก', 'ก่อนงอก', 'คน', 'พ่น', '', '200', '250', 'ซีซี', '20', 'ลิตร']];
 const PACKAGES = [['package_id', 'product_id', 'product_name', 'package_type', 'package_value', 'package_unit'], ['K1', 'P1', 'แกนเตอร์', 'ขวด', '1', 'ลิตร']];
-const TABS = { 111: { title: 'products_master', values: MASTER }, 222: { title: 'product_usage', values: USAGE }, 333: { title: 'product_packages', values: PACKAGES } };
+const DOA = [['usage_id', 'product_id', 'crop_name'], ['D0001', 'P1', 'ข้าว']];
+const TABS = { 111: { title: 'products_master', values: MASTER }, 222: { title: 'product_usage', values: USAGE }, 333: { title: 'product_packages', values: PACKAGES }, 444: { title: 'doa_rates', values: DOA } };
 const pad = (rows) => { const w = Math.max(...rows.map((r) => r.length)); return rows.map((r) => r.concat(Array(w - r.length).fill(''))); };
 const G = { tokens: 0, api: 0, fail: 0 };
 
@@ -47,7 +48,7 @@ function startBridge(port, env) {
       LINE_API_BASE: 'http://127.0.0.1:9', LINE_DATA_API_BASE: 'http://127.0.0.1:9', REGISTER: 'off', DIFY_API_KEY: '', DIFY_API_BASE: 'http://127.0.0.1:9/v1', DIFY_DATASET_KEY: '',
       SUPABASE_URL: '', SUPABASE_SERVICE_KEY: '', POS_TABLE: '', SALES_LEAD_TARGETS: '', LEAD_LINE_TOKEN: '', TEAM_SHEET_URL: 'http://127.0.0.1:9/team',
       GOOGLE_SA_JSON: '', SHEET_PROXY_KEY: '', PRODUCT_SHEET_PROXY_URL: '', PRODUCT_SHEET_PROXY_KEY: '', COST_FORWARD_URL: '', COST_FORWARD_KEY: '',
-      PRODUCT_SHEET_ID: 'sheet-x', PRODUCT_GID_MASTER: '111', PRODUCT_GID_USAGE: '222', PRODUCT_GID_PACKAGES: '333'
+      PRODUCT_SHEET_ID: 'sheet-x', PRODUCT_GID_MASTER: '111', PRODUCT_GID_USAGE: '222', PRODUCT_GID_PACKAGES: '333', PRODUCT_GID_DOA: '444'
     }, env),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -77,10 +78,14 @@ async function waitHealth(port, ok, what) {
     const u = new URL('http://x' + rq.url);
     if (u.pathname === '/v4/spreadsheets/sheet-x') return json(200, { sheets: Object.entries(TABS).map(([id, t]) => ({ properties: { sheetId: Number(id), title: t.title } })) });
     if (u.pathname === '/v4/spreadsheets/sheet-x/values:batchGet') {
+      const nameOf = (r) => r.split('!')[0].replace(/^'|'$/g, '').replace(/''/g, "'");
+      const find = (r) => Object.values(TABS).find((x) => x.title === nameOf(r));
+      // แบบ Google จริง: ชื่อแท็บที่ไม่มีแล้วได้ 400 · ชื่อที่มีช่องว่างหรือภาษาไทยมี ' ' ครอบใน range ของคำตอบ
+      const miss = u.searchParams.getAll('ranges').find((r) => !find(r));
+      if (miss) return json(400, { error: { code: 400, message: 'Unable to parse range: ' + miss, status: 'INVALID_ARGUMENT' } });
       return json(200, { spreadsheetId: 'sheet-x', valueRanges: u.searchParams.getAll('ranges').map((r) => {
-        const name = r.split('!')[0].replace(/^'|'$/g, '');
-        const t = Object.values(TABS).find((x) => x.title === name);
-        return { range: name + '!A1:T9', majorDimension: 'ROWS', values: t ? t.values : [] };
+        const name = nameOf(r);
+        return { range: (/^[A-Za-z0-9_]+$/.test(name) ? name : "'" + name.replace(/'/g, "''") + "'") + '!A1:T9', majorDimension: 'ROWS', values: find(r).values };
       }) });
     }
     return json(404, { error: { code: 404, message: 'not found' } });
@@ -119,6 +124,28 @@ async function waitHealth(port, ok, what) {
     assert.deepStrictEqual([r.status, G.api], [200, before + 1], 'ภายใน TTL ต้องใช้คำตอบเดิม ไม่เรียก Google ซ้ำ');
     assert.strictEqual((await req(portA, 'GET', DIFY.replace('sheet-x', 'other-sheet'), KEY)).status, 403, 'อ่านได้เฉพาะชีทสินค้า');
     assert.strictEqual((await req(portA, 'POST', DIFY, KEY)).status, 405, 'อ่านอย่างเดียว');
+    // v3.65: เจ้าของเติม "(บอทใช้งาน)" ท้ายชื่อแท็บ แต่ Dify ยังขอด้วยชื่อเดิม ต้องได้ข้อมูลครบ และ range ในคำตอบเป็นชื่อที่ Dify ขอ
+    // (โค้ดใน Dify ตรวจชื่อแท็บจาก range) ตอนนั้นตัวกลางยังจำชื่อเดิม: Google ตอบ 400 ต้องอ่านชื่อแท็บใหม่แล้วลองอีกครั้ง
+    for (const id of [111, 222, 333, 444]) TABS[id].title += ' (บอทใช้งาน)';
+    const DIFY4 = '/sheets/v4/spreadsheets/sheet-x/values:batchGet?ranges=products_master%21A%3AQ&ranges=product_usage%21A%3AT&ranges=product_packages%21A%3AH&ranges=doa_rates%21A%3AT&majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE';
+    r = await req(portA, 'GET', DIFY4, KEY);
+    assert.strictEqual(r.status, 200, r.raw.toString());
+    assert.deepStrictEqual(r.json.valueRanges.map((v) => v.range), ['products_master!A1:T9', 'product_usage!A1:T9', 'product_packages!A1:T9', 'doa_rates!A1:T9']);
+    assert.deepStrictEqual(r.json.valueRanges.map((v) => v.values), [MASTER, USAGE, PACKAGES, DOA]);
+    h = await waitHealth(portA, (x) => x.sheetProxy.renamedTabs === 4, 'renamed tabs in /health');
+    assert.strictEqual(h.sheetProxy.errors, 0, 'เปลี่ยนชื่อแท็บแล้วไม่ใช่ error');
+    // ชุดเดิมของ Dify (DIFY) หมดอายุแล้ว: ได้ชุดเดิมทันที และอ่านใหม่เบื้องหลังด้วยชื่อแท็บใหม่สำเร็จ
+    await sleep(1200);
+    before = G.api;
+    r = await req(portA, 'GET', DIFY, KEY);
+    assert.strictEqual(r.status, 200);
+    for (let i = 0; i < 50 && G.api === before; i++) await sleep(50);
+    await sleep(200);
+    h = (await req(portA, 'GET', '/health')).json;
+    assert.strictEqual(h.sheetProxy.errors, 0, h.sheetProxy.lastError);
+    r = await req(portA, 'GET', DIFY, KEY);
+    assert.deepStrictEqual(r.json.valueRanges.map((v) => v.range.split('!')[0]), ['products_master', 'product_usage'], 'ชุดที่อ่านใหม่ใช้ชื่อเดิมใน range');
+    for (const id of [111, 222, 333, 444]) TABS[id].title = TABS[id].title.replace(' (บอทใช้งาน)', '');
     // Google ล่มหลัง TTL: ตอบชุดล่าสุดทันที แล้วบันทึก error ไว้ใน /health
     G.fail = 500;
     await sleep(1200);

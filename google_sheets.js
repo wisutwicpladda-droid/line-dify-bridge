@@ -111,9 +111,9 @@ function createGoogleSheets(opts) {
     return j;
   }
 
-  // ชื่อแท็บของแต่ละ gid (sheetId) จำไว้ 10 นาที
-  async function titles(spreadsheetId) {
-    if (titleCache.map && titleCache.id === spreadsheetId && now() - titleCache.at < 600000) return titleCache.map;
+  // ชื่อแท็บของแต่ละ gid (sheetId) จำไว้ 10 นาที · force = อ่านใหม่ทันที (เช่น แท็บเพิ่งเปลี่ยนชื่อ)
+  async function titles(spreadsheetId, force) {
+    if (!force && titleCache.map && titleCache.id === spreadsheetId && now() - titleCache.at < 600000) return titleCache.map;
     const j = await getJson('/v4/spreadsheets/' + encodeURIComponent(spreadsheetId) + '?fields=' + encodeURIComponent('sheets.properties(sheetId,title)'));
     const map = {};
     for (const sh of j.sheets || []) if (sh && sh.properties) map[String(sh.properties.sheetId)] = String(sh.properties.title);
@@ -122,17 +122,27 @@ function createGoogleSheets(opts) {
   }
 
   // gids = { master: '1517893127', usage: '...' } -> { master: [[...], ...], usage: [...] } รูปแบบเดียวกับ CSV export
+  // v3.65: เจ้าของเปลี่ยนชื่อแท็บได้ (เช่น เติม "(บอทใช้งาน)") ถ้าชื่อที่จำไว้เก่าแล้ว Google ตอบ 400 ให้อ่านชื่อแท็บใหม่แล้วลองอีกครั้ง
   async function readTabs(spreadsheetId, gids) {
-    try {
-      const map = await titles(spreadsheetId);
-      const keys = Object.keys(gids);
+    const keys = Object.keys(gids);
+    const once = async (force) => {
+      const map = await titles(spreadsheetId, force);
       const names = keys.map((k) => {
         const t = map[String(gids[k])];
         if (!t) throw new Error('ไม่พบแท็บ ' + k + ' (gid ' + gids[k] + ') ในชีท');
         return t;
       });
       const q = names.map((n) => 'ranges=' + encodeURIComponent(quoteTitle(n))).join('&') + '&majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE';
-      const j = await getJson('/v4/spreadsheets/' + encodeURIComponent(spreadsheetId) + '/values:batchGet?' + q);
+      return getJson('/v4/spreadsheets/' + encodeURIComponent(spreadsheetId) + '/values:batchGet?' + q);
+    };
+    try {
+      let j;
+      try {
+        j = await once(false);
+      } catch (e) {
+        if (!/\bHTTP 400\b/.test(e.message) && !/^ไม่พบแท็บ /.test(e.message)) throw e;
+        j = await once(true);
+      }
       const vr = Array.isArray(j.valueRanges) ? j.valueRanges : [];
       if (vr.length !== keys.length) throw new Error('ได้ ' + vr.length + ' แท็บ ต้องการ ' + keys.length);
       const out = {};
