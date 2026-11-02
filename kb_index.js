@@ -59,13 +59,21 @@ function num(v) {
 }
 
 // อัตราเป็นประโยคพูด เช่น "ผสม 200 ซีซี กับน้ำ 200 ลิตร พ่นได้ 1 ไร่"
+// v3.66: ฐานอัตราที่ไม่ใช่น้ำเขียนตามหน่วยฐาน เช่น "100-200 กรัม ต่อต้น" "5 กิโลกรัม ต่อไร่" "20 กรัม ต่อเมล็ด 1 กิโลกรัม"
+//   เดิมทุกแถวที่มีค่าฐานกลายเป็น "ผสม ... กับน้ำ ... ลิตร" เช่นโฮปในทุเรียน 100-200 กรัมต่อ 1 ต้น กลายเป็น "ผสม 100-200 กรัม กับน้ำ 1 ลิตร"
+const WATER_BASIS = new Set(['', 'ลิตรน้ำ', 'ลิตร']);
 function rateText(u) {
   const lo = num(u.rate_min), hi = num(u.rate_max);
   if (!lo && !hi) return null;
   const amt = ((lo && hi && lo !== hi ? lo + '-' + hi : (lo || hi)) + ' ' + (u.rate_unit || '')).trim();
   const basis = num(u.rate_basis_value);
+  const bunit = String(u.rate_basis_unit || '').trim();
   const area = u.coverage_area_value ? (num(u.coverage_area_value) + ' ' + (u.coverage_area_unit || '')).trim() : '';
-  if (basis && basis !== '0') return 'ผสม ' + amt + ' กับน้ำ ' + basis + ' ลิตร' + (area ? ' พ่นได้ ' + area : '');
+  if (basis && basis !== '0') {
+    if (WATER_BASIS.has(bunit)) return 'ผสม ' + amt + ' กับน้ำ ' + basis + ' ลิตร' + (area ? ' พ่นได้ ' + area : '');
+    if (bunit === 'กิโลกรัมเมล็ด') return amt + ' ต่อเมล็ด ' + basis + ' กิโลกรัม';
+    return amt + ' ต่อ' + (basis === '1' ? '' : ' ' + basis + ' ') + bunit;
+  }
   if (area === '1 ไร่') return amt + ' ต่อไร่';
   return area ? amt + ' ต่อ ' + area : amt;
 }

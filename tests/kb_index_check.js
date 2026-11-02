@@ -1,7 +1,7 @@
 'use strict';
 // เทส kb_index.js: สร้างดัชนีจากชีท และสลับเอกสารใน Dify แบบไม่ให้บอทค้นไม่เจอระหว่างอัปเดต (จำลอง Knowledge API)
 const assert = require('assert');
-const { createKbIndex, buildIndex, docName, hashOf, DOC } = require('../kb_index');
+const { createKbIndex, buildIndex, docName, hashOf, DOC, rateText } = require('../kb_index');
 
 const MH = ['product_id\nรหัส', 'product_name', 'product_category', 'common_name_th', 'active_ingredient', 'moa_group', 'physical_form',
   'selling_point', 'absorption_method', 'mechanism_of_action', 'action_characteristics', 'phytotoxicity', 'additional_precautions',
@@ -35,6 +35,17 @@ const small = buildIndex(sheets(), { maxChars: 700 });
 assert(small.chunks.every((c) => c.length <= 700), 'chunk ยาวต้องถูกแบ่งให้ไม่เกิน maxChars');
 assert(small.chunks.some((c) => c.includes('(ส่วน 1/')), 'chunk ที่แบ่งบอกว่าเป็นส่วนที่เท่าไร');
 console.log('PASS: buildIndex (เฉพาะสินค้าเปิดขาย, เรียงลำดับ, แบ่ง chunk, กันตัวแบ่ง)');
+
+// v3.66: อัตราที่ฐานไม่ใช่น้ำ (ต่อต้น ต่อไร่ ต่อเมล็ด) ต้องไม่กลายเป็น "ผสม ... กับน้ำ ... ลิตร"
+const rt = (min, max, unit, bv, bu, av, au) => rateText({ rate_min: min, rate_max: max, rate_unit: unit, rate_basis_value: bv, rate_basis_unit: bu, coverage_area_value: av, coverage_area_unit: au });
+assert.strictEqual(rt('200', '300', 'ซีซี', '200', 'ลิตรน้ำ', '1', 'ไร่'), 'ผสม 200-300 ซีซี กับน้ำ 200 ลิตร พ่นได้ 1 ไร่');
+assert.strictEqual(rt('20', '30', 'ซีซี', '20', 'ลิตรน้ำ', null, null), 'ผสม 20-30 ซีซี กับน้ำ 20 ลิตร');
+assert.strictEqual(rt('100', '200', 'กรัม', '1', 'ต้น', null, null), '100-200 กรัม ต่อต้น');
+assert.strictEqual(rt('5', '5', 'กิโลกรัม', '1', 'ไร่', '1', 'ไร่'), '5 กิโลกรัม ต่อไร่');
+assert.strictEqual(rt('3', '5', 'กิโลกรัม', '2', 'ไร่', null, null), '3-5 กิโลกรัม ต่อ 2 ไร่');
+assert.strictEqual(rt('20', '20', 'กรัม', '1', 'กิโลกรัมเมล็ด', null, null), '20 กรัม ต่อเมล็ด 1 กิโลกรัม');
+assert.strictEqual(rt('50', '60', 'กรัมต่อน้ำ 1 ลิตร', null, null, null, null), '50-60 กรัมต่อน้ำ 1 ลิตร');
+console.log('PASS: rateText (อัตราต่อต้น ต่อไร่ ต่อเมล็ด ไม่กลายเป็นอัตราผสมน้ำ)');
 
 // ---- จำลอง Dify Knowledge API (รวมพฤติกรรมจริง: สร้างเอกสารชื่อซ้ำกับตัวที่เปิดอยู่ = เขียนทับตัวเดิม) ----
 function fakeDify(opts) {
