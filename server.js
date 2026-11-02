@@ -53,9 +53,9 @@
 //     ข้อมูลลง CRM (real_name, phone, province, district, crops, farm_rai, auto.subdistrict, auto.reg.{gender,first_name,last_name,areas})
 //     และตาราง POS (name, first_name, last_name, gender, phone, province, district, subdistrict, entity_type, line_user_id)
 //     *** ต้อง deploy 3 ไฟล์คู่กัน: server.js, liff.html, thai_locations.json ***
-// 13. v3.5: Rich Menu (เมนูล่างแชท) สร้างจากหน้าแอดมินปุ่มเดียว "🧩 สร้าง Rich Menu ลงทะเบียน" — รูป richmenu.png (2500x843) คู่กับ server.js
-//     3 ปุ่ม: ลงทะเบียนสมาชิก (เปิดฟอร์ม LIFF / ถ้าไม่มี LIFF_ID = พิมพ์ "ลงทะเบียน") · ทีมงานในพื้นที่ (บอทตอบทีม ME/MR ตามจังหวัดที่ลงทะเบียน)
-//     · คุยกับแอดมิน — ตั้งเป็นเมนูเริ่มต้นของทุกคน และลบเมนูเก่าที่ระบบสร้างไว้ให้ (ใช้ LINE_CHANNEL_ACCESS_TOKEN ที่มีอยู่แล้ว)
+// 13. v3.5: Rich Menu (เมนูล่างแชท) สร้างจากหน้าแอดมินปุ่มเดียว "🧩 สร้าง Rich Menu" — รูป richmenu.png (2500x843) คู่กับ server.js
+//     v3.60 (เจ้าของสั่ง 2 พ.ย. 2569): เหลือปุ่มเดียว ทีมงานในพื้นที่ (บอทตอบพนักงานขายตามจังหวัด ไม่รู้จังหวัดถามก่อน)
+//     ตัดปุ่มลงทะเบียนสมาชิกและคุยกับแอดมิน — ตั้งเป็นเมนูเริ่มต้นของทุกคน และลบเมนูเก่าที่ระบบสร้างไว้ให้ (ใช้ LINE_CHANNEL_ACCESS_TOKEN ที่มีอยู่แล้ว)
 // 14. v3.6: POS เห็นพืชที่ปลูก/พื้นที่ปลูกด้วย — ถ้าตาราง POS มี column crops (text) / farm_rai (numeric) / crop_areas (jsonb)
 //     (เพิ่มด้วย supabase_crm_pos_setup.sql ข้อ 4) ระบบจะเขียนให้เองตอนสร้าง/อัปเดต/ผูก และซิงก์สองทาง:
 //     CRM มีพืชแต่ POS ว่าง -> เติมให้ POS · POS มีพืชแต่ CRM ว่าง -> เติมให้ CRM (ไม่ทับค่าที่อีกฝั่งกรอกไว้)
@@ -111,6 +111,11 @@
 //       ข้อความใหม่ที่มาก่อนส่งคำตอบ (ภายใน LINE_MERGE_WINDOW_SECONDS ค่าเริ่ม 45) หยุดคำตอบเดิมแล้วตอบรวมทุกข้อความ
 //       ย่อรูปลูกค้าด้านยาวไม่เกิน IMAGE_MAX_SIDE (2048) ก่อนส่ง Dify เพราะรูป 5.7 MB ทำให้ Gemini ล้ม · Dify ล้มแล้วลองใหม่ได้ถ้าเวลารวมไม่เกิน DIFY_RETRY_WITHIN_SEC (70)
 //       log error ของโหนดยาวขึ้น · แก้คำ "ก่อนเก็บเก็บ" และเว้นวรรคก่อนวงเล็บชื่อเล่นพนักงาน · ส่งหลายรูปให้บอกทีละรูป
+//     v3.60 (2 พ.ย. 2569 เจ้าของสั่ง): คุยกับบอทได้ทันทีโดยไม่ต้องลงทะเบียน (ระบบจริงตั้ง REGISTER=off) — คนที่เพิ่มเพื่อนครั้งแรกได้คำต้อนรับ
+//       (เดิมโหมด off ทักทุกคนว่า "ยินดีต้อนรับกลับมา") พิมพ์ "ลงทะเบียน"/"แก้ไขข้อมูล" ได้คำตอบว่าไม่ต้องลงทะเบียน เลิกถามข้อมูลที่ค้างไว้
+//       และปิดปุ่มเชิญลงทะเบียนในหน้าแอดมิน · Rich Menu เหลือปุ่มเดียว "ทีมงานในพื้นที่"
+//       · รูป: อ่านเฉพาะรูปผลิตภัณฑ์เคมีเกษตร (ขวด ถุง กล่อง ฉลาก) ไม่วิเคราะห์รูปพืช ผลไม้ อาการ แมลง วัชพืช กติกาและหมายเหตุรูปอยู่ในกล่อง
+//       [ข้อมูลตรวจสอบภายใน] (turn_queue.js) ให้โค้ดจัดข้อมูลสินค้าใน Dify ตัดทิ้งก่อนหาคำของลูกค้า
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -1344,7 +1349,10 @@ function keepLoading(userId) {
 // v3.35: ลูกค้าส่งแต่รูป มักพิมพ์คำอธิบายตามมา -> พักรูปไว้ก่อน ถ้ามีข้อความตามมาให้ส่งรวมเป็นคำถามเดียว
 // LINE_IMAGE_WAIT_SECONDS (ค่าเริ่มต้น 8, 0 = ตอบรูปทันทีแบบเดิม)
 const IMG_WAIT_MS = Math.max(0, Math.min(30, parseFloat(process.env.LINE_IMAGE_WAIT_SECONDS || '8') || 0)) * 1000;
-const IMAGE_QUERY = 'ลูกค้าส่งรูปภาพมา กรุณาแยกก่อนว่าเป็น (1) ภาพสวัสดี คำอวยพร วันในสัปดาห์ มีม หรือภาพแชร์ทั่วไปที่ไม่เกี่ยวกับเกษตร ให้ตอบสั้น ๆ สุภาพและไม่วิเคราะห์ต่อ หรือ (2) ภาพพืช อาการ แมลง วัชพืช โรค หรือฉลากเคมีเกษตร จึงค่อยอ่านภาพตามบริบทและตอบเฉพาะสิ่งที่ยืนยันจากภาพได้ หากภาพไม่พอให้ถามข้อมูลเป็นข้อความเพิ่มเพียง 1 ข้อ ห้ามเดา';
+// v3.60 (2 พ.ย. 2569 เจ้าของสั่ง): อ่านเฉพาะรูปผลิตภัณฑ์เคมีเกษตร ไม่วิเคราะห์รูปพืช ผลไม้ อาการ แมลง วัชพืช
+// turnQuery (turn_queue.js) ใส่ข้อความนี้ในกล่อง [ข้อมูลตรวจสอบภายใน] โค้ดจัดข้อมูลสินค้าใน Dify จึงไม่นับเป็นคำของลูกค้า
+// (ร่างแรกของกติกานี้มีคำว่า "ไม่ได้พิมพ์" ซึ่ง formatter จับเป็นชื่อสินค้า ไดพิม 90 เมื่ออยู่นอกกล่อง)
+const IMAGE_QUERY = 'กติการูปของน้องลัดดา: อ่านเฉพาะรูปผลิตภัณฑ์เคมีเกษตร เช่น ขวด ถุง กล่อง หรือฉลากของยา ปุ๋ย และสารบำรุง ให้อ่านชื่อสินค้าและสารสำคัญบนฉลากแล้วใช้ตอบคำถาม ถ้าส่งมาแต่รูปให้บอกว่าเป็นสินค้าอะไรและใช้ทำอะไร ส่วนที่อ่านไม่ชัดห้ามเดา รูปพืช ผลไม้ ใบ ต้น ราก ดอก แปลง อาการ ตัวแมลง หนอน หรือวัชพืช น้องลัดดาไม่วิเคราะห์ ห้ามบอกว่าเป็นโรค แมลง หรืออาการอะไร และห้ามเลือกสินค้าจากสิ่งที่เห็นในรูป ให้ตอบจากข้อความที่ลูกค้าพิมพ์เท่านั้น ถ้าข้อความยังไม่บอกว่าเป็นปัญหาอะไร (เช่น พิมพ์แค่ว่าเป็นแบบนี้หรือเป็นอะไร) ให้บอกสุภาพว่าน้องลัดดายังไม่รับวิเคราะห์อาการจากรูป แล้วชวนพิมพ์ชื่อพืชกับอาการที่เห็น รูปทักทายหรือรูปทั่วไปให้ตอบสั้น ๆ สุภาพ';
 // v3.38 (FB-02): ข้อความที่ส่งติดกันภายใน LINE_TEXT_WAIT_SECONDS (ค่าเริ่ม 4) รวมเป็นคำถามเดียว
 // รูปอย่างเดียวรอคำอธิบาย LINE_IMAGE_WAIT_SECONDS · LINE_JOIN_MESSAGES=off = ตอบทุกข้อความทันทีแบบเดิม
 const TEXT_WAIT_MS = Math.max(0, Math.min(15, parseFloat(process.env.LINE_TEXT_WAIT_SECONDS || '4') || 0)) * 1000;
@@ -2180,6 +2188,9 @@ function regStart(s, pendingText, opts) {
 const REG_CMD_RX = /^(ขอ|อยาก)?(ลงทะเบียน|สมัครสมาชิก|สมัคร|register)(สมาชิก|ใหม่|ด้วย|หน่อย|เลย|ค่ะ|ครับ|คะ|จ้า|นะ|ค่า)*[\s.!]*$/i;
 const REG_EDIT_RX = /^(ขอ|อยาก)?(แก้ไขข้อมูล|แก้ข้อมูล|อัปเดตข้อมูล|อัพเดทข้อมูล|เปลี่ยนเบอร์|แก้ไขการลงทะเบียน|แก้ทะเบียน|เปลี่ยนข้อมูล)(ส่วนตัว|ลงทะเบียน|โทร|ใหม่|ด้วย|หน่อย|เลย|ค่ะ|ครับ|คะ|จ้า|นะ|ค่า)*[\s.!]*$/i;
 function regCmd(t) { const x = String(t || '').trim(); return REG_CMD_RX.test(x) ? 'register' : (REG_EDIT_RX.test(x) ? 'edit' : ''); }
+// v3.60 (เจ้าของสั่ง 2 พ.ย. 2569): ปิดการลงทะเบียน (REGISTER=off) คำตอบเมื่อลูกค้าพิมพ์ "ลงทะเบียน"/"แก้ไขข้อมูล" และคำต้อนรับคนที่เพิ่มเพื่อนครั้งแรก
+const REG_OFF_REPLY = 'ตอนนี้ไม่ต้องลงทะเบียนแล้วค่ะ 🙏 ถามน้องลัดดาเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ';
+const FOLLOW_WELCOME = 'สวัสดีค่ะ 🙏 น้องลัดดา ผู้ช่วยจาก ICP Ladda ยินดีต้อนรับค่ะ 🌾\nถามเรื่องสินค้า โรค แมลง วัชพืช หรือวิธีใช้ยาได้เลยนะคะ ส่งรูปขวดหรือฉลากยามาให้น้องลัดดาช่วยอ่านก็ได้ค่ะ';
 function regSummaryText(c) {
   const r = (c && c.auto && c.auto.reg) || {};
   const name = c.real_name || r.name || '-', phone = c.phone || r.phone || '-', prov = c.province || r.province || '-';
@@ -2478,16 +2489,16 @@ async function liffConfirmPush(id) {
   return { ok };
 }
 // หน้า LIFF (liff.html วางคู่กับ server.js) + ข้อมูลจังหวัด/อำเภอ/ตำบล (thai_locations.json — จาก kongvut/thai-province-data, MIT)
-// ---------- Rich Menu (v3.5): เมนูล่างแชท "ลงทะเบียนสมาชิก / ทีมงานในพื้นที่ / คุยกับแอดมิน" สร้างจากหน้าแอดมิน ----------
-const RICHMENU_NAME = 'nladda-register';
+// ---------- Rich Menu (v3.5): เมนูล่างแชท สร้างจากหน้าแอดมิน ----------
+// v3.60 (เจ้าของสั่ง 2 พ.ย. 2569): ปุ่มเดียวเต็มรูป "ทีมงานในพื้นที่" ตัดปุ่มลงทะเบียนสมาชิก (ฟอร์ม LIFF) และคุยกับแอดมิน
+// (ถ้าจะเพิ่มปุ่มแอดมินกลับ ต้องทำรูปใหม่และเพิ่ม area) รูปต้นฉบับอยู่ใน repo nong-ladda: recovery/2026-11-02/no-register/richmenu
+const RICHMENU_NAME = 'nladda-menu';
+const RICHMENU_OLD = ['nladda-register']; // ชื่อเมนูที่ระบบเคยสร้าง ลบทิ้งตอนสร้างเมนูใหม่
 function richMenuSpec() {
-  const regAction = LIFF_URL ? { type: 'uri', label: 'ลงทะเบียนสมาชิก', uri: LIFF_URL } : { type: 'message', label: 'ลงทะเบียนสมาชิก', text: 'ลงทะเบียน' };
   return {
-    size: { width: 2500, height: 843 }, selected: true, name: RICHMENU_NAME + '-' + (LIFF_URL ? 'liff' : 'chat'), chatBarText: 'เมนู',
+    size: { width: 2500, height: 843 }, selected: true, name: RICHMENU_NAME + '-team', chatBarText: 'เมนู',
     areas: [
-      { bounds: { x: 0, y: 0, width: 833, height: 843 }, action: regAction },
-      { bounds: { x: 833, y: 0, width: 834, height: 843 }, action: { type: 'message', label: 'ทีมงานในพื้นที่', text: 'ทีมงานในพื้นที่ของฉัน' } },
-      { bounds: { x: 1667, y: 0, width: 833, height: 843 }, action: { type: 'message', label: 'คุยกับแอดมิน', text: 'คุยกับแอดมิน' } }
+      { bounds: { x: 0, y: 0, width: 2500, height: 843 }, action: { type: 'message', label: 'ทีมงานในพื้นที่', text: 'ทีมงานในพื้นที่ของฉัน' } }
     ]
   };
 }
@@ -2515,14 +2526,14 @@ async function richMenuCreate() {
   if (up.status !== 200) { await richMenuDelete(id).catch(() => {}); return { ok: false, error: `อัปโหลดรูปเมนูไม่สำเร็จ: ${up.status} ${JSON.stringify(up.data).slice(0, 200)}` }; }
   const def = await lineApi('POST', '/v2/bot/user/all/richmenu/' + encodeURIComponent(id));
   if (def.status !== 200) return { ok: false, richMenuId: id, error: `ตั้งเป็นเมนูเริ่มต้นไม่สำเร็จ: ${def.status} ${JSON.stringify(def.data).slice(0, 200)}` };
-  // ลบเมนูเก่าที่ระบบสร้างไว้ (ชื่อขึ้นต้น nladda-register) เพื่อไม่ให้รก
+  // ลบเมนูเก่าที่ระบบสร้างไว้ (ชื่อขึ้นต้น nladda-menu หรือ nladda-register) เพื่อไม่ให้รก
   let removed = 0;
   try {
     const l = await richMenuList();
-    for (const m of l.menus) if (m.richMenuId !== id && String(m.name || '').startsWith(RICHMENU_NAME)) { if (await richMenuDelete(m.richMenuId)) removed++; }
+    for (const m of l.menus) if (m.richMenuId !== id && [RICHMENU_NAME].concat(RICHMENU_OLD).some((p) => String(m.name || '').startsWith(p))) { if (await richMenuDelete(m.richMenuId)) removed++; }
   } catch (_) {}
   console.log(`[richmenu] created ${id} (${spec.name}) default=true removed_old=${removed}`);
-  return { ok: true, richMenuId: id, name: spec.name, liff: !!LIFF_URL, removed };
+  return { ok: true, richMenuId: id, name: spec.name, removed };
 }
 // ทีมงานในพื้นที่ (จากปุ่มเมนู) -> ตอบจากจังหวัดในโปรไฟล์ ไม่ต้องผ่าน Dify
 const TEAM_CMD_RX = /^(ขอ|ดู|อยากรู้)?(ทีมงาน|ทีมขาย|เจ้าหน้าที่|ผู้ดูแล|ผู้แทน)(ใน|ประจำ)?(พื้นที่|เขต)(ของฉัน|ของผม|ของหนู|ของเรา)?[\s.!]*$/;
@@ -2783,7 +2794,10 @@ async function handleEvent(ev) {
         await sendAnswer(s, ev, pushTarget, regWelcome(s), { system: true });
       }
     } else {
-      await sendAnswer(s, ev, pushTarget, 'ยินดีต้อนรับกลับมาค่ะ 🙏 น้องลัดดาพร้อมตอบเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾', { system: true });
+      // v3.60: โหมดไม่ลงทะเบียน (REGISTER=off) คนที่เพิ่มเพื่อนครั้งแรกได้คำต้อนรับ ไม่ใช่ "ยินดีต้อนรับกลับมา"
+      const firstSeen = Date.parse(c.first_seen_at || '') || 0;
+      const back = regDone(c) || s.history.length > 0 || (firstSeen > 0 && Date.now() - firstSeen > 10 * 60000);
+      await sendAnswer(s, ev, pushTarget, back ? 'ยินดีต้อนรับกลับมาค่ะ 🙏 น้องลัดดาพร้อมตอบเรื่องสินค้า โรค แมลง วัชพืช ได้เลยนะคะ 🌾' : FOLLOW_WELCOME, { system: true });
     }
     return;
   }
@@ -2892,6 +2906,16 @@ async function handleEvent(ev) {
         s.teamAskAt = Date.now(); markDirty();
         console.log(`[team] ${sessionId.slice(0, 8)} ask province`);
         await sendAnswer(s, ev, pushTarget, TEAM_ASK_PROVINCE, { system: true });
+        return;
+      }
+    }
+    // v3.60 (เจ้าของสั่ง 2 พ.ย. 2569): REGISTER=off = คุยได้ทันที ไม่มีฟอร์มสมัคร คำสั่งลงทะเบียน/แก้ไขข้อมูลได้คำตอบว่าไม่ต้องลงทะเบียน
+    // และเลิกถามข้อมูลที่ค้างไว้จากตอนบังคับลงทะเบียน (ลูกค้าที่กรอกไม่จบ)
+    if (REG_MODE === 'off') {
+      if (s.reg) { s.reg = null; s.regPending = ''; markDirty(); }
+      if (cmd || (ev.message.type === 'text' && /^(ขอ)?(ลงทะเบียน|สมัคร)(ผ่าน|ใน|ทาง)แชท/.test(text.trim()))) {
+        console.log('[reg] ' + sessionId.slice(0, 8) + ' ' + (cmd || 'chat') + ' -> registration is off');
+        await sendAnswer(s, ev, pushTarget, REG_OFF_REPLY, { system: true });
         return;
       }
     }
@@ -3611,9 +3635,9 @@ function load(fromLogin) {
         ? '🔗 POS: <b style="color:#d33a41">ผิดพลาด</b> <span title="' + esc(p.error) + '">' + esc(String(p.error).slice(0, 60)) + '</span> · '
         : '🔗 POS: <b style="color:#0a9a4a">' + (p.rows || 0).toLocaleString('th-TH') + ' รายชื่อ</b>' + (p.loadedAt ? ' (อัปเดต ' + hhmm(p.loadedAt) + ')' : ' (กำลังโหลด…)') + (p.writeback ? ' · เขียน LINE ID กลับ POS: เปิด' : '') + ' · ');
     unreg = d.unregistered || 0;
-    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b>' + (d.regUi === 'liff' ? ' <span title="' + esc(d.liffUrl || '') + '">(ฟอร์ม LIFF)</span>' : ' (ถามในแชท)')
-      + (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว')
-      + ' · <span class="exp" id="rmbtn" title="สร้าง Rich Menu (เมนูล่างแชท): ลงทะเบียนสมาชิก / ทีมงานในพื้นที่ / คุยกับแอดมิน แล้วตั้งเป็นเมนูเริ่มต้นของทุกคน">🧩 สร้าง Rich Menu ลงทะเบียน</span> · ';
+    document.getElementById('posst').innerHTML += '📝 ลงทะเบียนลูกค้าใหม่: <b style="color:' + (d.reg === 'on' ? '#0a9a4a' : (d.reg === 'soft' ? '#d97706' : '#98a2ad')) + '">' + (d.reg === 'on' ? 'บังคับ' : (d.reg === 'soft' ? 'ถามแต่ไม่บังคับ' : 'ปิด')) + '</b>' + (d.reg === 'off' ? ' (ลูกค้าคุยกับบอทได้ทันที)' : (d.regUi === 'liff' ? ' <span title="' + esc(d.liffUrl || '') + '">(ฟอร์ม LIFF)</span>' : ' (ถามในแชท)'))
+      + (d.reg === 'off' ? '' : (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว'))
+      + ' · <span class="exp" id="rmbtn" title="สร้าง Rich Menu (เมนูล่างแชท) ปุ่มเดียว: ทีมงานในพื้นที่ แล้วตั้งเป็นเมนูเริ่มต้นของทุกคน">🧩 สร้าง Rich Menu</span> · ';
     cache = d.sessions;
     var pend = d.pending || 0;
     var cbEl = document.getElementById('cbcount');
@@ -3840,7 +3864,7 @@ function inviteAllUi() {
 function richMenuUi() {
   api('/admin/api/richmenu').then(function(d) {
     var cur = (d.menus || []).find(function(m) { return m.richMenuId === d.defaultId; });
-    var msg = 'สร้าง Rich Menu (เมนูล่างแชท) 3 ปุ่ม: ลงทะเบียนสมาชิก' + (d.spec && d.spec.areas[0].action.type === 'uri' ? ' (เปิดฟอร์ม LIFF)' : ' (พิมพ์ "ลงทะเบียน" — ยังไม่ได้ตั้ง LIFF_ID)') + ' / ทีมงานในพื้นที่ / คุยกับแอดมิน\\nแล้วตั้งเป็นเมนูเริ่มต้นของลูกค้าทุกคน' + (cur ? '\\n\\n(เมนูปัจจุบัน: ' + cur.name + ' — จะถูกแทนที่)' : (d.menus && d.menus.length ? '\\n\\n(มีเมนูอื่นอยู่ ' + d.menus.length + ' รายการ เมนูที่ระบบสร้างไว้จะถูกลบ)' : ''));
+    var msg = 'สร้าง Rich Menu (เมนูล่างแชท) ปุ่มเดียว: ทีมงานในพื้นที่ (ลูกค้ากดแล้วบอทบอกพนักงานขายตามจังหวัด)\\nแล้วตั้งเป็นเมนูเริ่มต้นของลูกค้าทุกคน' + (cur ? '\\n\\n(เมนูปัจจุบัน: ' + cur.name + ' — จะถูกแทนที่)' : (d.menus && d.menus.length ? '\\n\\n(มีเมนูอื่นอยู่ ' + d.menus.length + ' รายการ เมนูที่ระบบสร้างไว้จะถูกลบ)' : ''));
     if (!d.hasImage) { alert('ไม่พบ richmenu.png บนเซิร์ฟเวอร์ — ต้อง deploy คู่กับ server.js'); return; }
     if (!confirm(msg)) return;
     var el = document.getElementById('rmbtn'); if (el) el.textContent = '🧩 กำลังสร้าง…';
@@ -4737,6 +4761,7 @@ function handleAdmin(req, res, path, body) {
   }
   // เชิญลงทะเบียน (Push): {id} = แชทเดียว, {all:true} = ทุกแชทลูกค้าที่ยังไม่ลงทะเบียน (ข้ามคนที่เพิ่งเชิญไปใน 24 ชม.)
   if (path === '/admin/api/reg/invite' && req.method === 'POST') {
+    if (REG_MODE === 'off') return sendJson(res, 409, { ok: false, error: 'ปิดการลงทะเบียนอยู่ (REGISTER=off) จึงไม่ส่งคำเชิญ' }); // v3.60
     let data = {};
     try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
     if (data.all === true) {
@@ -4954,7 +4979,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.59', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.60', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

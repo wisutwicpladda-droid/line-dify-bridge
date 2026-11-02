@@ -7,6 +7,7 @@ const { createTurnQueue, turnQuery, isQuestionLine } = require('../turn_queue');
 
 const IMAGE_Q = '[IMAGE]';
 const STICKER_Q = '[STICKER]';
+const customerWords = (s) => String(s).replace(/\[ข้อมูลตรวจสอบภายใน[^\]]*\][\s\S]*?(?:\[จบข้อมูลตรวจสอบภายใน\]|$)/g, ' ').trim(); // v3.60: customer_words() of the Dify product formatter
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
@@ -15,9 +16,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepStrictEqual(q.images, []);
   q = turnQuery([{ kind: 'image', id: 'i1' }, { kind: 'text', text: 'เป็นโรคอะไร' }], IMAGE_Q, STICKER_Q);
   assert.deepStrictEqual(q.images, ['i1']);
-  assert(q.query.startsWith('เป็นโรคอะไร\n') && q.query.includes('รูปภาพ 1 รูป') && q.query.endsWith(IMAGE_Q));
+  // v3.60: the photo note and the photo rules sit in an internal block that the Dify product formatter drops
+  assert(q.query.startsWith('เป็นโรคอะไร\n\n[ข้อมูลตรวจสอบภายใน') && q.query.includes('รูปภาพ 1 รูป') && q.query.includes(IMAGE_Q) && q.query.endsWith('[จบข้อมูลตรวจสอบภายใน]'), q.query);
+  assert.strictEqual(customerWords(q.query), 'เป็นโรคอะไร');
   assert.strictEqual(q.userText, 'เป็นโรคอะไร');
-  assert.strictEqual(turnQuery([{ kind: 'image', id: 'i1' }], IMAGE_Q, STICKER_Q).query, IMAGE_Q);
+  const only = turnQuery([{ kind: 'image', id: 'i1' }], IMAGE_Q, STICKER_Q).query;
+  assert(only.startsWith('[ข้อมูลตรวจสอบภายใน') && only.includes('(ลูกค้าส่งรูปภาพ 1 รูป) ' + IMAGE_Q), only);
+  assert.strictEqual(customerWords(only), '');
   assert.strictEqual(turnQuery([{ kind: 'sticker' }], IMAGE_Q, STICKER_Q).query, STICKER_Q);
 
   const runs = [];
@@ -133,6 +138,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // several photos: Dify is asked to read each one in the order sent
   const many = turnQuery([{ kind: 'image', id: 'a' }, { kind: 'image', id: 'b' }, { kind: 'image', id: 'c' }, { kind: 'text', text: 'เป็นโรคอะไร' }], IMAGE_Q, STICKER_Q);
   assert(many.query.includes('รูปที่ 1 ถึง 3') && many.query.includes('ทีละรูป'), many.query);
+  assert(!many.query.includes('น่าจะเป็นอะไร') && customerWords(many.query) === 'เป็นโรคอะไร', many.query); // v3.60: crop photos are not read
   assert(!turnQuery([{ kind: 'image', id: 'a' }, { kind: 'text', text: 'เป็นโรคอะไร' }], IMAGE_Q, STICKER_Q).query.includes('ทีละรูป'));
 
   console.log('PASS: turn queue joins close messages, waits longer for lines that are not yet a question, cancels a run when a new line comes before the answer, answers one question at a time per chat, and waits for photo captions');

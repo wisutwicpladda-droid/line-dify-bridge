@@ -9,6 +9,8 @@
 //  owner     the team reply says "พนักงานขายที่ดูแล จ.<province>" with no zone code or ME/MR; Ayutthaya names อ.เสนา/อ.ลาดบัวหลวง
 //  FB-06     an answer without a recommendation gets the "ทีมขายในพื้นที่" quick reply
 //  v3.43     the typing indicator is renewed while a slow answer is prepared and never renewed after the answer
+//  v3.60     REGISTER=off: a new follower gets a welcome (not "welcome back"), "ลงทะเบียน" gets "no need to register"
+//            without Dify, the photo rules sit in an internal block, and the rich menu has one area
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -86,6 +88,21 @@ let seq = 0;
 function post(port, userId, message) {
   seq++;
   const ev = { type: 'message', mode: 'active', timestamp: Date.now(), webhookEventId: 'ev' + seq, deliveryContext: { isRedelivery: false }, source: { type: 'user', userId }, replyToken: 'rt-' + seq, message: Object.assign({ id: 'm' + seq }, message) };
+  const body = JSON.stringify({ destination: 'Ubot', events: [ev] });
+  const sig = crypto.createHmac('sha256', SECRET).update(body).digest('base64');
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/webhook', method: 'POST', headers: { 'Content-Type': 'application/json', 'x-line-signature': sig, 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+      res.resume();
+      res.on('end', () => (res.statusCode === 200 ? resolve(ev.replyToken) : reject(new Error('webhook HTTP ' + res.statusCode))));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+// v3.60: send any webhook event (a follow event for the welcome check)
+function postEvent(port, e) {
+  seq++;
+  const ev = Object.assign({ mode: 'active', timestamp: Date.now(), webhookEventId: 'ev' + seq, deliveryContext: { isRedelivery: false }, replyToken: 'rt-' + seq }, e);
   const body = JSON.stringify({ destination: 'Ubot', events: [ev] });
   const sig = crypto.createHmac('sha256', SECRET).update(body).digest('base64');
   return new Promise((resolve, reject) => {
@@ -230,6 +247,19 @@ mock.listen(0, '127.0.0.1', async () => {
       assert.strictEqual(late.length, 0, 'typing indicator renewed after the answer for ' + u.slice(0, 8));
     }
     assert(/\[loading\] U[0-9a-f]{7} typing kept \d+s \(\d+ refresh\)/.test(log), 'refresh log line');
+    // v3.60 (owner 2 Nov 2026): REGISTER=off
+    const NEWF = uid('newfollow'), REGC = uid('regcmd');
+    const h1 = await postEvent(port, { type: 'follow', source: { type: 'user', userId: NEWF } });
+    const h2 = await post(port, REGC, { type: 'text', text: 'ลงทะเบียน' });
+    for (let i = 0; i < 50 && (!repliesFor(h1).length || !repliesFor(h2).length); i++) await sleep(100);
+    assert(textOf(h1).includes('ยินดีต้อนรับค่ะ') && !textOf(h1).includes('กลับมา'), 'new follower welcome: ' + textOf(h1));
+    assert(textOf(h2).includes('ไม่ต้องลงทะเบียน'), 'register command: ' + textOf(h2));
+    assert.strictEqual(chatsFor(REGC).length, 0, 'register command went to Dify');
+    const internal = /\[ข้อมูลตรวจสอบภายใน[^\]]*\][\s\S]*?(?:\[จบข้อมูลตรวจสอบภายใน\]|$)/g;
+    assert.strictEqual(pc[0].query.replace(internal, ' ').trim(), 'ใบทุเรียนเป็นจุดแบบนี้คือโรคอะไร', 'photo rules must sit in the internal block: ' + pc[0].query);
+    const rm = await adminGet(port, '/admin/api/richmenu', 'turn-flow-admin-key');
+    const areas = (rm.json.spec && rm.json.spec.areas) || [];
+    assert(areas.length === 1 && areas[0].action.text === 'ทีมงานในพื้นที่ของฉัน' && areas[0].bounds.width === 2500, 'rich menu: ' + JSON.stringify(rm.json.spec));
   } catch (e) { failed = e; }
   app.kill();
   mock.close();
@@ -239,7 +269,7 @@ mock.listen(0, '127.0.0.1', async () => {
     console.error('--- server log ---\n' + log.slice(-5000));
     process.exitCode = 1;
   } else {
-    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer)');
+    console.log('PASS: LINE turn flow (joined messages, one answer at a time, photo + caption, sales team, stream recovery, no-recommendation button, typing kept until the answer, no registration, one-button menu)');
   }
   setTimeout(() => process.exit(), 200);
 });
