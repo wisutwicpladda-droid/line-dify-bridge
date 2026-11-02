@@ -2,7 +2,7 @@
 
 // v3.50 (28 Oct 2026): คำภายใน "ในระบบ" และ ME/MR ไม่ถึงลูกค้า
 const assert = require('assert');
-const { removeSystemWords, stripStaffCode } = require('../customer_text');
+const { removeSystemWords, stripStaffCode, fixCommonText } = require('../customer_text');
 
 // คำตอบจริงจากรอบทดสอบ 28 ต.ค. (p087 พี.เอ็น. 13-0-46, p097 คริซ่า)
 assert.strictEqual(removeSystemWords('ส่วนอัตราและวิธีใช้เฉพาะพืช ตอนนี้น้องลัดดายังไม่มีข้อมูลคำแนะนำในระบบ รบกวนสอบถามพนักงานขายเพิ่มเติมนะคะ'),
@@ -54,4 +54,7 @@ assert.strictEqual(block, '📍 พนักงานขายที่ดูแ
 assert.strictEqual(customerTeam('', A07), null);
 assert.strictEqual(customerTeam('กรุงเทพมหานคร', null), null);
 assert.strictEqual(customerTeamText(null), '');
+// v3.60: the reply to a crop photo says it does not analyse photos
+assert.strictEqual(fixCommonText('ตอนนี้น้องลัดดายังไม่ได้รับวิเคราะห์อาการจากรูปภาพค่ะ'), 'ตอนนี้น้องลัดดายังไม่รับวิเคราะห์อาการจากรูปภาพค่ะ');
+assert.strictEqual(fixCommonText('ยังไม่ได้รับผลวิเคราะห์ดินค่ะ'), 'ยังไม่ได้รับผลวิเคราะห์ดินค่ะ');
 console.log('PASS: registration and LIFF team lists show "พนักงานขายที่ดูแล จ.<จังหวัด>" without zone codes or ME/MR');
