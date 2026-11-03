@@ -58,3 +58,18 @@ assert.strictEqual(customerTeamText(null), '');
 assert.strictEqual(fixCommonText('ตอนนี้น้องลัดดายังไม่ได้รับวิเคราะห์อาการจากรูปภาพค่ะ'), 'ตอนนี้น้องลัดดายังไม่รับวิเคราะห์อาการจากรูปภาพค่ะ');
 assert.strictEqual(fixCommonText('ยังไม่ได้รับผลวิเคราะห์ดินค่ะ'), 'ยังไม่ได้รับผลวิเคราะห์ดินค่ะ');
 console.log('PASS: registration and LIFF team lists show "พนักงานขายที่ดูแล จ.<จังหวัด>" without zone codes or ME/MR');
+
+
+// v3.70 (Feedback ข้อ 15): เบอร์ทีมขายในคำตอบของ Dify (063-2059079) เป็นแบบเดียวกับเมนูทีมขาย (063-205-9079)
+{
+  const { formatPhones } = require('../customer_text');
+  const known = new Set(['0632059079', '0632059093']);
+  const yaYa = 'สามารถติดต่อ วิลาสินี ขวัญเมือง (เมย์) โทร 063-2059079 หรือ ประภัศพรรณ สอนราช (น้ำหวาน) โทร 063-2059093 ได้เลยค่ะ';
+  assert.strictEqual(formatPhones(yaYa, known), 'สามารถติดต่อ วิลาสินี ขวัญเมือง (เมย์) โทร 063-205-9079 หรือ ประภัศพรรณ สอนราช (น้ำหวาน) โทร 063-205-9093 ได้เลยค่ะ');
+  assert.strictEqual(formatPhones('โทร 063-205-9079', known), 'โทร 063-205-9079', 'already formatted');
+  assert.strictEqual(formatPhones('โทร 081-1234567', known), 'โทร 081-1234567', 'a number outside the known set stays as it is');
+  assert.strictEqual(formatPhones('อัตรา 200-300 ซีซี ต่อน้ำ 200 ลิตร ผสม 0.5-1 ลิตร', known), 'อัตรา 200-300 ซีซี ต่อน้ำ 200 ลิตร ผสม 0.5-1 ลิตร', 'rates are not phone numbers');
+  assert.strictEqual(formatPhones('0632059079', null), '063-205-9079');
+  console.log('PASS: sales team phones in answers use the team menu format (ข้อ 15)');
+}
+

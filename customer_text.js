@@ -42,6 +42,14 @@ function spaceBeforeParen(text) {
   return s.includes('(') ? s.replace(/([\u0E01-\u0E59])\((?=[\u0E01-\u0E59][^()\n]{0,30}\))/g, '$1 (') : s;
 }
 
+// v3.70 (Feedback ข้อ 15, 3 พ.ย. 2569): เบอร์พนักงานขายในคำตอบของ Dify มาตามชีท (063-2059079) ส่วนเมนูทีมขายแสดง 063-205-9079
+// ให้เบอร์มือถือ 10 หลักในคำตอบเป็นรูปแบบเดียวกัน 0XX-XXX-XXXX · known = ชุดเบอร์ที่รู้จัก (ตัวเลขล้วน) ถ้าส่งมาจะจัดเฉพาะเบอร์ในชุดนี้
+const PHONE10_RX = /(?<![\d-])0(\d{2})[-\s.]?(\d{3})[-\s.]?(\d{4})(?![\d-])/g;
+function formatPhones(text, known) {
+  const s = String(text == null ? '' : text);
+  return s.replace(PHONE10_RX, (m, a, b, c) => (known && !known.has('0' + a + b + c) ? m : '0' + a + '-' + b + '-' + c));
+}
+
 function fixCommonText(text) {
   let s = String(text == null ? '' : text);
   if (s.includes('เก็บเก็บ')) s = s.replace(/เก็บเก็บ(?!เกี่ยว)/g, 'เก็บเกี่ยว');
@@ -75,4 +83,4 @@ function customerTeamText(team) {
   return '📍 ' + team.title + '\n' + team.rows.map((r) => '• ' + r.name + (r.phone ? ' ' + r.phone : '')).join('\n');
 }
 
-module.exports = { removeSystemWords, removeInternalNotes, stripStaffCode, zoneTeamRows, customerTeam, customerTeamText, fixCommonText, spaceBeforeParen };
+module.exports = { removeSystemWords, removeInternalNotes, stripStaffCode, zoneTeamRows, customerTeam, customerTeamText, fixCommonText, spaceBeforeParen, formatPhones };

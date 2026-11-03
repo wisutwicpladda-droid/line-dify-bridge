@@ -140,6 +140,12 @@
 //     v3.69 (3 พ.ย. 2569): ตัวกรองวันที่ของรายการแชทมี "รายเดือน" เป็นปฏิทินของเดือน แต่ละวันบอกจำนวนแชทที่มีข้อความ
 //       กดวันเพื่อดูแชทของวันนั้น กดอีกครั้งหรือ "ทั้งเดือน" เพื่อดูทั้งเดือน เลื่อนเดือนด้วย ‹ › หรือเลือกจากรายการ
 //       /admin/api/list?...&month=YYYY-MM ตอบ monthDays (จำนวนแชทต่อวัน) และ months (เดือนที่มีแชท) · matched = จำนวนแชทที่ตรงทั้งหมด
+//     v3.70 (3 พ.ย. 2569, Feedback น้องลัดดา 2-3 พ.ย. ทดสอบบน V.2 ก่อน):
+//       ข้อ 1-3: ประวัติแชทในหน้าแอดมินเก็บข้อความแค่ 600 ตัวอักษรแรก คำตอบยาวจึงดูเหมือนถูกตัด ทั้งที่ LINE ได้ข้อความเต็ม
+//         (ตรวจ log ของ Dify แล้ว) -> เก็บได้ถึง HIST_TEXT_MAX ตัวอักษร (ค่าเริ่ม 4900 เท่ากับที่ส่งเข้า LINE)
+//       ข้อ 20: สินค้าที่คำตอบบอกว่าไม่แนะนำ/ยังไม่มีคำแนะนำ (ราเซอร์กับแตงโม) ไม่ส่งรูปและไม่มีปุ่มดูรูป (answer_products.js)
+//       ข้อ 18, 23: ป้ายปุ่มดูรูปย่อสูตรยา (ไดพิม 90 WG) แทนการตัดกลางคำที่ 20 ตัวอักษร
+//       ข้อ 15: เบอร์พนักงานขายในคำตอบของ Dify เป็นรูปแบบเดียวกับเมนูทีมขาย (063-205-9079)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -227,10 +233,11 @@ const costForward = require('./cost_forward').createForwarder({ url: process.env
 const COST_INGEST_KEY = (process.env.COST_INGEST_KEY || '').trim().length >= 16 ? process.env.COST_INGEST_KEY.trim() : '';
 if (costForward.state.on) { let h = '?'; try { h = new URL(process.env.COST_FORWARD_URL).host; } catch (_) {} console.log('[cost] forward records to ' + h + ' as ' + cost.app + (cost.src === 'test' ? ' (test runs)' : '')); }
 let sheetAlertKeys = [];
-const { removeSystemWords, removeInternalNotes, stripStaffCode, fixCommonText, zoneTeamRows, customerTeam, customerTeamText } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)" · v3.59: คำผิดและเว้นวรรคก่อนวงเล็บ
+const { removeSystemWords, removeInternalNotes, stripStaffCode, fixCommonText, zoneTeamRows, customerTeam, customerTeamText, formatPhones } = require('./customer_text'); // v3.50: ตัด "ในระบบ" และ ME/MR จากข้อความถึงลูกค้า · v3.53: "(ไม่มีรูป)" · v3.59: คำผิดและเว้นวรรคก่อนวงเล็บ
 const { compactResponse } = require('./response_compactor'); // p113: คุมคำตอบทั่วไปให้สั้นและคุยต่อได้
 const { provinceMatch, PROVINCE_WORDS } = require('./province_match'); // v3.45-v2: เลย/แพร่/ตาก นับเป็นจังหวัดเมื่อมี จ./จังหวัด หรือพิมพ์มาแค่ชื่อจังหวัด
 const imageButtons = require('./image_buttons');
+const answerProducts = require('./answer_products'); // v3.70: สินค้าที่คำตอบไม่แนะนำ และป้ายปุ่มดูรูป
 const { createTurnQueue, turnQuery } = require('./turn_queue'); // v3.38: รวมข้อความที่ส่งติดกัน + ตอบทีละคำถามต่อแชท (FB-02)
 const { teamAsk, provinceAnswer } = require('./team_ask'); // v3.38: ขอทีมขายตอบจากตารางทีมขายโดยตรง (FB-04, FB-11)
 const { streamChat } = require('./dify_stream'); // v3.38: Dify แบบ streaming กันถูกตัดที่ 100 วินาที (FB-09)
@@ -263,6 +270,8 @@ const LINE_API = (process.env.LINE_API_BASE || 'https://api.line.me').replace(/\
 const LINE_DATA_API = (process.env.LINE_DATA_API_BASE || process.env.LINE_API_BASE || 'https://api-data.line.me').replace(/\/+$/, ''); // อัปโหลดรูป rich menu
 const FOREVER = 8640000000000000;
 const HIST_MAX = 200;
+// v3.70 (Feedback ข้อ 1-3): ข้อความในประวัติแชทหน้าแอดมิน เดิมเก็บ 600 ตัวอักษร คำตอบยาวจึงดูเหมือนถูกตัด
+const HIST_TEXT_MAX = Math.min(4900, Math.max(600, parseInt(process.env.HIST_TEXT_MAX || '4900', 10) || 4900));
 const ADMIN_NOTIFY_IDS = (process.env.ADMIN_NOTIFY_IDS || '').split(/[\s,]+/).filter((x) => /^U[0-9a-f]{32}$/.test(x));
 // v3.31: ปลายทางรับเคสลูกค้า (groupId C..., roomId R... หรือ userId U...) คั่นด้วย , — บอทจะไม่ตอบแชทในกลุ่มเหล่านี้
 // v3.32: ส่งการ์ดเคสด้วย OA แจ้งเตือนแยก (เช่น น้องเซลล์ม่อน) ถ้าตั้ง LEAD_LINE_TOKEN; ไม่ตั้ง = ใช้ OA น้องลัดดา
@@ -471,7 +480,7 @@ function touchSession(id, type, text) {
 
 // v3.59: extra = { img } รูปที่ลูกค้าส่ง, { pimg } รูปสินค้าที่บอทส่ง, { qr } ปุ่มที่บอทเสนอ (แสดงในหน้าแชทหลังบ้าน)
 function pushHist(s, role, text, extra) {
-  s.history.push(Object.assign({ r: role, t: String(text).slice(0, 600), at: Date.now() }, extra || {}));
+  s.history.push(Object.assign({ r: role, t: String(text).slice(0, HIST_TEXT_MAX), at: Date.now() }, extra || {}));
   if (s.history.length > HIST_MAX) s.history.splice(0, s.history.length - HIST_MAX);
   markDirty();
   broadcast();
@@ -547,8 +556,8 @@ async function backfillFromDify(id, s) {
         for (const m of rm.data.data) {
           const at = (m.created_at || 0) * 1000;
           if (!at) continue;
-          if (m.query) entries.push({ r: 'u', t: String(m.query).slice(0, 600), at });
-          if (m.answer) entries.push({ r: 'b', t: String(m.answer).slice(0, 600), at: at + 1 });
+          if (m.query) entries.push({ r: 'u', t: String(m.query).slice(0, HIST_TEXT_MAX), at });
+          if (m.answer) entries.push({ r: 'b', t: String(m.answer).slice(0, HIST_TEXT_MAX), at: at + 1 });
         }
       }
     }
@@ -918,9 +927,9 @@ function guardPhones(answer, sessionId) {
     if (unknown.length) { bad.push(...unknown); return false; }
     return true;
   });
-  if (!bad.length) return answer;
+  if (!bad.length) return formatPhones(answer, ok); // v3.70 (Feedback ข้อ 15): เบอร์ทีมขายรูปแบบเดียวกับเมนูทีมขาย
   console.log(`[guard] ${String(sessionId).slice(0, 8)} removed unknown phone(s): ${bad.join(',')}`);
-  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n\nเบอร์ทีมงานที่ถูกต้อง พิมพ์ "ทีมงานในพื้นที่" หรือบอกจังหวัดของคุณลูกค้าได้เลยนะคะ';
+  return formatPhones(lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), ok) + '\n\nเบอร์ทีมงานที่ถูกต้อง พิมพ์ "ทีมงานในพื้นที่" หรือบอกจังหวัดของคุณลูกค้าได้เลยนะคะ';
 }
 
 
@@ -1199,7 +1208,11 @@ function pimgPlan(s, userText, answer) {
   if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return none;
   if (/1669|โรงพยาบาล/.test(answer)) return none; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
   const seenFile = new Set();
-  const names = productsInAnswer(answer).filter((n) => !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
+  const found = productsInAnswer(answer);
+  // v3.70 (Feedback ข้อ 20): สินค้าที่คำตอบบอกว่าไม่แนะนำ/ยังไม่มีคำแนะนำ ไม่ส่งรูปและไม่มีปุ่ม
+  const negated = answerProducts.negatedProducts(answer, found);
+  if (negated.size) console.log('[pimg] skip not recommended: ' + [...negated].join(', '));
+  const names = found.filter((n) => !negated.has(n) && !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
   if (!names.length) return none;
   const now = Date.now();
   s.pimgSent = s.pimgSent || {};
@@ -1256,7 +1269,7 @@ async function sendAllProductImages(s, ev, pushTarget, names) {
 }
 function pimgAttachButtons(msgs, names) {
   if (!names || !names.length || !msgs.length) return;
-  const items = names.map((n) => ({ type: 'action', action: { type: 'message', label: ('📷 ' + n).slice(0, 20), text: 'ขอรูป ' + n } }));
+  const items = names.map((n) => ({ type: 'action', action: { type: 'message', label: answerProducts.buttonLabel(n), text: 'ขอรูป ' + n } })); // v3.70: ไม่ตัดกลางคำ
   const i = msgs.length - 1;
   if (typeof msgs[i] === 'string') msgs[i] = { type: 'text', text: msgs[i].slice(0, 4900), quickReply: { items } };
   else if (msgs[i] && typeof msgs[i] === 'object') msgs[i].quickReply = { items };
@@ -5284,7 +5297,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.69', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.70', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
