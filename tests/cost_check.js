@@ -293,4 +293,25 @@ const s5m = c5.summary({ period: { type: 'month', key: s5.month.key } });
 near(s5m.period.total.usd, s5.month.usd, 'month view includes the search overage');
 assert.strictEqual(s5m.search.period, 2);
 
-console.log('PASS: cost tracking prices every Dify node, web search, Jev and ElevenLabs voice, totals by day/month/step/kind/chat and by source (this bot, V.2, test runs), takes forwarded records once, keeps Dify baselines, projects the month and the 2027 price, survives restarts, reads Railway price overrides, and filters by day (hourly, Thai time) or month (every day) with older state files backfilled');
+// 14) v3.67 ช่วงวันที่ที่เลือกเอง: กราฟรายวันทุกวันในช่วง ตารางทุกตารางคิดตามช่วง ใส่สลับกันได้ ตัดวันในอนาคตออก
+ps = cp.summary({ period: { type: 'range', from: '2026-09-30', to: '2026-10-28' } });
+assert.deepStrictEqual([ps.period.type, ps.period.key, ps.period.from, ps.period.to, ps.chart.unit, ps.chart.points.length], ['range', '2026-09-30_2026-10-28', '2026-09-30', '2026-10-28', 'day', 29]);
+assert.deepStrictEqual([ps.period.total.turns, ps.topChats.map((x) => x.sid), ps.topTurns.map((x) => x.sid), ps.search.period], [1, ['Usep'], ['Usep'], 0], 'ช่วงที่ไม่รวม 29 ต.ค.');
+ps = cp.summary({ period: { type: 'range', from: '2026-10-29', to: '2026-09-29' } }); // สลับกัน
+assert.deepStrictEqual([ps.period.from, ps.period.to, ps.chart.points.length, ps.period.total.turns, ps.search.period], ['2026-09-29', '2026-10-29', 31, 4, 1]);
+assert.deepStrictEqual(ps.topChats.map((x) => [x.sid, x.turns]), [['Usep', 1], ['Uoct', 2], ['Uoct2', 1]]);
+assert.strictEqual(ps.period.chatsFrom, undefined, 'ยอดรายแชทยังครบในช่วงนี้');
+ps = cp.summary({ period: { type: 'range', from: '2026-10-29', to: '2026-12-31' } }); // วันที่เลยวันนี้ตัดเหลือวันนี้
+assert.deepStrictEqual([ps.period.type, ps.period.from, ps.period.to, ps.chart.points.length, ps.period.total.turns], ['range', '2026-10-29', '2026-10-29', 1, 3]);
+for (const bad of [{ type: 'range', from: '2026-10-30', to: '2026-11-05' }, { type: 'range', from: '2026-10-01' }, { type: 'range', from: '1/10/2026', to: '2026-10-29' }]) {
+  assert.strictEqual(cp.summary({ period: bad }).period.type, 'last30', JSON.stringify(bad));
+}
+ps = cp.summary({ period: { type: 'range', from: '2020-01-01', to: '2026-10-29' } }); // เก่ากว่าที่เก็บ ตัดเหลือ 400 วัน
+assert.deepStrictEqual([ps.period.from, ps.chart.points.length, ps.period.total.turns], ['2025-09-25', 400, 4]);
+// ช่วงที่เริ่มก่อนวันแรกที่เก็บยอดรายแชทรายวัน (62 วัน) บอกให้หน้าแอดมินแจ้ง
+const cr = createCost({ now: () => Date.parse('2026-12-15T05:00:00Z'), env: {} });
+assert.strictEqual(cr.load(JSON.parse(JSON.stringify(cp.dump()))), true);
+ps = cr.summary({ period: { type: 'range', from: '2026-09-01', to: '2026-12-15' } });
+assert.deepStrictEqual([ps.period.total.turns, ps.period.chatsFrom], [4, '2026-10-14']);
+
+console.log('PASS: cost tracking prices every Dify node, web search, Jev and ElevenLabs voice, totals by day/month/step/kind/chat and by source (this bot, V.2, test runs), takes forwarded records once, keeps Dify baselines, projects the month and the 2027 price, survives restarts, reads Railway price overrides, and filters by day (hourly, Thai time), month (every day) or a chosen date range, with older state files backfilled');
