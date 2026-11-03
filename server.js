@@ -133,6 +133,8 @@
 //       และการอ่านชีทด้วย gid ของ bridge อ่านชื่อแท็บใหม่ทันทีเมื่อ Google ตอบ 400 (ไม่ต้องรอ 10 นาที)
 //     v3.66 (2 พ.ย. 2569): ดัชนี Knowledge (kb_index.js) เขียนอัตราตามหน่วยฐาน อัตราต่อต้น ต่อไร่ และต่อเมล็ด
 //       ไม่กลายเป็น "ผสม ... กับน้ำ ... ลิตร" อีก (เช่นโฮปในทุเรียน 100-200 กรัมต่อ 1 ต้น ที่เจ้าของยืนยันวันนี้)
+//     v3.67 (3 พ.ย. 2569): หน้า 💰 ค่าใช้จ่ายเลือก "ช่วงวันที่" เองได้ (ตั้งแต่ ... ถึง ...) กราฟรายวันทุกวันในช่วง
+//       ตารางทุกตารางคิดตามช่วง · /admin/api/cost?from=YYYY-MM-DD&to=YYYY-MM-DD
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -3455,6 +3457,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .cv-step { background: #fff; color: #1f2329; border: 1px solid #dfe3e8; border-radius: 8px; width: 34px; height: 34px; font-size: 17px; line-height: 1; flex: none; }
   .cv-step:disabled { opacity: .35; cursor: default; }
   .cv-pick input, .cv-pick select { border: 1px solid #dfe3e8; border-radius: 8px; height: 34px; padding: 0 8px; font-size: 14px; font-family: inherit; color: #1f2329; background: #fff; }
+  .cv-pick .cv-to { font-size: 13px; color: #6b7682; flex: none; }
   .cv-ptot { font-size: 22px; font-weight: 700; margin: 2px 0 4px; }
   .cv-ptot small { font-size: 12.5px; font-weight: 400; color: #8a95a1; margin-left: 6px; }
   .cv-link { background: none; color: #0a7a3a; font-weight: 700; font-size: 12.5px; padding: 0 0 0 8px; text-decoration: underline; }
@@ -4181,11 +4184,21 @@ function cvMonth(k) { var p = String(k).split('-'); return new Date(+p[0], +p[1]
 function cvStep(label) { for (var i = 0; i < CV_STEP.length; i++) if (CV_STEP[i][0].test(label)) return CV_STEP[i][1]; return ''; }
 function cvGroup(c) { return CV_COLOR[c] ? c : 'other'; }
 function cvCard(label, v, sub, cls) { return '<div class="cv-card' + (cls ? ' ' + cls : '') + '"><div class="l">' + label + '</div><div class="v">' + v + '</div><div class="s">' + (sub || '') + '</div></div>'; }
-function cvPLabel(p) { return p.type === 'day' ? cvDate(p.key, true) : (p.type === 'month' ? cvMonth(p.key) : '30 วันล่าสุด'); }
+function cvPLabel(p) {
+  if (p.type === 'day') return cvDate(p.key, true);
+  if (p.type === 'month') return cvMonth(p.key);
+  if (p.type === 'range') return p.from === p.to ? cvDate(p.from, true) : cvDate(p.from, p.from.slice(0, 4) !== p.to.slice(0, 4)) + ' – ' + cvDate(p.to, true);
+  return '30 วันล่าสุด';
+}
 function cvShiftDay(k, n) { var p = String(k).split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n)).toISOString().slice(0, 10); }
 function cvAvail(d) { return d.available || { firstDay: d.today.day, today: d.today.day, months: [d.month.key] }; }
 function cvMonths(av, key) { var ms = (av.months || []).slice(); if (key && ms.indexOf(key) < 0) { ms.push(key); ms.sort(); ms.reverse(); } return ms; }
-function cvQuery() { return costPeriod.type === 'day' ? '?day=' + costPeriod.key : (costPeriod.type === 'month' ? '?month=' + costPeriod.key : ''); }
+function cvQuery() {
+  if (costPeriod.type === 'day') return '?day=' + costPeriod.key;
+  if (costPeriod.type === 'month') return '?month=' + costPeriod.key;
+  if (costPeriod.type === 'range') { var r = costPeriod.key.split('_'); return '?from=' + r[0] + '&to=' + r[1]; }
+  return '';
+}
 function cvBusy(on) { var b = document.getElementById('cvbody'); if (b) b.classList.toggle('cv-busy', !!on); }
 function cvGo(type, key) {
   costPeriod = { type: type, key: key || '' };
@@ -4218,10 +4231,10 @@ function loadCost(force) {
   });
 }
 
-// แถบเลือกช่วง: 30 วันล่าสุด / รายวัน (เลือกวันที่ เลื่อนทีละวัน) / รายเดือน (เลือกเดือน เลื่อนทีละเดือน)
+// แถบเลือกช่วง: 30 วันล่าสุด / รายวัน (เลือกวันที่ เลื่อนทีละวัน) / รายเดือน (เลือกเดือน เลื่อนทีละเดือน) / ช่วงวันที่ (ตั้งแต่ ถึง)
 function cvFilter(d, per) {
   var av = cvAvail(d);
-  var seg = [['last30', '30 วันล่าสุด'], ['day', 'รายวัน'], ['month', 'รายเดือน']].map(function(x) {
+  var seg = [['last30', '30 วันล่าสุด'], ['day', 'รายวัน'], ['month', 'รายเดือน'], ['range', 'ช่วงวันที่']].map(function(x) {
     return '<button class="cv-segbtn' + (per.type === x[0] ? ' on' : '') + '" data-ptype="' + x[0] + '">' + x[1] + '</button>';
   }).join('');
   var pick = '';
@@ -4235,6 +4248,10 @@ function cvFilter(d, per) {
     pick = '<div class="cv-pick"><button class="cv-step" data-step="-1" title="เดือนก่อนหน้า"' + (i >= ms.length - 1 ? ' disabled' : '') + '>‹</button>'
       + '<select id="cvmonth" aria-label="เลือกเดือน">' + ms.map(function(m) { return '<option value="' + esc(m) + '"' + (m === per.key ? ' selected' : '') + '>' + cvMonth(m) + '</option>'; }).join('') + '</select>'
       + '<button class="cv-step" data-step="1" title="เดือนถัดไป"' + (i <= 0 ? ' disabled' : '') + '>›</button></div>';
+  } else if (per.type === 'range') {
+    var lim = ' min="' + esc(av.firstDay) + '" max="' + esc(av.today) + '"';
+    pick = '<div class="cv-pick"><input type="date" id="cvfrom" value="' + esc(per.from) + '"' + lim + ' aria-label="ตั้งแต่วันที่">'
+      + '<span class="cv-to">ถึง</span><input type="date" id="cvto" value="' + esc(per.to) + '"' + lim + ' aria-label="ถึงวันที่"></div>';
   }
   return '<div class="cv-filter"><span class="cv-fl">ดูค่าใช้จ่าย</span><div class="cv-seg">' + seg + '</div>' + pick + '</div>';
 }
@@ -4261,7 +4278,8 @@ function cvChart(c, per) {
       tip += ' · ' + CV_TH[g] + ' ' + baht(v);
     });
     var drill = !hour && (x.thb > 0 || x.turns > 0) && (!today || x.key <= today);
-    var lab = hour ? (i % 6 === 0 ? x.key + '.00' : '') : (per.type === 'month' ? (i % 5 === 0 ? cvDate(x.key) : '') : ((pts.length - 1 - i) % 7 === 0 ? cvDate(x.key) : ''));
+    var every = per.type === 'range' ? Math.max(1, Math.ceil(pts.length / 6)) : 7;
+    var lab = hour ? (i % 6 === 0 ? x.key + '.00' : '') : (per.type === 'month' ? (i % 5 === 0 ? cvDate(x.key) : '') : ((pts.length - 1 - i) % every === 0 ? cvDate(x.key) : ''));
     cols += '<div class="cv-col" title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' + (drill ? ' data-day="' + esc(x.key) + '"' : '') + '>' + segs + '</div>';
     labels += '<span>' + (lab ? '<em>' + lab + '</em>' : '') + '</span>';
   });
@@ -4438,7 +4456,7 @@ function renderCost(d) {
   h += '<div class="cv-sec"><h3>ค่าใช้จ่ายมาจากขั้นตอนไหน (' + esc(label) + ')</h3><div class="d">ทุกคำตอบผ่านหลายขั้นใน Dify แต่ละขั้นส่งข้อความให้ AI อ่านและเขียน คิดเงินตามจำนวน token</div>' + cvItems(d.items) + '</div>';
   h += '<div class="cv-grid2"><div class="cv-sec"><h3>แยกตามชนิดคำถาม (' + esc(label) + ')</h3>' + cvKinds(d.byKind) + '</div><div class="cv-sec"><h3>' + (per.type === 'month' ? 'ค้นเว็บ ' + cvMonth(per.key) : 'ค้นเว็บเดือนนี้') + '</h3>' + cvSearch(d.search, d.prices || {}, per, d.month.key) + '</div></div>';
   h += '<div class="cv-sec"><h3>คำตอบที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvTurns(d.topTurns) + '</div>';
-  h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvChats(d.topChats) + '</div>';
+  h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น' + (per.chatsFrom ? ' · ยอดรายแชทเก็บย้อนหลัง 62 วัน ตารางนี้นับตั้งแต่ ' + cvDate(per.chatsFrom, true) : '') + '</div>' + cvChats(d.topChats) + '</div>';
   h += cvBaselines(d.baselines);
   h += cvNotes(d);
   document.getElementById('cvbody').innerHTML = h;
@@ -4458,6 +4476,7 @@ document.getElementById('cvbody').addEventListener('click', function(e) {
     var av = cvAvail(costData);
     if (pt === 'day') cvGo('day', av.today);
     else if (pt === 'month') cvGo('month', av.today.slice(0, 7));
+    else if (pt === 'range') { var rf = cvShiftDay(av.today, -6); cvGo('range', (rf < av.firstDay ? av.firstDay : rf) + '_' + av.today); }
     else cvGo('last30', '');
     return;
   }
@@ -4512,6 +4531,15 @@ document.getElementById('cvbody').addEventListener('change', function(e) {
     if (v !== costPeriod.key) cvGo('day', v);
   } else if (t.id === 'cvmonth') {
     if (t.value && t.value !== costPeriod.key) cvGo('month', t.value);
+  } else if (t.id === 'cvfrom' || t.id === 'cvto') {
+    var rx = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+    var a = String(document.getElementById('cvfrom').value || '');
+    var z = String(document.getElementById('cvto').value || '');
+    if (!rx.test(a) || !rx.test(z)) return;
+    if (a > z) { var sw = a; a = z; z = sw; }
+    if (a < av.firstDay) a = av.firstDay;
+    if (z > av.today) z = av.today;
+    if (a + '_' + z !== costPeriod.key) cvGo('range', a + '_' + z);
   }
 });
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && costOpen) closeCost(); });
@@ -4823,9 +4851,9 @@ function handleAdmin(req, res, path, body) {
     for (const s of sessions.values()) if (s.type === 'user' && s.lastAt > lastCustomerAt) lastCustomerAt = s.lastAt;
     const lw = lineWebhook.checked ? { active: lineWebhook.active, here: lineWebhook.here, host: lineWebhook.host, at: lineWebhook.at, error: lineWebhook.error } : null;
     const fw = costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error, stopped: costForward.state.stopped } : null;
-    // v3.57: ?day=YYYY-MM-DD หรือ ?month=YYYY-MM (ค่าที่ผิดหรืออยู่ในอนาคต = 30 วันล่าสุด)
+    // v3.57: ?day=YYYY-MM-DD หรือ ?month=YYYY-MM · v3.67: ?from=YYYY-MM-DD&to=YYYY-MM-DD (ค่าที่ผิดหรืออยู่ในอนาคต = 30 วันล่าสุด)
     const qp = new URL(req.url, 'http://x').searchParams;
-    const period = qp.get('day') ? { type: 'day', key: qp.get('day') } : (qp.get('month') ? { type: 'month', key: qp.get('month') } : null);
+    const period = qp.get('day') ? { type: 'day', key: qp.get('day') } : (qp.get('month') ? { type: 'month', key: qp.get('month') } : (qp.get('from') && qp.get('to') ? { type: 'range', from: qp.get('from'), to: qp.get('to') } : null));
     return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid), period }), { line: { lastCustomerAt: lastCustomerAt || null, webhook: lw }, forward: fw, ingest: !!COST_INGEST_KEY }));
   }
 
@@ -5095,7 +5123,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.66', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.67', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

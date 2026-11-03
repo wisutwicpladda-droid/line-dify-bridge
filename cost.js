@@ -23,6 +23,11 @@
 //    และยอดรายแชทของวัน (c, ไม่เกิน 300 แชทต่อวัน เก็บ 62 วัน)
 //  - วันที่บันทึกก่อน v3.57 สร้าง h, top และ c ตอนโหลดจากคำตอบล่าสุด 400 ครั้งที่ยังเก็บรายละเอียดไว้
 //    (ค่าถอดเสียงที่ไม่นับเป็นคำตอบไม่อยู่ในรายการนั้น หน้าแอดมินจึงเทียบยอดรายชั่วโมงกับยอดทั้งวันแล้วบอกถ้าไม่ครบ)
+//
+// v3.67 (3 พ.ย. 2569): เลือกช่วงวันที่เอง (เจ้าของขอ)
+//  - summary({ period: { type: 'range', from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' } }) กราฟรายวันทุกวันในช่วง ตารางทุกตารางคิดตามช่วง
+//  - ใส่สลับกันได้ (from หลัง to) วันที่เลยวันนี้ตัดเหลือวันนี้ เก่ากว่าที่เก็บ (400 วัน) ตัดเหลือวันแรกที่เก็บ
+//  - ยอดรายแชทรายวันเก็บ 62 วัน ช่วงที่เก่ากว่านั้นบอก period.chatsFrom ให้หน้าแอดมินแจ้งว่าตารางแชทนับได้ตั้งแต่วันไหน
 
 const crypto = require('crypto');
 
@@ -79,6 +84,12 @@ function prevMonth(m) {
 function monthDays(m) {
   const n = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
   return Array.from({ length: n }, (_, i) => m + '-' + String(i + 1).padStart(2, '0'));
+}
+
+function rangeDays(a, b) {
+  const out = [];
+  for (let ms = Date.parse(a + 'T00:00:00Z'), end = Date.parse(b + 'T00:00:00Z'); ms <= end; ms += DAY_MS) out.push(new Date(ms).toISOString().slice(0, 10));
+  return out;
 }
 
 function config(env) {
@@ -425,17 +436,28 @@ function createCost(opts) {
     };
   }
 
-  // ช่วงที่เลือก: วันเดียว เดือนเดียว หรือ 30 วันล่าสุด (ค่าที่ไม่ถูกต้องหรืออยู่ในอนาคต = 30 วันล่าสุด)
-  function periodOf(p, today) {
+  // ช่วงที่เลือก: วันเดียว เดือนเดียว ช่วงวันที่ หรือ 30 วันล่าสุด (ค่าที่ไม่ถูกต้องหรืออยู่ในอนาคต = 30 วันล่าสุด)
+  function periodOf(p, today, nowMs) {
     const t = p && p.type;
     const k = String((p && p.key) || '');
     if (t === 'day' && DAY_RX.test(k) && k <= today) return { type: 'day', key: k };
     if (t === 'month' && MONTH_RX.test(k) && k <= today.slice(0, 7)) return { type: 'month', key: k };
+    if (t === 'range' && DAY_RX.test(String(p.from)) && DAY_RX.test(String(p.to))) {
+      let a = String(p.from);
+      let b = String(p.to);
+      if (a > b) [a, b] = [b, a];
+      const first = dayKey(nowMs - (KEEP_DAYS - 1) * DAY_MS);
+      if (a <= today && b >= first) {
+        if (a < first) a = first;
+        if (b > today) b = today;
+        return { type: 'range', key: a + '_' + b, from: a, to: b };
+      }
+    }
     return { type: 'last30', key: '' };
   }
 
   // สรุปสำหรับหน้าแอดมิน · nameOf(sid) = ชื่อแชท · hasChat(sid) = แชทยังอยู่ในระบบ (กดเปิดได้) ใช้กับแชทของแอปนี้เท่านั้น
-  // period = { type: 'day', key: 'YYYY-MM-DD' } | { type: 'month', key: 'YYYY-MM' } ไม่ใส่ = 30 วันล่าสุด
+  // period = { type: 'day', key: 'YYYY-MM-DD' } | { type: 'month', key: 'YYYY-MM' } | { type: 'range', from, to } ไม่ใส่ = 30 วันล่าสุด
   function summary(opts2) {
     const so = opts2 || {};
     const nameOf = typeof so.nameOf === 'function' ? so.nameOf : () => '';
@@ -487,8 +509,8 @@ function createCost(opts) {
     const daily = d30.map(dayPoint);
 
     // ---- ช่วงที่เลือก ----
-    const per = periodOf(so.period, today);
-    const pDays = per.type === 'day' ? [per.key] : (per.type === 'month' ? monthDays(per.key) : d30);
+    const per = periodOf(so.period, today, nowMs);
+    const pDays = per.type === 'day' ? [per.key] : (per.type === 'month' ? monthDays(per.key) : (per.type === 'range' ? rangeDays(per.from, per.to) : d30));
     let chart;
     if (per.type === 'day') {
       const d = days[per.key];
@@ -581,6 +603,9 @@ function createCost(opts) {
     }));
     const months = [...new Set(allKeys.map((k) => k.slice(0, 7)).concat([month]))].sort().reverse();
     const firstDay = allKeys.length ? allKeys.slice().sort()[0] : today;
+    // ช่วงวันที่ที่เริ่มก่อนวันแรกที่ยังเก็บยอดรายแชทรายวัน: ตารางแชทนับได้ตั้งแต่วันนั้น
+    const chatCut = dayKey(nowMs - DAY_CHATS_DAYS * DAY_MS);
+    const chatsFrom = per.type === 'range' && pDays[0] < chatCut && allKeys.some((k) => k >= pDays[0] && k < chatCut) ? chatCut : undefined;
 
     return {
       app: cfg.app,
@@ -594,7 +619,7 @@ function createCost(opts) {
       prevMonth: Object.assign({ key: prev }, sumDays(allKeys.filter((k) => k.startsWith(prev)))),
       projection,
       daily,
-      period: { type: per.type, key: per.key, from: pDays[0], to: pDays[pDays.length - 1], total },
+      period: { type: per.type, key: per.key, from: pDays[0], to: pDays[pDays.length - 1], total, chatsFrom },
       chart,
       items,
       sources,
