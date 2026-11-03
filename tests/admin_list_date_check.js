@@ -58,7 +58,16 @@ function get(port, p) {
     for (const bad of ['?from=2026-11-01', '?from=1/11/2026&to=2026-11-01', '?from=2026-13-45&to=2026-13-45']) {
       assert.deepStrictEqual(await ids(bad), [['Ua', 'Ub', 'Uc'], null], 'ค่าผิด = ทุกแชท ' + bad);
     }
-    console.log('PASS: the admin chat list filters by date (Thai time), counts any message in the chat history, accepts swapped dates, and ignores bad dates');
+    // v3.69 ปฏิทินรายเดือน: จำนวนแชทที่มีข้อความในแต่ละวันของเดือน (เวลาไทย) เดือนที่มีแชท และจำนวนแชทที่ตรงทั้งหมด
+    let r = (await get(port, '/admin/api/list?from=2026-11-01&to=2026-11-30&month=2026-11')).json;
+    assert.deepStrictEqual([r.monthDays, r.months, r.matched, r.sessions.length], [{ '2026-11-01': 1, '2026-11-02': 1 }, ['2026-11', '2026-10'], 2, 2]);
+    r = (await get(port, '/admin/api/list?from=2026-10-20&to=2026-10-20&month=2026-10')).json;
+    assert.deepStrictEqual([r.monthDays, r.matched, r.sessions.map((s) => s.id)], [{ '2026-10-20': 1, '2026-10-25': 1 }, 1, ['Ua']], 'เลือกวันในปฏิทินแล้วตัวเลขทั้งเดือนยังอยู่');
+    r = (await get(port, '/admin/api/list?from=2026-09-01&to=2026-09-30&month=2026-09')).json;
+    assert.deepStrictEqual([r.monthDays, r.matched], [{}, 0]);
+    r = (await get(port, '/admin/api/list')).json;
+    assert.deepStrictEqual([r.monthDays, r.months, r.matched], [undefined, undefined, 3], 'ไม่ขอปฏิทิน = ไม่นับรายวัน');
+    console.log('PASS: the admin chat list filters by date (Thai time), counts any message in the chat history, accepts swapped dates, ignores bad dates, and counts chats per day of a month for the calendar');
   } finally {
     child.kill();
   }

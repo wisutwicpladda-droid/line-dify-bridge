@@ -137,6 +137,9 @@
 //       ตารางทุกตารางคิดตามช่วง · /admin/api/cost?from=YYYY-MM-DD&to=YYYY-MM-DD
 //     v3.68 (3 พ.ย. 2569): รายการแชทในหน้าแอดมินกรองตามวันที่ได้ (ทุกวัน วันนี้ เมื่อวาน 7 วัน 30 วัน หรือเลือกช่วง)
 //       แสดงเฉพาะแชทที่มีข้อความในช่วงนั้น (เวลาไทย) · /admin/api/list?from=YYYY-MM-DD&to=YYYY-MM-DD
+//     v3.69 (3 พ.ย. 2569): ตัวกรองวันที่ของรายการแชทมี "รายเดือน" เป็นปฏิทินของเดือน แต่ละวันบอกจำนวนแชทที่มีข้อความ
+//       กดวันเพื่อดูแชทของวันนั้น กดอีกครั้งหรือ "ทั้งเดือน" เพื่อดูทั้งเดือน เลื่อนเดือนด้วย ‹ › หรือเลือกจากรายการ
+//       /admin/api/list?...&month=YYYY-MM ตอบ monthDays (จำนวนแชทต่อวัน) และ months (เดือนที่มีแชท) · matched = จำนวนแชทที่ตรงทั้งหมด
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -3296,6 +3299,25 @@ const ADMIN_HTML = `<!DOCTYPE html>
   .dfl select:focus, .dfl input:focus { border-color: #06c755; background: #fff; }
   #drange { display: none; flex: 1 1 100%; align-items: center; gap: 6px; font-size: 12.5px; color: #6b7682; min-width: 0; }
   #drange input { flex: 1; min-width: 0; }
+  /* v3.69: ปฏิทินรายเดือน */
+  #dmonth { display: none; flex: 1 1 100%; min-width: 0; }
+  .dm-head { display: flex; align-items: center; gap: 6px; }
+  .dm-head select { flex: 1; min-width: 0; }
+  .dm-step { flex: none; width: 32px; height: 31px; border: 1px solid #e3e6ea; border-radius: 10px; background: #fff; color: #1f2329; font-size: 16px; line-height: 1; }
+  .dm-step:disabled { opacity: .35; cursor: default; }
+  .dm-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-top: 5px; }
+  .dm-wd { text-align: center; font-size: 10px; color: #98a2ad; }
+  .dm-day { border: 1px solid #eef0f2; background: #fff; border-radius: 7px; padding: 1px 0; line-height: 1.05; text-align: center; }
+  .dm-day b { display: block; font-size: 11.5px; font-weight: 600; color: #1f2329; }
+  .dm-day i { display: block; font-style: normal; font-size: 9.5px; font-weight: 700; color: #0a9a4a; min-height: 10px; }
+  .dm-day.zero b { color: #b5bcc4; font-weight: 400; }
+  .dm-day.today { border-color: #06c755; }
+  .dm-day.on { background: #06c755; border-color: #06c755; }
+  .dm-day.on b, .dm-day.on i { color: #fff; }
+  .dm-day:disabled { opacity: .35; cursor: default; }
+  .dm-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 6px; font-size: 11.5px; color: #6b7682; }
+  .dm-all { flex: none; background: #f1f3f5; color: #55606b; border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+  .dm-all.on { background: #e6f9ee; color: #0a7a3a; }
   .itag { display: inline-block; font-size: 10px; border-radius: 6px; padding: 0 5px; margin-left: 4px; background: #eef4fb; color: #3b6db3; vertical-align: 1px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .itag.st-customer { background: #e6f9ee; color: #0a9a4a; }
   .itag.st-quoted { background: #fff1dd; color: #d97706; }
@@ -3524,8 +3546,9 @@ const ADMIN_HTML = `<!DOCTYPE html>
       <span style="flex:none"><button class="rf cost" id="costbtn" title="ค่าใช้จ่าย AI ของบอท">💰 ค่าใช้จ่าย</button><button class="rf" id="refreshbtn">⟳</button></span>
     </div>
     <div class="srch"><input id="q" type="search" placeholder="🔍 ค้นหา ชื่อ / เบอร์ / แท็ก / จังหวัด / พืช">
-      <div class="dfl"><select id="dsel" aria-label="กรองตามวันที่" title="แสดงเฉพาะแชทที่มีข้อความในช่วงวันที่นี้"><option value="">📅 ทุกวัน</option><option value="today">📅 วันนี้</option><option value="yesterday">📅 เมื่อวาน</option><option value="7">📅 7 วันล่าสุด</option><option value="30">📅 30 วันล่าสุด</option><option value="range">📅 เลือกช่วงวันที่…</option></select>
-      <span id="drange"><input type="date" id="dfrom" aria-label="ตั้งแต่วันที่"> ถึง <input type="date" id="dto" aria-label="ถึงวันที่"></span></div>
+      <div class="dfl"><select id="dsel" aria-label="กรองตามวันที่" title="แสดงเฉพาะแชทที่มีข้อความในช่วงวันที่นี้"><option value="">📅 ทุกวัน</option><option value="today">📅 วันนี้</option><option value="yesterday">📅 เมื่อวาน</option><option value="7">📅 7 วันล่าสุด</option><option value="30">📅 30 วันล่าสุด</option><option value="month">📅 รายเดือน (แยกรายวัน)</option><option value="range">📅 เลือกช่วงวันที่…</option></select>
+      <span id="drange"><input type="date" id="dfrom" aria-label="ตั้งแต่วันที่"> ถึง <input type="date" id="dto" aria-label="ถึงวันที่"></span>
+      <div id="dmonth"></div></div>
     </div>
     <div class="items" id="items"></div>
     <div class="side-note"><span id="ps"></span><span id="sb"></span><span id="posst"></span><span class="exp" id="expbtn">⬇ ส่งออก CRM เป็น CSV/Excel</span> · 📞 แดง = ลูกค้ารอติดต่อกลับ (บอทรับปากว่าจะให้เจ้าหน้าที่ติดต่อ / ลูกค้าทิ้งเบอร์) กด "✓ ติดต่อแล้ว" เมื่อจัดการเสร็จ · 🙋 ส้ม = ลูกค้าขอแอดมิน · 🔇 = บอทหยุดอยู่ · ลูกค้าพิมพ์ "คุยกับแอดมิน" บอทหยุด <span id="mm"></span> นาที / "คุยกับบอท" บอทกลับมา · พิมพ์ตอบจากหน้านี้ = ส่งในนามน้องลัดดา (ใช้โควต้า Push ของ LINE OA)<span id="nt"></span></div>
@@ -3575,6 +3598,9 @@ var es = null;
 var esRetry = null;
 var q = '';
 var dRange = null; // v3.68: { from, to } วันที่เวลาไทย หรือ null = ทุกวัน
+var mKey = '';    // v3.69: เดือนที่ดูในโหมดรายเดือน (YYYY-MM)
+var mDay = '';    // v3.69: วันที่เลือกในปฏิทิน ('' = ทั้งเดือน)
+var listMatched = 0;
 var crmOpen = false;
 var crmData = null;
 var crmTags = [];
@@ -3689,14 +3715,25 @@ function dateRange() {
   if (v === 'today') return { from: thaiDay(0), to: thaiDay(0) };
   if (v === 'yesterday') return { from: thaiDay(1), to: thaiDay(1) };
   if (v === '7' || v === '30') return { from: thaiDay(+v - 1), to: thaiDay(0) };
+  if (v === 'month') {
+    if (!mKey) mKey = thaiDay(0).slice(0, 7);
+    return mDay ? { from: mDay, to: mDay } : { from: mKey + '-01', to: monthEnd(mKey) };
+  }
   var a = document.getElementById('dfrom').value, z = document.getElementById('dto').value, rx = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
   if (!rx.test(a) || !rx.test(z)) return null;
   return a > z ? { from: z, to: a } : { from: a, to: z };
 }
-function listQuery() { var r = dateRange(); return r ? '?from=' + r.from + '&to=' + r.to : ''; }
+function listQuery() {
+  var r = dateRange();
+  if (!r) return '';
+  return '?from=' + r.from + '&to=' + r.to + (document.getElementById('dsel').value === 'month' ? '&month=' + mKey : '');
+}
 function onDateFilter() {
-  var range = document.getElementById('dsel').value === 'range';
+  var v = document.getElementById('dsel').value;
+  var range = v === 'range';
   document.getElementById('drange').style.display = range ? 'flex' : 'none';
+  document.getElementById('dmonth').style.display = v === 'month' ? 'block' : 'none';
+  if (v === 'month') { mKey = thaiDay(0).slice(0, 7); mDay = ''; document.getElementById('dmonth').innerHTML = ''; }
   if (range) {
     var f = document.getElementById('dfrom'), t = document.getElementById('dto');
     f.max = t.max = thaiDay(0);
@@ -3706,12 +3743,43 @@ function onDateFilter() {
   load();
 }
 
+// v3.69: ปฏิทินของเดือน แต่ละวันบอกจำนวนแชทที่มีข้อความในวันนั้น (เวลาไทย)
+function monthEnd(m) { var p = m.split('-'); return new Date(Date.UTC(+p[0], +p[1], 0)).toISOString().slice(0, 10); }
+function monthShift(m, n) { var p = m.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1 + n, 1)).toISOString().slice(0, 7); }
+function monthName(m) { var p = m.split('-'); return new Date(+p[0], +p[1] - 1, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' }); }
+function renderMonth(days, months) {
+  var cur = thaiDay(0).slice(0, 7), today = thaiDay(0);
+  var first = (months || []).slice().sort()[0] || cur;
+  if (mKey < first) first = mKey;
+  var opts = [];
+  for (var m = cur; m >= first; m = monthShift(m, -1)) opts.push(m);
+  var h = '<div class="dm-head"><button class="dm-step" data-mstep="-1" title="เดือนก่อนหน้า"' + (mKey <= first ? ' disabled' : '') + '>‹</button>'
+    + '<select id="dmsel" aria-label="เลือกเดือน">' + opts.map(function(x) { return '<option value="' + x + '"' + (x === mKey ? ' selected' : '') + '>' + monthName(x) + '</option>'; }).join('') + '</select>'
+    + '<button class="dm-step" data-mstep="1" title="เดือนถัดไป"' + (mKey >= cur ? ' disabled' : '') + '>›</button></div><div class="dm-cal">';
+  ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'].forEach(function(x) { h += '<span class="dm-wd">' + x + '</span>'; });
+  var p = mKey.split('-');
+  var lead = new Date(Date.UTC(+p[0], +p[1] - 1, 1)).getUTCDay();
+  for (var i = 0; i < lead; i++) h += '<span></span>';
+  var last = +monthEnd(mKey).slice(8, 10), withChats = 0;
+  for (var d = 1; d <= last; d++) {
+    var k = mKey + '-' + (d < 10 ? '0' : '') + d;
+    var n = (days && days[k]) || 0;
+    if (n) withChats++;
+    h += '<button class="dm-day' + (n ? '' : ' zero') + (k === mDay ? ' on' : '') + (k === today ? ' today' : '') + '" data-day="' + k + '"' + (k > today ? ' disabled' : '') + ' title="' + esc(cvDate(k, true)) + (n ? ': ' + n + ' แชท' : ': ไม่มีแชท') + '"><b>' + d + '</b><i>' + (n || '') + '</i></button>';
+  }
+  h += '</div><div class="dm-foot"><span>' + (mDay ? 'วันที่ ' + esc(cvDate(mDay, true)) : 'ทั้งเดือน · มีแชท ' + withChats + ' วัน') + ' · ตัวเลข = จำนวนแชท</span>'
+    + '<button class="dm-all' + (mDay ? '' : ' on') + '" title="ดูแชทของทั้งเดือน">ทั้งเดือน</button></div>';
+  document.getElementById('dmonth').innerHTML = h;
+}
+
 function load(fromLogin) {
   if (!KEY) return;
   var want = listQuery();
   api('/admin/api/list' + want).then(function(d) {
     if (want !== listQuery()) return; // เปลี่ยนตัวกรองวันที่ไปแล้วระหว่างรอ
     dRange = d.range || null;
+    listMatched = d.matched != null ? d.matched : d.sessions.length;
+    if (d.monthDays && document.getElementById('dsel').value === 'month') renderMonth(d.monthDays, d.months);
     sessionStorage.setItem('nladda_key', KEY);
     document.getElementById('login').style.display = 'none';
     document.getElementById('app').classList.add('on');
@@ -3786,7 +3854,7 @@ function scoreBadge(s) {
 
 function renderList() {
   var now = Date.now();
-  document.getElementById('count').textContent = cache.length;
+  document.getElementById('count').textContent = Math.max(listMatched, cache.length);
   if (!cache.length) {
     document.getElementById('items').innerHTML = dRange
       ? '<div class="empty">ไม่มีแชทที่มีข้อความ' + (dRange.from === dRange.to ? 'ในวันที่ ' + dayLabel(Date.parse(dRange.from + 'T12:00:00+07:00')) : 'ในช่วงวันที่นี้') + '<br>ลองเลือกช่วงอื่น หรือเลือก "ทุกวัน"</div>'
@@ -4611,6 +4679,21 @@ document.getElementById('cbbtn').addEventListener('click', function() {
 
 document.getElementById('q').addEventListener('input', function() { q = this.value.trim().toLowerCase(); renderList(); });
 document.getElementById('dsel').addEventListener('change', onDateFilter);
+document.getElementById('dmonth').addEventListener('click', function(e) {
+  var b = e.target.closest ? e.target.closest('button') : null;
+  if (!b || b.disabled) return;
+  if (b.hasAttribute('data-mstep')) { mKey = monthShift(mKey, +b.getAttribute('data-mstep')); mDay = ''; }
+  else if (b.hasAttribute('data-day')) { var k = b.getAttribute('data-day'); mDay = mDay === k ? '' : k; }
+  else if (b.classList.contains('dm-all')) mDay = '';
+  else return;
+  load();
+});
+document.getElementById('dmonth').addEventListener('change', function(e) {
+  if (e.target.id !== 'dmsel' || !e.target.value) return;
+  mKey = e.target.value;
+  mDay = '';
+  load();
+});
 document.getElementById('dfrom').addEventListener('change', function() { load(); });
 document.getElementById('dto').addEventListener('change', function() { load(); });
 document.getElementById('crmbtn').addEventListener('click', function() { toggleCrm(); });
@@ -4918,15 +5001,34 @@ function handleAdmin(req, res, path, body) {
       if (Number.isFinite(fromMs) && Number.isFinite(toMs)) range = { from: a, to: b };
     }
     const inRange = (s) => !range || (s.lastAt >= fromMs && s.lastAt < toMs) || (s.history || []).some((m) => m.at >= fromMs && m.at < toMs);
-    const list = [...sessions.entries()]
-      .filter(([, s]) => inRange(s))
+    const hits = [...sessions.entries()].filter(([, s]) => inRange(s));
+    // v3.69: ?month=YYYY-MM = จำนวนแชทที่มีข้อความในแต่ละวันของเดือนนั้น (เวลาไทย) และเดือนที่มีแชท สำหรับปฏิทินรายเดือน
+    let monthDays;
+    let months;
+    const mq = lq.get('month') || '';
+    if (/^\d{4}-\d{2}$/.test(mq)) {
+      monthDays = {};
+      const seenMonths = new Set();
+      const thaiDayKey = (ms) => new Date(ms + 7 * 3600000).toISOString().slice(0, 10);
+      for (const s of sessions.values()) {
+        const keys = new Set();
+        for (const m of s.history || []) if (m.at) keys.add(thaiDayKey(m.at));
+        if (s.lastAt) keys.add(thaiDayKey(s.lastAt));
+        for (const k of keys) {
+          seenMonths.add(k.slice(0, 7));
+          if (k.startsWith(mq + '-')) monthDays[k] = (monthDays[k] || 0) + 1;
+        }
+      }
+      months = [...seenMonths].sort().reverse();
+    }
+    const list = hits
       .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none'), score: scoreFor(id, s), ref: s.ref ? { step: s.ref.step, dealerName: s.ref.dealerName || '' } : null }))
       // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
       .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
     const pending = [...sessions.values()].filter((s) => s.cb).length;
     const posSt = POS_ON ? { on: true, rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, writeback: !!(pos.cols && pos.cols.line) } : { on: false };
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, regUi: REG_UI, liffUrl: LIFF_URL, unregistered: regUnregisteredIds().length, pending, now, range, sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, regUi: REG_UI, liffUrl: LIFF_URL, unregistered: regUnregisteredIds().length, pending, now, range, matched: hits.length, monthDays, months, sessions: list });
   }
 
   // ---- CRM ----
@@ -5182,7 +5284,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.68', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.69', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 
