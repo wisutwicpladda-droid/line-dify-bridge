@@ -20,7 +20,9 @@
 //                           notice with the sales team button instead of an AI answer (0 = off)
 //   SPAM_GROUPS off         answer in group and room chats (SPAM_GROUP_ALLOW = group ids that may be answered)
 //   SPAM_ALLOW              user ids never limited (staff, test accounts)
-//   SPAM_GUARD off          turns the whole guard off
+//   SPAM_GUARD off          turns the per-chat limits and the budget brake off (the group setting still applies)
+// v3.73: the admin page (🛡️ กันสแปม) can change every value while the bot runs (configure); an empty value goes back
+// to the env value. Group chats follow SPAM_GROUPS / the admin setting even when the guard is off.
 
 const MIN_MS = 60000;
 const HOUR_MS = 60 * MIN_MS;
@@ -75,7 +77,8 @@ function knownBefore(history, nowMs) {
 function createGuard(opts) {
   const o = opts || {};
   const now = o.now || Date.now;
-  const cfg = config(o.env || {});
+  const base = config(o.env || {}); // Railway env values, or the built-in defaults
+  const cfg = Object.assign({}, base, { allow: new Set(base.allow), groupAllow: new Set(base.groupAllow) });
   const extraAllow = typeof o.allow === 'function' ? o.allow : null; // admins and bound dealers (can change while running)
   const users = new Map(); // sid -> { day, burst, turns, dayTurns, voice, image, noticed, last, why }
   let day = dayKey(now());
@@ -116,10 +119,10 @@ function createGuard(opts) {
   function check(m) {
     const x = m || {};
     const text = typeof x.text === 'string' ? x.text : '';
-    if (!cfg.on) return { action: 'answer', text };
     roll();
     const sid = String(x.sid || '');
     if (x.stype && x.stype !== 'user' && !groupAllowed(sid)) { stats.groupDropped += 1; return { action: 'drop', reason: 'group' }; }
+    if (!cfg.on) return { action: 'answer', text };
     if (allowed(sid)) return { action: 'answer', text };
     const t = now();
     const u = user(sid);
@@ -149,8 +152,27 @@ function createGuard(opts) {
     return { action: 'answer', text };
   }
 
-  function groupAllowed(sid) { return !cfg.on || cfg.groups || cfg.groupAllow.has(sid); }
-  function noteGroupDrop() { if (cfg.on) { roll(); stats.groupDropped += 1; } }
+  function groupAllowed(sid) { return cfg.groups || cfg.groupAllow.has(sid); }
+  function noteGroupDrop() { roll(); stats.groupDropped += 1; }
+
+  // v3.73: values from the admin page. s = { on, groups, burstMax, hourMax, dayMax, voiceDayMax, imageDayMax, textMax,
+  // repeatMinutes, budgetThb, allow: [ids] }; a missing or empty value uses the env value again.
+  const SETTING_KEYS = ['on', 'groups', 'burstMax', 'hourMax', 'dayMax', 'voiceDayMax', 'imageDayMax', 'textMax', 'repeatMinutes', 'budgetThb'];
+  function configure(s) {
+    const x = s || {};
+    for (const k of SETTING_KEYS) {
+      const v = x[k];
+      if (v === undefined || v === null || v === '') cfg[k] = base[k];
+      else if (k === 'on' || k === 'groups') cfg[k] = v === true || v === 'on' || v === 'true';
+      else {
+        const n = Number(v);
+        cfg[k] = Number.isFinite(n) && n >= 0 ? (k === 'budgetThb' ? Math.round(n * 100) / 100 : Math.floor(n)) : base[k];
+      }
+    }
+    cfg.allow = new Set([...base.allow, ...idList(Array.isArray(x.allow) ? x.allow.join(',') : x.allow)]);
+  }
+  function pick(c) { const out = {}; for (const k of SETTING_KEYS) out[k] = c[k]; return out; }
+  function settings() { return { values: pick(cfg), defaults: pick(base), envAllow: base.allow.size }; }
 
   // One paid answer (one Dify run) for this chat.
   function noteTurn(sid) {
@@ -190,9 +212,8 @@ function createGuard(opts) {
 
   // For the public /health: counts only, no chat ids and no limits.
   function summary() {
-    if (!cfg.on) return { on: false };
     roll();
-    return { on: true, today: { day: stats.day, notices: stats.notices, dropped: stats.dropped, repeats: stats.repeats,
+    return { on: cfg.on, today: { day: stats.day, notices: stats.notices, dropped: stats.dropped, repeats: stats.repeats,
       truncated: stats.truncated, groupDropped: stats.groupDropped, hits: Object.assign({}, stats.hits),
       limitedChats: stats.limited.size, budgetLevel: stats.budgetLevel || undefined } };
   }
@@ -202,7 +223,6 @@ function createGuard(opts) {
   function report(r) {
     const x = r || {};
     const out = Object.assign(summary(), { limits: limits() });
-    if (!cfg.on) return out;
     const t = now();
     const rows = [];
     for (const [sid, u] of users) {
@@ -218,7 +238,7 @@ function createGuard(opts) {
     return out;
   }
 
-  return { check, noteTurn, noteAnswer, groupAllowed, noteGroupDrop, budgetLevel, summary, report, limits, cfg };
+  return { check, noteTurn, noteAnswer, groupAllowed, noteGroupDrop, budgetLevel, summary, report, limits, configure, settings, cfg };
 }
 
 module.exports = { createGuard, knownBefore, normQuestion, isNotice, NOTICES, REPEAT_MIN };

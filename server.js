@@ -153,6 +153,11 @@
 //       ถามคำถามเดิมซ้ำใน 10 นาที = ส่งคำตอบเดิมโดยไม่เรียก AI · ข้อความยาวเกิน 1,000 ตัวอักษรตัดก่อนส่งให้ AI · ไม่ตอบในกลุ่ม (SPAM_GROUPS)
 //       งบต่อวัน (SPAM_DAILY_BUDGET_THB ค่าเริ่มปิด): ถึงงบแล้วแชทที่ไม่เคยได้คำตอบก่อนวันนี้ได้ข้อความให้ติดต่อพนักงานขาย แจ้ง LINE ที่ 80% และ 100%
 //       แอดมิน (ADMIN_NOTIFY_IDS) ร้านที่ผูกแล้ว และ SPAM_ALLOW ไม่ถูกจำกัด · ตัวเลขใน /health (spamGuard) หน้า 💰 และ /admin/api/spam
+//     v3.73 (4 พ.ย. 2569 เจ้าของสั่ง ขึ้นบอทจริงพร้อมโทนและกันสแปม): หน้าแอดมินมีปุ่ม 🛡️ กันสแปม แก้เพดานทุกค่า งบต่อวัน
+//       การตอบในกลุ่ม ผู้รับแจ้งเตือนงบ (เลือกแชทจากรายการ) และรายชื่อที่ไม่จำกัด ค่าที่บันทึกเก็บในไฟล์ state ใช้แทน SPAM_* ใน Railway
+//       Blacklist: ปุ่ม ⛔ ที่หัวแชท แชทใน blacklist บอทไม่ตอบ ไม่อ่าน (ไม่เก็บข้อความ ไม่ถอดเสียง ไม่ส่งให้ AI) นับแค่จำนวนครั้งที่ส่งมา
+//       แท็ก: ปุ่ม 🏷️ ที่หัวแชทใส่หรือเอาแท็กออกได้ทันที (บันทึกลงโปรไฟล์ CRM เดิม) และกรองรายการแชทตามแท็ก (/admin/api/list?tag=)
+//       การตอบในกลุ่มแยกจากสวิตช์เปิด/ปิดตัวกันสแปม (ปิดตัวกันแล้วกลุ่มยังไม่ได้คำตอบ ถ้าไม่ได้เปิดให้ตอบในกลุ่ม)
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -225,6 +230,7 @@
 //  SPAM_DAILY_BUDGET_THB      (ไม่บังคับ) งบค่า AI ต่อวันของบอทนี้ (บาท) ค่าเริ่ม 0 = ไม่ใช้ · แจ้งเตือนส่งถึง OPENAI_ALERT_TO หรือ ADMIN_NOTIFY_IDS
 //  SPAM_GROUPS                (ไม่บังคับ) on = ตอบในกลุ่มและห้องแชท ค่าเริ่มไม่ตอบ · SPAM_GROUP_ALLOW = groupId ที่ให้ตอบ คั่นด้วย ,
 //  SPAM_ALLOW                 (ไม่บังคับ) LINE userId ที่ไม่จำกัด (พนักงาน บัญชีทดสอบ) คั่นด้วย , แอดมินใน ADMIN_NOTIFY_IDS และร้านที่ผูกแล้วไม่จำกัดอยู่แล้ว
+//                             (v3.73) ทุกค่า SPAM_* แก้ได้ในหน้าแอดมิน 🛡️ กันสแปม ค่าที่บันทึกในหน้าแอดมินใช้แทนค่าใน Railway
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -300,6 +306,15 @@ const OPENAI_ALERT_TO = (process.env.OPENAI_ALERT_TO || '').split(/[\s,]+/).filt
 // v3.72: กันสแปมที่ทำให้เสียค่า AI (spam_guard.js) แอดมินและร้านที่ผูก LINE แล้วไม่ถูกจำกัด
 const spamGuardLib = require('./spam_guard');
 const spamGuard = spamGuardLib.createGuard({ env: process.env, allow: (id) => ADMIN_NOTIFY_IDS.includes(id) || DEALERS.some((d) => d.userId && d.userId === id) });
+// v3.73 (เจ้าของสั่ง 4 พ.ย. 2569): ค่ากันสแปม ผู้รับแจ้งเตือนงบ รายชื่อที่ไม่จำกัด และ blacklist แก้ได้ในหน้าแอดมิน (🛡️ กันสแปม)
+// เก็บในไฟล์ state บน Volume ค่าที่บันทึกในหน้าแอดมินใช้แทนค่า SPAM_* ใน Railway
+const LINE_ID_RX = /^[UCR][0-9a-f]{32}$/;
+const adminSettings = { spam: {}, alertTo: [], allow: [] };
+const blacklist = new Map(); // LINE userId หรือ groupId -> { at, blocked, lastAt } บอทไม่ตอบ ไม่อ่าน
+function applySpamSettings() { spamGuard.configure(Object.assign({}, adminSettings.spam, { allow: adminSettings.allow })); }
+// ผู้รับแจ้งเตือนงบ = แชทที่เลือกในหน้าแอดมิน + OPENAI_ALERT_TO (ไม่ตั้ง = ADMIN_NOTIFY_IDS)
+function alertRecipients() { return [...new Set(adminSettings.alertTo.concat(OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS))]; }
+function isBlacklisted(...ids) { return ids.some((id) => id && blacklist.has(id)); }
 const kbHealth = require('./kb_health').createKbHealth({
   api: kbSync.api, datasetId: kbSync.DATASET_ID, sheetDocName: kbSync.DOC_NAME,
   resync: () => kbSync.syncOnce(true),
@@ -425,12 +440,24 @@ function initPersist() {
       if (raw && Array.isArray(raw.quality)) quality.load(raw.quality); // v3.50
       if (raw && raw.cost) cost.load(raw.cost); // v3.55
       if (raw && Array.isArray(raw.sheetAlertKeys)) sheetAlertKeys = raw.sheetAlertKeys.map(String).slice(0, 200);
+      if (raw && raw.adminSettings && typeof raw.adminSettings === 'object') { // v3.73: ค่าในหน้า 🛡️ กันสแปม
+        const a = raw.adminSettings;
+        adminSettings.spam = a.spam && typeof a.spam === 'object' ? a.spam : {};
+        adminSettings.alertTo = Array.isArray(a.alertTo) ? a.alertTo.filter((x) => LINE_ID_RX.test(x)).slice(0, 20) : [];
+        adminSettings.allow = Array.isArray(a.allow) ? a.allow.filter((x) => LINE_ID_RX.test(x)).slice(0, 200) : [];
+        applySpamSettings();
+        console.log('[settings] loaded spam settings ' + JSON.stringify(adminSettings.spam) + ' alertTo=' + adminSettings.alertTo.length + ' allow=' + adminSettings.allow.length);
+      }
+      if (raw && Array.isArray(raw.blacklist)) { // v3.73
+        for (const [id, b] of raw.blacklist) if (LINE_ID_RX.test(id || '')) blacklist.set(id, b && typeof b === 'object' ? b : { at: Date.now(), blocked: 0, lastAt: 0 });
+        if (blacklist.size) console.log('[settings] loaded ' + blacklist.size + ' blacklisted chats');
+      }
     }
   } catch (e) { console.log('[persist] load error:', e.message); }
 }
 
 function stateJson() {
-  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()], dealerBind: DEALERS.filter((d) => d.userId).map((d) => [d.id, d.userId]), quality: quality.dump(), cost: cost.dump(), sheetAlertKeys });
+  return JSON.stringify({ v: 2, savedAt: Date.now(), sessions: [...sessions.entries()], crm: [...crm.entries()], crmNotes: [...crmNotes.entries()], dealerBind: DEALERS.filter((d) => d.userId).map((d) => [d.id, d.userId]), quality: quality.dump(), cost: cost.dump(), sheetAlertKeys, adminSettings, blacklist: [...blacklist.entries()] });
 }
 
 function saveNow() {
@@ -1431,6 +1458,7 @@ const turns = createTurnQueue({
   run: (ctx, items, turn) => {
     const s = ctx.s;
     if (s.handoff || (s.mutedUntil && s.mutedUntil > Date.now())) { console.log(`[turn] ${ctx.sessionId.slice(0, 8)} skip ${items.length} message(s): admin took over`); return Promise.resolve(); }
+    if (isBlacklisted(ctx.sessionId, ctx.userId)) { console.log('[turn] ' + ctx.sessionId.slice(0, 8) + ' skip ' + items.length + ' message(s): blacklisted'); return Promise.resolve(); }
     return runTurn(ctx, items, turn);
   }
 });
@@ -2864,6 +2892,16 @@ async function handleEvent(ev) {
   const stype = src.groupId ? 'group' : (src.roomId ? 'room' : 'user');
   const pushTarget = src.groupId || src.roomId || userId;
 
+  // v3.73: แชทใน blacklist บอทไม่ตอบ ไม่อ่าน: ไม่เก็บข้อความ ไม่ดึงโปรไฟล์ ไม่ถอดเสียง ไม่ส่งให้ AI นับแค่จำนวนครั้งที่ส่งมา
+  const blk = blacklist.get(userId) || blacklist.get(sessionId);
+  if (blk) {
+    blk.blocked = (blk.blocked || 0) + 1;
+    blk.lastAt = Date.now();
+    markDirty();
+    console.log('[blacklist] ' + String(sessionId).slice(0, 8) + ' ' + ev.type + ' ignored');
+    return;
+  }
+
   // v3.31: OA ถูกเชิญเข้ากลุ่ม -> log id ไว้ตั้ง SALES_LEAD_TARGETS; กลุ่มรับเคสบอทไม่ตอบแชท
   if (ev.type === 'join') { console.log(`[group] OA joined ${stype} ${pushTarget} — ใส่ id นี้ใน SALES_LEAD_TARGETS เพื่อรับเคสลูกค้า`); return; }
   if (stype !== 'user' && LEAD_TARGETS.includes(pushTarget)) return;
@@ -3252,6 +3290,11 @@ async function answerTurn(ctx, items, stopLoading, turn) {
     recordCost({ sid: sessionId, kind: images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text'), q: userText, nodes: difyInfo.nodes, message: difyInfo.message, tts: difyInfo.tts });
     return;
   }
+  if (isBlacklisted(sessionId, userId)) { // v3.73: แอดมินใส่ blacklist ระหว่างที่บอทกำลังทำคำตอบ -> ไม่ส่ง
+    console.log('[blacklist] ' + sessionId.slice(0, 8) + ' answer not sent');
+    recordCost({ sid: sessionId, kind: images.length ? 'image' : 'text', q: userText, nodes: difyInfo.nodes, message: difyInfo.message, tts: difyInfo.tts });
+    return;
+  }
   const delivery = await sendAnswer(s, ev, pushTarget, msgs);
   // v3.72: เก็บคำตอบของคำถามที่พิมพ์ ถ้าถามซ้ำภายใน SPAM_REPEAT_MINUTES จะส่งคำตอบนี้อีกครั้งโดยไม่เรียก AI
   if (fromDify && !images.length && !items.some((x) => x.voice) && userText) spamGuard.noteAnswer(sessionId, userText, answer.slice(0, 4900));
@@ -3284,7 +3327,7 @@ function spamBudgetCheck() {
   const msg = level === 'stop'
     ? '⛔ น้องลัดดา: ค่า AI วันนี้ ' + spent.toFixed(2) + ' บาท ถึงงบต่อวัน ' + budget + ' บาทแล้ว\nตั้งแต่นี้ถึงเที่ยงคืน แชทที่ไม่เคยได้คำตอบก่อนวันนี้จะได้ข้อความให้ติดต่อพนักงานขายแทนคำตอบ AI ลูกค้าที่เคยคุยก่อนวันนี้ยังได้คำตอบตามปกติ\nดูแชทที่ถามมากที่สุดได้ที่หน้า 💰 ในเว็บแอดมิน ถ้าต้องการเพิ่มงบ แก้ SPAM_DAILY_BUDGET_THB ใน Railway'
     : '⚠️ น้องลัดดา: ค่า AI วันนี้ ' + spent.toFixed(2) + ' บาท ถึง 80% ของงบต่อวัน ' + budget + ' บาทแล้ว\nถ้าถึงงบ แชทที่ไม่เคยได้คำตอบก่อนวันนี้จะได้ข้อความให้ติดต่อพนักงานขายแทนคำตอบ AI\nดูแชทที่ถามมากที่สุดได้ที่หน้า 💰 ในเว็บแอดมิน';
-  const to = OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS;
+  const to = alertRecipients(); // v3.73: + แชทที่เลือกในหน้า 🛡️ กันสแปม
   console.log('[spam] budget ' + level + ': ' + spent.toFixed(2) + ' of ' + budget + ' THB today -> ' + to.length + ' LINE');
   for (const id of to) linePush(id, msg).catch(() => {});
 }
@@ -3298,6 +3341,41 @@ function spamKnown(sessionId) {
 // v3.72: ตัวเลขกันสแปมสำหรับหน้า 💰 และ /admin/api/spam (มี id แชท ต้องใส่รหัสแอดมิน)
 function spamReport() {
   return spamGuard.report({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid), spentToday: cost.spentToday() });
+}
+
+// v3.73: หน้า 🛡️ กันสแปม: ค่าที่ใช้อยู่ ค่าเริ่มจาก Railway ผู้รับแจ้งเตือน รายชื่อที่ไม่จำกัด และ blacklist
+function settingsView() {
+  const who = (id) => ({ id, name: costChatName(id) || '', chat: sessions.has(id) });
+  const st = spamGuard.settings();
+  return { ok: true, spam: st.values, defaults: st.defaults, overrides: adminSettings.spam,
+    alertTo: adminSettings.alertTo.map(who), envAlertTo: (OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS).map(who),
+    allow: adminSettings.allow.map(who), envAllow: st.envAllow, admins: ADMIN_NOTIFY_IDS.length, dealers: DEALERS.filter((d) => d.userId).length,
+    blacklist: [...blacklist.entries()].map(([id, b]) => Object.assign(who(id), { at: b.at || 0, blocked: b.blocked || 0, lastAt: b.lastAt || 0 })),
+    spentToday: cost.spentToday(), persist: persistOK };
+}
+const SPAM_NUM_KEYS = ['burstMax', 'hourMax', 'dayMax', 'voiceDayMax', 'imageDayMax', 'textMax', 'repeatMinutes', 'budgetThb'];
+// d = { spam: { ตัวเลขตาม SPAM_NUM_KEYS (ว่าง = ใช้ค่าใน Railway), on, groups }, alertTo: [id], allow: [id] } ส่วนที่ไม่ส่งมาไม่เปลี่ยน
+function saveSettings(d) {
+  const x = d || {};
+  if (x.spam && typeof x.spam === 'object') {
+    const next = {};
+    for (const k of SPAM_NUM_KEYS) {
+      const v = x.spam[k];
+      if (v === undefined || v === null || v === '') continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0 || n > 1000000) return 'ค่า ' + k + ' ต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป';
+      next[k] = n;
+    }
+    for (const k of ['on', 'groups']) if (typeof x.spam[k] === 'boolean') next[k] = x.spam[k];
+    adminSettings.spam = next;
+  }
+  const ids = (a, max) => [...new Set(a.map(String).filter((id) => LINE_ID_RX.test(id)))].slice(0, max);
+  if (Array.isArray(x.alertTo)) adminSettings.alertTo = ids(x.alertTo, 20);
+  if (Array.isArray(x.allow)) adminSettings.allow = ids(x.allow, 200);
+  applySpamSettings();
+  markDirty();
+  console.log('[settings] spam ' + JSON.stringify(adminSettings.spam) + ' alertTo=' + adminSettings.alertTo.length + ' allow=' + adminSettings.allow.length);
+  return '';
 }
 
 // v3.55: ชื่อแชทในหน้าค่าใช้จ่าย (ชื่อจริงใน CRM ก่อน แล้วจึงชื่อ LINE)
@@ -3516,6 +3594,39 @@ const ADMIN_HTML = `<!DOCTYPE html>
 
   /* v3.55: หน้าค่าใช้จ่าย AI */
   .rf.cost { background: #e6f9ee; color: #0a7a3a; font-size: 13px; font-weight: 700; margin-right: 4px; white-space: nowrap; }
+  /* v3.73: 🛡️ กันสแปม แท็ก และ blacklist */
+  .rf.shield { background: #fff4e5; color: #a35200; font-size: 13px; font-weight: 700; margin-right: 4px; white-space: nowrap; }
+  .tagbtn, .blbtn { border-radius: 9px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; flex: none; margin-right: 6px; background: #eef4fb; color: #2f5fa3; }
+  .tagbtn.on { background: #2f5fa3; color: #fff; }
+  .blbtn { background: #f1f3f5; color: #55606b; }
+  .blbtn.on { background: #1f2329; color: #fff; }
+  .tagbar { display: none; padding: 8px 16px 10px; border-bottom: 1px solid #e3e6ea; background: #f7f9fb; }
+  .tagbar.on { display: block; }
+  .tagbar .tags { margin-top: 0; }
+  .tagbar input { margin-top: 8px; width: 100%; max-width: 320px; padding: 6px 9px; border: 1px solid #dfe3e8; border-radius: 9px; font-size: 12.5px; font-family: inherit; outline: none; }
+  .tagbar .tb-note { font-size: 11px; color: #8a95a1; margin-top: 5px; }
+  .pill.t { background: #eef4fb; color: #2f5fa3; }
+  .pill.k { background: #1f2329; color: #fff; }
+  .itag.bl { background: #1f2329; color: #fff; }
+  .item.bl { opacity: .62; }
+  .sv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px 16px; }
+  .sv-f label { display: block; font-size: 12.5px; font-weight: 700; color: #1f2329; }
+  .sv-f input { width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid #dfe3e8; border-radius: 9px; font-size: 14px; font-family: inherit; outline: none; }
+  .sv-f input:focus { border-color: #06c755; }
+  .sv-f .h { font-size: 11px; color: #8a95a1; margin-top: 3px; line-height: 1.5; }
+  .sv-tg { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; }
+  .sv-tg label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .sv-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .sv-btn { border-radius: 9px; padding: 8px 14px; font-size: 13px; font-weight: 700; background: #06c755; color: #fff; }
+  .sv-btn.g { background: #f1f3f5; color: #55606b; }
+  .sv-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  .sv-chip { background: #eef4fb; color: #2f5fa3; border-radius: 99px; padding: 3px 10px; font-size: 12.5px; }
+  .sv-chip b { cursor: pointer; margin-left: 6px; color: #d33a41; }
+  .sv-add { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .sv-add select { padding: 6px 8px; border: 1px solid #dfe3e8; border-radius: 9px; font-size: 12.5px; max-width: 340px; font-family: inherit; }
+  .sv-msg { font-size: 12.5px; color: #0a7a3a; }
+  .sv-msg.bad { color: #d33a41; }
+  @media (max-width: 760px) { .rf.shield .sh-txt { display: none; } .tagbtn, .blbtn { padding: 9px 9px; } }
   .costv { display: none; position: fixed; inset: 0; z-index: 30; background: #f3f5f7; overflow-y: auto; overflow-x: hidden; }
   .costv.on { display: block; }
   .cv-wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px 40px; }
@@ -3635,10 +3746,11 @@ const ADMIN_HTML = `<!DOCTYPE html>
   <div class="side">
     <div class="side-head">
       <b>แชท<span class="cnt" id="count">0</span><span class="cnt red" id="cbcount" style="display:none" title="ลูกค้ารอติดต่อกลับ">📞 0</span><span class="live off" id="live">● กำลังเชื่อมต่อ…</span></b>
-      <span style="flex:none"><button class="rf cost" id="costbtn" title="ค่าใช้จ่าย AI ของบอท">💰 ค่าใช้จ่าย</button><button class="rf" id="refreshbtn">⟳</button></span>
+      <span style="flex:none"><button class="rf shield" id="spambtn" title="ตั้งค่ากันสแปม blacklist และผู้รับแจ้งเตือนงบ">🛡️<span class="sh-txt"> กันสแปม</span></button><button class="rf cost" id="costbtn" title="ค่าใช้จ่าย AI ของบอท">💰 ค่าใช้จ่าย</button><button class="rf" id="refreshbtn">⟳</button></span>
     </div>
     <div class="srch"><input id="q" type="search" placeholder="🔍 ค้นหา ชื่อ / เบอร์ / แท็ก / จังหวัด / พืช">
       <div class="dfl"><select id="dsel" aria-label="กรองตามวันที่" title="แสดงเฉพาะแชทที่มีข้อความในช่วงวันที่นี้"><option value="">📅 ทุกวัน</option><option value="today">📅 วันนี้</option><option value="yesterday">📅 เมื่อวาน</option><option value="7">📅 7 วันล่าสุด</option><option value="30">📅 30 วันล่าสุด</option><option value="month">📅 รายเดือน (แยกรายวัน)</option><option value="range">📅 เลือกช่วงวันที่…</option></select>
+      <select id="tsel" aria-label="กรองตามแท็ก" title="แสดงเฉพาะแชทที่มีแท็กนี้"><option value="">🏷️ ทุกแท็ก</option></select>
       <span id="drange"><input type="date" id="dfrom" aria-label="ตั้งแต่วันที่"> ถึง <input type="date" id="dto" aria-label="ถึงวันที่"></span>
       <div id="dmonth"></div></div>
     </div>
@@ -3655,9 +3767,12 @@ const ADMIN_HTML = `<!DOCTYPE html>
       </div>
       <button class="crmbtn" id="crmbtn">👤 โปรไฟล์</button>
       <button class="cbbtn set" id="cbbtn"></button>
+      <button class="tagbtn" id="tagbtn" title="ใส่หรือเอาแท็กออกจากแชทนี้">🏷️ แท็ก</button>
+      <button class="blbtn" id="blbtn" title="บอทไม่ตอบและไม่อ่านข้อความจากแชทนี้"></button>
       <button class="tgl stop" id="tglbtn"></button>
     </div>
     <div class="cbbar" id="cbbar"></div>
+    <div class="tagbar" id="tagbar"></div>
     <div class="body">
       <div class="msgs" id="msgs">
         <div class="chat-empty"><div class="big">💬</div><div>เลือกแชทจากรายการด้านซ้าย<br>เพื่อดูบทสนทนาและควบคุมบอท</div></div>
@@ -3671,6 +3786,16 @@ const ADMIN_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<div id="spamv" class="costv">
+  <div class="cv-wrap">
+    <div class="cv-head">
+      <button class="cv-back" id="spamclose">‹ กลับหน้าแชท</button>
+      <h2>🛡️ กันสแปม<span class="m-hide"> และ blacklist</span></h2>
+      <button class="rf" id="spamrf" title="โหลดใหม่">⟳</button>
+    </div>
+    <div id="svbody"><div class="cv-sec"><div class="cv-empty">กำลังโหลด…</div></div></div>
+  </div>
+</div>
 <div id="costv" class="costv">
   <div class="cv-wrap">
     <div class="cv-head">
@@ -3698,7 +3823,8 @@ var crmData = null;
 var crmTags = [];
 var posOn = false;
 var unreg = 0;
-var PRESET_TAGS = ['ลูกค้าใหม่', 'ลูกค้าประจำ', 'ตัวแทนจำหน่าย', 'เกษตรกร', 'สนใจสินค้า', 'รอตัดสินใจ', 'ซื้อแล้ว', 'ห้ามรบกวน'];
+var PRESET_TAGS = ['ลูกค้าใหม่', 'ลูกค้าประจำ', 'ตัวแทนจำหน่าย', 'เกษตรกร', 'สนใจสินค้า', 'รอตัดสินใจ', 'ซื้อแล้ว', 'ห้ามรบกวน', 'สแปม', 'คู่แข่ง'];
+var tagSel = '', allTags = [], tagOpen = false, spamOpen = false, spamSet = null; // v3.73
 var STATUS_TH = { new: 'ใหม่', interested: 'สนใจ', quoted: 'เสนอราคาแล้ว', customer: 'ซื้อแล้ว', inactive: 'เงียบ/ไม่สนใจ' };
 var COLORS = ['#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#6366f1'];
 
@@ -3817,8 +3943,10 @@ function dateRange() {
 }
 function listQuery() {
   var r = dateRange();
-  if (!r) return '';
-  return '?from=' + r.from + '&to=' + r.to + (document.getElementById('dsel').value === 'month' ? '&month=' + mKey : '');
+  var p = [];
+  if (r) { p.push('from=' + r.from, 'to=' + r.to); if (document.getElementById('dsel').value === 'month') p.push('month=' + mKey); }
+  if (tagSel) p.push('tag=' + encodeURIComponent(tagSel)); // v3.73: กรองตามแท็ก
+  return p.length ? '?' + p.join('&') : '';
 }
 function onDateFilter() {
   var v = document.getElementById('dsel').value;
@@ -3895,6 +4023,8 @@ function load(fromLogin) {
       + (d.reg === 'off' ? '' : (unreg ? ' · <span class="exp" id="invbtn" title="ส่งข้อความเชิญลงทะเบียน (Push) ถึงลูกค้าเก่าทุกคนที่ยังไม่ลงทะเบียน">📣 เชิญลูกค้าเก่าที่ยังไม่ลงทะเบียน (' + unreg + ')</span>' : ' · ลงทะเบียนครบทุกแชทแล้ว'))
       + ' · <span class="exp" id="rmbtn" title="สร้าง Rich Menu (เมนูล่างแชท) ปุ่มเดียว: ทีมงานในพื้นที่ แล้วตั้งเป็นเมนูเริ่มต้นของทุกคน">🧩 สร้าง Rich Menu</span> · ';
     cache = d.sessions;
+    allTags = d.tags || [];
+    renderTagFilter();
     var pend = d.pending || 0;
     var cbEl = document.getElementById('cbcount');
     cbEl.style.display = pend ? 'inline-block' : 'none';
@@ -3921,6 +4051,7 @@ function matchQ(s) {
   if (!q) return true;
   var c = s.crm || {};
   var hay = [s.name, s.id, s.lastText, c.real_name, c.phone, c.province, c.crops, (c.tags || []).join(' '), STATUS_TH[c.status] || '', s.cb && s.cb.contact, c.pos ? 'pos ' + c.pos : '', c.posc ? 'รอยืนยัน pos' : '', s.score ? s.score.levelTh : '', s.ref && s.ref.step === 'sent' ? 'ส่งร้าน' : ''].join(' ').toLowerCase();
+  if (s.bl) hay += ' blacklist แบล็กลิสต์';
   return hay.indexOf(q) !== -1;
 }
 
@@ -3948,6 +4079,7 @@ function renderList() {
   var now = Date.now();
   document.getElementById('count').textContent = Math.max(listMatched, cache.length);
   if (!cache.length) {
+    if (tagSel) { document.getElementById('items').innerHTML = '<div class="empty">ไม่มีแชทที่มีแท็ก "' + esc(tagSel) + '"' + (dRange ? ' ในช่วงวันที่นี้' : '') + '<br>เลือก "🏷️ ทุกแท็ก" เพื่อดูทุกแชท</div>'; return; }
     document.getElementById('items').innerHTML = dRange
       ? '<div class="empty">ไม่มีแชทที่มีข้อความ' + (dRange.from === dRange.to ? 'ในวันที่ ' + dayLabel(Date.parse(dRange.from + 'T12:00:00+07:00')) : 'ในช่วงวันที่นี้') + '<br>ลองเลือกช่วงอื่น หรือเลือก "ทุกวัน"</div>'
       : '<div class="empty">ยังไม่มีแชทเข้ามา<br>เมื่อลูกค้าทักไลน์จะเด้งขึ้นที่นี่เอง</div>';
@@ -3967,10 +4099,10 @@ function renderList() {
     var last = isCb
       ? '📞 รอติดต่อกลับ · ' + esc(s.cb.contact || s.cb.topic || s.lastText || '-')
       : (isHo ? '🙋 ขอคุยกับแอดมิน · ' : '') + esc(s.lastText || '-');
-    h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isCb ? ' cb' : (isHo ? ' ho' : '')) + '" data-id="' + s.id + '">'
+    h += '<div class="item' + (s.id === sel ? ' sel' : '') + (isCb ? ' cb' : (isHo ? ' ho' : '')) + (s.bl ? ' bl' : '') + '" data-id="' + s.id + '">'
       + av
       + '<div class="icol">'
-      + '<div class="irow1"><span class="iname">' + esc((s.crm && s.crm.real_name) || dispName(s)) + crmBadge(s) + scoreBadge(s) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
+      + '<div class="irow1"><span class="iname">' + esc((s.crm && s.crm.real_name) || dispName(s)) + (s.bl ? '<span class="itag bl" title="Blacklist: บอทไม่ตอบ ไม่อ่าน">⛔ blacklist</span>' : '') + crmBadge(s) + scoreBadge(s) + '</span><span class="itime">' + listTime(isCb ? s.cb.at : s.lastAt) + '</span></div>'
       + '<div class="ilast' + (isCb ? ' cbtxt' : (isHo ? ' hotxt' : '')) + '">' + last + '</div>'
       + '</div></div>';
   }
@@ -4239,7 +4371,13 @@ function renderHead() {
   else if (s.crm && s.crm.posc) st += '<span class="pill o" title="มีรายชื่อ POS ที่น่าจะใช่ รอยืนยันในแผงโปรไฟล์">🔗 POS รอยืนยัน</span>';
   if (s.score) st += '<span class="pill ' + (s.score.level === 'hot' ? 'r' : 'o') + '" title="' + esc((s.score.reasons || []).join(' · ')) + '">' + s.score.icon + ' สนใจซื้อ ' + s.score.value + '/100 · ' + esc((s.score.reasons || []).slice(0, 3).join(' · ')) + '</span>';
   if (s.ref && s.ref.step === 'sent') st += '<span class="pill g">🛒 ส่งต่อ ' + esc(s.ref.dealerName || 'ร้าน') + ' แล้ว</span>';
+  if (s.bl) st = '<span class="pill k" title="บอทไม่ตอบและไม่อ่านข้อความจากแชทนี้">⛔ Blacklist · บอทไม่ตอบ ไม่อ่าน' + (s.bl.blocked ? ' · ส่งมา ' + s.bl.blocked + ' ครั้ง' : '') + '</span>' + st.replace('<span class="pill g">🔊 บอทตอบอัตโนมัติ</span>', ''); // v3.73
+  ((s.crm && s.crm.tags) || []).filter(function(t) { return t !== 'ลูกค้า POS'; }).slice(0, 8).forEach(function(t) { st += '<span class="pill t">🏷️ ' + esc(t) + '</span>'; });
   document.getElementById('hstat').innerHTML = st;
+  var bb = document.getElementById('blbtn');
+  bb.className = 'blbtn' + (s.bl ? ' on' : '');
+  bb.textContent = s.bl ? '✓ เอาออกจาก blacklist' : '⛔ Blacklist';
+  document.getElementById('tagbtn').className = 'tagbtn' + (tagOpen ? ' on' : '');
   var b = document.getElementById('tglbtn');
   if (muted) { b.className = 'tgl start'; b.textContent = '▶ เปิดบอทตอบต่อ'; b.dataset.m = '0'; }
   else { b.className = 'tgl stop'; b.textContent = '⏸ หยุดบอท ตอบเอง'; b.dataset.m = '-1'; }
@@ -4257,6 +4395,7 @@ function renderHead() {
     cbb.className = 'cbbtn set'; cbb.textContent = '📞 ตั้งรอติดต่อกลับ'; cbb.dataset.a = 'set';
     bar.className = 'cbbar'; bar.innerHTML = '';
   }
+  renderTagBar();
 }
 
 function fetchHist(id) {
@@ -4629,13 +4768,14 @@ function cvSpamWarn(sp) {
   var b = t.budgetLevel === 'stop' ? ' · ค่า AI วันนี้ถึงงบต่อวันแล้ว แชทใหม่ได้ข้อความให้ติดต่อพนักงานขายแทนคำตอบ AI' : (t.budgetLevel === 'warn' ? ' · ค่า AI วันนี้เกิน 80% ของงบต่อวันแล้ว' : '');
   return '<div class="cv-warn">🛡️ วันนี้ตัวกันสแปมจำกัด ' + nfmt(t.limitedChats) + ' แชท' + b + ' ดูรายละเอียดที่ "กันสแปมวันนี้" ด้านล่าง</div>';
 }
-function cvSpam(sp) {
+function cvSpam(sp, inView) {
   if (!sp) return '';
-  if (!sp.on) return '<div class="cv-sec"><h3>🛡️ กันสแปม</h3><div class="cv-empty">ปิดอยู่ (SPAM_GUARD=off)</div></div>';
+  var setLink = inView ? '' : ' <span class="exp" data-open-spam="1">⚙️ ตั้งค่า</span>';
+  if (!sp.on) return '<div class="cv-sec"><h3>🛡️ กันสแปม' + setLink + '</h3><div class="cv-empty">ตัวกันสแปมปิดอยู่ เปิดได้ที่ 🛡️ กันสแปม</div></div>';
   var t = sp.today || {}, l = sp.limits || {};
   var lim = 'เพดานต่อแชท: ข้อความ ' + nfmt(l.burstPerMinute) + ' ต่อนาที · คำตอบ AI ' + nfmt(l.hour) + ' ต่อชั่วโมง และ ' + nfmt(l.day) + ' ต่อวัน · เสียง ' + nfmt(l.voiceDay) + ' และรูป ' + nfmt(l.imageDay) + ' ต่อวัน · ถามซ้ำใน ' + nfmt(l.repeatMinutes) + ' นาทีส่งคำตอบเดิม · ' + (l.groups === 'on' ? 'ตอบในกลุ่ม' : (l.groups === 'allowlist' ? 'ตอบเฉพาะกลุ่มที่อนุญาต' : 'ไม่ตอบในกลุ่ม'));
-  var bud = sp.budget ? 'งบค่า AI ต่อวัน ' + baht(sp.budget.thb) + ' วันนี้ใช้ไป ' + baht(sp.budget.spentToday) : 'ยังไม่ได้ตั้งงบค่า AI ต่อวัน (SPAM_DAILY_BUDGET_THB)';
-  var h = '<div class="cv-sec"><h3>🛡️ กันสแปมวันนี้</h3><div class="d">' + esc(lim) + '<br>' + esc(bud) + '</div>'
+  var bud = sp.budget ? 'งบค่า AI ต่อวัน ' + baht(sp.budget.thb) + ' วันนี้ใช้ไป ' + baht(sp.budget.spentToday) : 'ยังไม่ได้ตั้งงบค่า AI ต่อวัน (ตั้งได้ที่ 🛡️ กันสแปม)';
+  var h = '<div class="cv-sec"><h3>🛡️ กันสแปมวันนี้' + setLink + '</h3><div class="d">' + esc(lim) + '<br>' + esc(bud) + '</div>'
     + '<div class="cv-sub">ส่งข้อความแจ้ง ' + nfmt(t.notices) + ' ครั้ง · ไม่ตอบ ' + nfmt(t.dropped) + ' ข้อความ · ส่งคำตอบเดิมโดยไม่เรียก AI ' + nfmt(t.repeats) + ' ครั้ง · ตัดข้อความยาว ' + nfmt(t.truncated) + ' ครั้ง · ข้อความในกลุ่มที่ไม่ตอบ ' + nfmt(t.groupDropped) + '</div>';
   var top = (sp.top || []).filter(function(x) { return x.answersToday > 0 || x.limited; });
   if (top.length) {
@@ -4646,7 +4786,117 @@ function cvSpam(sp) {
     });
     h += '</table></div>';
   }
-  return h + '<div class="cv-sub" style="margin-top:8px">นับใหม่ทุกวันและเมื่อระบบรีสตาร์ต · กดที่แถวเพื่อเปิดแชท ถ้าเป็นสแปม กด "⏸ หยุดบอท ตอบเอง" เพื่อหยุดตอบแชทนั้นจนกว่าจะเปิดเอง</div></div>';
+  return h + '<div class="cv-sub" style="margin-top:8px">นับใหม่ทุกวันและเมื่อระบบรีสตาร์ต · กดที่แถวเพื่อเปิดแชท ถ้าเป็นสแปม กด "⛔ Blacklist" ที่หัวแชท บอทจะไม่ตอบและไม่อ่านแชทนั้นจนกว่าจะเอาออก</div></div>';
+}
+
+// ---------- v3.73: หน้า 🛡️ กันสแปม (ตั้งค่า ผู้รับแจ้งเตือน allowlist blacklist) แท็กที่หัวแชท และตัวกรองแท็ก ----------
+var SPAM_FIELDS = [
+  ['burstMax', 'ข้อความต่อนาที (ต่อแชท)', 'ส่งเกินจากนี้ใน 1 นาที บอทไม่ตอบข้อความที่เกิน'],
+  ['hourMax', 'คำตอบ AI ต่อชั่วโมง (ต่อแชท)', 'ครบแล้วแจ้งลูกค้าครั้งเดียวว่าพักตอบถึงกี่โมง'],
+  ['dayMax', 'คำตอบ AI ต่อวัน (ต่อแชท)', 'ครบแล้วแจ้งว่าพักตอบถึงพรุ่งนี้'],
+  ['voiceDayMax', 'ข้อความเสียงต่อวัน (ต่อแชท)', 'ครบแล้วขอให้พิมพ์แทน ไม่เสียค่าถอดเสียง'],
+  ['imageDayMax', 'รูปต่อวัน (ต่อแชท)', 'ครบแล้วขอให้พิมพ์แทน'],
+  ['textMax', 'ตัวอักษรต่อข้อความ', 'ข้อความที่ยาวกว่านี้ถูกตัดก่อนส่งให้ AI'],
+  ['repeatMinutes', 'ถามซ้ำภายใน (นาที)', 'คำถามเดิมในช่วงนี้ได้คำตอบเดิมโดยไม่เรียก AI'],
+  ['budgetThb', 'งบค่า AI ต่อวัน (บาท)', 'ถึงงบแล้วแชทใหม่ได้ข้อความให้ติดต่อพนักงานขาย ลูกค้าเดิมยังได้คำตอบ แจ้งเตือนที่ 80% และ 100%']
+];
+function openSpam() { spamOpen = true; document.getElementById('spamv').classList.add('on'); loadSpam(); }
+function closeSpam() { spamOpen = false; document.getElementById('spamv').classList.remove('on'); }
+function loadSpam() {
+  if (!KEY || !spamOpen) return;
+  Promise.all([api('/admin/api/settings'), api('/admin/api/spam')]).then(function(r) { spamSet = r[0]; renderSpam(r[0], r[1]); }).catch(function(e) {
+    if (e && e.auth) { closeSpam(); signOut(e.message === 'รหัสไม่ถูกต้อง' ? 'รหัสแอดมินเปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่' : e.message); return; }
+    document.getElementById('svbody').innerHTML = '<div class="cv-sec"><div class="cv-empty">โหลดไม่ได้: ' + esc(e.message) + '<br>กด ⟳ เพื่อลองใหม่</div></div>';
+  });
+}
+function svWho(x) { return esc(x.name || (String(x.id).slice(0, 10) + '…')); }
+function svChips(list, kind) {
+  if (!list.length) return '<div class="cv-sub" style="margin-top:6px">ยังไม่ได้เลือก</div>';
+  return '<div class="sv-chips">' + list.map(function(x) { return '<span class="sv-chip">' + svWho(x) + '<b data-rm="' + kind + '" data-id="' + esc(x.id) + '" title="เอาออก">✕</b></span>'; }).join('') + '</div>';
+}
+function svPicker(kind, taken) {
+  var opts = cache.filter(function(s) { return s.type === 'user' && taken.indexOf(s.id) === -1; }).map(function(s) {
+    return '<option value="' + esc(s.id) + '">' + esc((s.crm && s.crm.real_name) || dispName(s)) + ' · ' + esc(s.id.slice(0, 8)) + '</option>';
+  }).join('');
+  return '<div class="sv-add"><select id="sv_' + kind + 'sel" aria-label="เลือกแชท"><option value="">เลือกแชทจากรายการ…</option>' + opts + '</select><button class="sv-btn g" data-add="' + kind + '">เพิ่ม</button></div>';
+}
+function renderSpam(st, rep) {
+  var v = st.spam || {}, df = st.defaults || {};
+  var h = '<div class="cv-sec"><h3>⚙️ ตั้งค่ากันสแปม</h3><div class="d">ใช้ทันทีหลังกดบันทึก · 0 = ไม่จำกัด · เว้นว่าง = ใช้ค่าเริ่มต้น</div><div class="sv-grid">';
+  SPAM_FIELDS.forEach(function(f) {
+    var val = v[f[0]];
+    h += '<div class="sv-f"><label for="sv_' + f[0] + '">' + f[1] + '</label><input type="number" min="0" step="1" id="sv_' + f[0] + '" value="' + (val == null ? '' : esc(val)) + '"><div class="h">' + esc(f[2]) + ' · ค่าเริ่มต้น ' + esc(df[f[0]]) + '</div></div>';
+  });
+  h += '</div><div class="sv-tg"><label><input type="checkbox" id="sv_on"' + (v.on ? ' checked' : '') + '> เปิดตัวกันสแปม</label><label><input type="checkbox" id="sv_groups"' + (v.groups ? ' checked' : '') + '> ให้บอทตอบในกลุ่มและห้องแชท</label></div>'
+    + '<div class="sv-btns"><button class="sv-btn" id="sv_save">💾 บันทึก</button><button class="sv-btn g" id="sv_reset">คืนค่าเริ่มต้นทั้งหมด</button><span class="sv-msg" id="sv_msg"></span></div>'
+    + (st.persist ? '' : '<div class="cv-warn">⚠️ ระบบยังไม่ได้เก็บไฟล์ถาวร (ไม่มี Volume) ค่าที่ตั้งจะหายเมื่อ deploy ใหม่</div>') + '</div>';
+  var envA = (st.envAlertTo || []).map(svWho).join(', ');
+  h += '<div class="cv-sec"><h3>🔔 แจ้งเตือนงบเข้า LINE</h3><div class="d">ส่งเมื่อค่า AI ของวันถึง 80% และ 100% ของงบต่อวัน' + (v.budgetThb ? ' (งบตอนนี้ ' + baht(v.budgetThb) + ' · วันนี้ใช้ไป ' + baht(st.spentToday) + ')' : ' (ยังไม่ได้ตั้งงบ)') + ' · ผู้รับต้องเป็นเพื่อนกับ OA นี้</div>'
+    + svChips(st.alertTo || [], 'alert')
+    + (envA ? '<div class="cv-sub">และผู้รับแจ้งเตือนที่ตั้งไว้ใน Railway: ' + envA + '</div>' : '')
+    + svPicker('alert', (st.alertTo || []).map(function(x) { return x.id; }))
+    + '<div class="sv-btns"><button class="sv-btn g" id="sv_test">ส่งข้อความทดสอบ</button><span class="sv-msg" id="sv_testmsg"></span></div></div>';
+  h += '<div class="cv-sec"><h3>✅ ไม่จำกัด (allowlist)</h3><div class="d">แชทเหล่านี้ไม่ถูกจำกัดจำนวนข้อความ เช่น พนักงานหรือบัญชีทดสอบ · แอดมินใน ADMIN_NOTIFY_IDS (' + nfmt(st.admins) + ' คน) และร้านที่ผูก LINE แล้ว (' + nfmt(st.dealers) + ' ร้าน) ไม่ถูกจำกัดอยู่แล้ว' + (st.envAllow ? ' · จาก Railway อีก ' + nfmt(st.envAllow) + ' รายชื่อ' : '') + '</div>'
+    + svChips(st.allow || [], 'allow') + svPicker('allow', (st.allow || []).map(function(x) { return x.id; })) + '</div>';
+  var bl = st.blacklist || [];
+  h += '<div class="cv-sec"><h3>⛔ Blacklist</h3><div class="d">บอทไม่ตอบและไม่อ่านข้อความจากแชทเหล่านี้ (ไม่เก็บข้อความ ไม่ส่งให้ AI) · ใส่ได้จากปุ่ม ⛔ ที่หัวแชท</div>';
+  if (!bl.length) h += '<div class="cv-empty">ยังไม่มีแชทใน blacklist</div>';
+  else {
+    h += '<div class="cv-scroll"><table class="cv-t"><tr><th>แชท</th><th>ใส่เมื่อ</th><th class="n">ส่งมาหลังจากนั้น</th><th class="mh">ส่งมาล่าสุด</th><th></th></tr>';
+    bl.forEach(function(x) {
+      h += '<tr' + cvRow({ chat: x.chat, sid: x.id }) + '><td><b>' + svWho(x) + '</b></td><td>' + (x.at ? dayLabel(x.at) + ' ' + hhmm(x.at) : '–') + '</td><td class="n">' + nfmt(x.blocked) + ' ครั้ง</td><td class="mh">' + (x.lastAt ? dayLabel(x.lastAt) + ' ' + hhmm(x.lastAt) : '–') + '</td><td><button class="sv-btn g" data-unbl="' + esc(x.id) + '">เอาออก</button></td></tr>';
+    });
+    h += '</table></div>';
+  }
+  h += '</div>' + cvSpam(rep, true);
+  document.getElementById('svbody').innerHTML = h;
+}
+function svMsg(id, text, bad) { var m = document.getElementById(id); if (m) { m.className = 'sv-msg' + (bad ? ' bad' : ''); m.textContent = text; } else if (bad) alert(text); }
+function svPost(body, okText) {
+  return api('/admin/api/settings', { method: 'POST', body: JSON.stringify(body) }).then(function(st) {
+    spamSet = st;
+    return api('/admin/api/spam').then(function(rep) { renderSpam(st, rep); if (okText) svMsg('sv_msg', okText); });
+  }).catch(function(e) { svMsg('sv_msg', 'บันทึกไม่ได้: ' + e.message, true); });
+}
+function svIds(list) { return (list || []).map(function(x) { return x.id; }); }
+function renderTagFilter() {
+  var el = document.getElementById('tsel');
+  if (!el) return;
+  var h = '<option value="">🏷️ ทุกแท็ก</option>', found = false;
+  allTags.forEach(function(x) { if (x.t === tagSel) found = true; h += '<option value="' + esc(x.t) + '"' + (x.t === tagSel ? ' selected' : '') + '>🏷️ ' + esc(x.t) + ' (' + x.n + ')</option>'; });
+  if (tagSel && !found) h += '<option value="' + esc(tagSel) + '" selected>🏷️ ' + esc(tagSel) + ' (0)</option>';
+  el.innerHTML = h;
+}
+function renderTagBar() {
+  var bar = document.getElementById('tagbar');
+  var s = findSel();
+  if (!tagOpen || !s) { bar.className = 'tagbar'; bar.innerHTML = ''; return; }
+  var old = document.getElementById('tb_new');
+  var keep = old ? old.value : '', foc = old && document.activeElement === old;
+  var mine = (s.crm && s.crm.tags) || [];
+  var names = PRESET_TAGS.slice();
+  allTags.forEach(function(x) { if (names.indexOf(x.t) === -1) names.push(x.t); });
+  mine.forEach(function(t) { if (names.indexOf(t) === -1) names.push(t); });
+  bar.className = 'tagbar on';
+  bar.innerHTML = '<div class="tags">' + names.filter(function(t) { return t !== 'ลูกค้า POS'; }).map(function(t) {
+    return '<span class="tag' + (mine.indexOf(t) !== -1 ? ' on' : '') + '" data-qtag="' + esc(t) + '">' + esc(t) + '</span>';
+  }).join('') + '</div><input id="tb_new" placeholder="พิมพ์แท็กใหม่แล้วกด Enter"><div class="tb-note">กดแท็กเพื่อใส่หรือเอาออก บันทึกทันที · กรองรายการแชทตามแท็กได้ที่ช่อง 🏷️ ด้านซ้าย</div>';
+  var n = document.getElementById('tb_new');
+  if (keep) n.value = keep;
+  if (foc) n.focus();
+}
+function saveTags(tags) {
+  var id = sel;
+  if (!id) return;
+  api('/admin/api/crm', { method: 'POST', body: JSON.stringify({ id: id, tags: tags }) }).then(function(d) {
+    var t = (d.profile && d.profile.tags) || tags;
+    var s = findSel();
+    if (s && s.id === id) { s.crm = s.crm || {}; s.crm.tags = t; }
+    if (crmData && crmData.profile && crmData.profile.line_user_id === id) { crmTags = t.slice(); renderTags(); }
+    renderHead();
+    renderList();
+    load();
+  }).catch(function(e) { alert('บันทึกแท็กไม่ได้: ' + e.message); });
 }
 
 function renderCost(d) {
@@ -4694,11 +4944,99 @@ function renderCost(d) {
 }
 
 document.getElementById('costbtn').addEventListener('click', openCost);
+// v3.73: 🛡️ กันสแปม แท็ก และ blacklist
+document.getElementById('spambtn').addEventListener('click', openSpam);
+document.getElementById('spamclose').addEventListener('click', closeSpam);
+document.getElementById('spamrf').addEventListener('click', loadSpam);
+document.getElementById('tsel').addEventListener('change', function() { tagSel = this.value; load(); });
+document.getElementById('tagbtn').addEventListener('click', function() { tagOpen = !tagOpen; renderHead(); });
+document.getElementById('blbtn').addEventListener('click', function() {
+  var s = findSel();
+  if (!s) return;
+  var on = !s.bl;
+  if (on && !confirm('ใส่ "' + dispName(s) + '" ใน blacklist? บอทจะไม่ตอบและไม่อ่านข้อความจากแชทนี้ (ไม่เก็บข้อความ ไม่ส่งให้ AI) จนกว่าจะเอาออก')) return;
+  api('/admin/api/blacklist', { method: 'POST', body: JSON.stringify({ id: s.id, on: on }) }).then(function() { load(); }).catch(function(e) { alert(e.message); });
+});
+document.getElementById('tagbar').addEventListener('click', function(e) {
+  var tg = e.target.closest ? e.target.closest('[data-qtag]') : null;
+  var s = findSel();
+  if (!tg || !s) return;
+  var name = tg.getAttribute('data-qtag');
+  var tags = ((s.crm && s.crm.tags) || []).slice();
+  var i = tags.indexOf(name);
+  if (i === -1) tags.push(name); else tags.splice(i, 1);
+  saveTags(tags);
+});
+document.getElementById('tagbar').addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter' || e.target.id !== 'tb_new') return;
+  e.preventDefault();
+  var v = e.target.value.trim().slice(0, 40);
+  var s = findSel();
+  if (!v || !s) return;
+  var tags = ((s.crm && s.crm.tags) || []).slice();
+  if (tags.indexOf(v) === -1) tags.push(v);
+  e.target.value = '';
+  saveTags(tags);
+});
+document.getElementById('svbody').addEventListener('click', function(e) {
+  var t = e.target;
+  if (!t.closest || !spamSet) return;
+  var unbl = t.closest('[data-unbl]');
+  if (unbl) {
+    api('/admin/api/blacklist', { method: 'POST', body: JSON.stringify({ id: unbl.getAttribute('data-unbl'), on: false }) }).then(function() { loadSpam(); load(); }).catch(function(err) { alert(err.message); });
+    return;
+  }
+  if (t.id === 'sv_save') {
+    var spam = {};
+    SPAM_FIELDS.forEach(function(f) { var el = document.getElementById('sv_' + f[0]); spam[f[0]] = el ? el.value.trim() : ''; });
+    spam.on = document.getElementById('sv_on').checked;
+    spam.groups = document.getElementById('sv_groups').checked;
+    svPost({ spam: spam }, '✓ บันทึกแล้ว ใช้ทันที');
+    return;
+  }
+  if (t.id === 'sv_reset') { if (confirm('คืนค่ากันสแปมทั้งหมดเป็นค่าเริ่มต้น?')) svPost({ spam: {} }, '✓ คืนค่าเริ่มต้นแล้ว'); return; }
+  if (t.id === 'sv_test') {
+    if (!(spamSet.alertTo || []).length && !(spamSet.envAlertTo || []).length) { svMsg('sv_testmsg', 'ยังไม่มีผู้รับแจ้งเตือน', true); return; }
+    svMsg('sv_testmsg', 'กำลังส่ง…');
+    api('/admin/api/settings/test-alert', { method: 'POST', body: '{}' }).then(function(d) {
+      svMsg('sv_testmsg', (d.results || []).map(function(x) { return (x.ok ? '✓ ' : '✗ ') + (x.name || x.id.slice(0, 8)); }).join(' · '), !d.ok);
+    }).catch(function(err) { svMsg('sv_testmsg', 'ส่งไม่ได้: ' + err.message, true); });
+    return;
+  }
+  var add = t.closest('[data-add]');
+  if (add) {
+    var kind = add.getAttribute('data-add');
+    var pick = document.getElementById('sv_' + kind + 'sel');
+    if (!pick || !pick.value) return;
+    var body = {};
+    body[kind === 'alert' ? 'alertTo' : 'allow'] = svIds(kind === 'alert' ? spamSet.alertTo : spamSet.allow).concat([pick.value]);
+    svPost(body, '✓ เพิ่มแล้ว');
+    return;
+  }
+  var rm = t.closest('[data-rm]');
+  if (rm) {
+    var k2 = rm.getAttribute('data-rm'), rid = rm.getAttribute('data-id');
+    var b2 = {};
+    b2[k2 === 'alert' ? 'alertTo' : 'allow'] = svIds(k2 === 'alert' ? spamSet.alertTo : spamSet.allow).filter(function(x) { return x !== rid; });
+    svPost(b2, '✓ เอาออกแล้ว');
+    return;
+  }
+  var tr = t.closest('tr.go');
+  if (tr) {
+    var sid = tr.getAttribute('data-sid');
+    var found = false;
+    for (var i = 0; i < cache.length; i++) if (cache[i].id === sid) found = true;
+    if (!found) { alert('แชทนี้ไม่อยู่ในรายการแชทที่แสดงอยู่ ลองค้นหาด้วยชื่อในช่องค้นหา'); return; }
+    closeSpam();
+    selectChat(sid);
+  }
+});
 document.getElementById('costclose').addEventListener('click', closeCost);
 document.getElementById('costrf').addEventListener('click', function() { loadCost(true); });
 document.getElementById('cvbody').addEventListener('click', function(e) {
   var t = e.target;
   if (!t.closest) return;
+  if (t.closest('[data-open-spam]')) { closeCost(); openSpam(); return; } // v3.73
   // v3.57: แถบเลือกช่วง
   var seg = t.closest('.cv-segbtn');
   if (seg) {
@@ -5109,6 +5447,39 @@ function handleAdmin(req, res, path, body) {
   // v3.72: ตัวเลขกันสแปมวันนี้ เพดาน และแชทที่ถามมากที่สุด
   if (path === '/admin/api/spam' && req.method === 'GET') return sendJson(res, 200, Object.assign({ ok: true }, spamReport()));
 
+  // v3.73: ตั้งค่ากันสแปม ผู้รับแจ้งเตือน และรายชื่อที่ไม่จำกัด (หน้า 🛡️ กันสแปม)
+  if (path === '/admin/api/settings' && req.method === 'GET') return sendJson(res, 200, settingsView());
+  if (path === '/admin/api/settings' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const err = saveSettings(data);
+    if (err) return sendJson(res, 400, { ok: false, error: err });
+    return sendJson(res, 200, settingsView());
+  }
+  // v3.73: ส่งข้อความทดสอบถึงผู้รับแจ้งเตือนงบ (Push 1 ข้อความต่อคน)
+  if (path === '/admin/api/settings/test-alert' && req.method === 'POST') {
+    const to = alertRecipients();
+    if (!to.length) return sendJson(res, 400, { ok: false, error: 'ยังไม่มีผู้รับแจ้งเตือน' });
+    const b = spamGuard.cfg.budgetThb;
+    const msg = '🔔 ทดสอบแจ้งเตือนจากน้องลัดดา\nเมื่อค่า AI ของวันถึง 80% และ 100% ของงบต่อวัน' + (b ? ' (' + b + ' บาท)' : ' (ยังไม่ได้ตั้งงบ)') + ' ระบบจะแจ้งเข้าไลน์นี้';
+    Promise.all(to.map((id) => linePush(id, msg).then((ok) => ({ id, name: costChatName(id) || '', ok }))))
+      .then((results) => { console.log('[settings] test alert -> ' + results.filter((x) => x.ok).length + '/' + results.length + ' LINE'); sendJson(res, 200, { ok: results.every((x) => x.ok), results }); });
+    return;
+  }
+  // v3.73: blacklist { id, on } บอทไม่ตอบ ไม่อ่านแชทนี้
+  if (path === '/admin/api/blacklist' && req.method === 'POST') {
+    let data = {};
+    try { data = JSON.parse(body.toString('utf8')); } catch (_) {}
+    const id = String(data.id || '');
+    if (!LINE_ID_RX.test(id)) return sendJson(res, 400, { ok: false, error: 'id ไม่ถูกต้อง' });
+    if (data.on) { if (!blacklist.has(id)) blacklist.set(id, { at: Date.now(), blocked: 0, lastAt: 0 }); }
+    else blacklist.delete(id);
+    markDirty();
+    broadcast();
+    console.log('[admin] ' + id.slice(0, 8) + ' blacklist=' + (blacklist.has(id) ? 'on' : 'off'));
+    return sendJson(res, 200, { ok: true, id, blacklisted: blacklist.has(id) });
+  }
+
   if (path === '/admin/api/list' && req.method === 'GET') {
     const now = Date.now();
     const rank = (x) => (x.cb ? 2 : 0) + ((x.handoff && x.mutedUntil > now) ? 1 : 0);
@@ -5126,7 +5497,13 @@ function handleAdmin(req, res, path, body) {
       if (Number.isFinite(fromMs) && Number.isFinite(toMs)) range = { from: a, to: b };
     }
     const inRange = (s) => !range || (s.lastAt >= fromMs && s.lastAt < toMs) || (s.history || []).some((m) => m.at >= fromMs && m.at < toMs);
-    const hits = [...sessions.entries()].filter(([, s]) => inRange(s));
+    // v3.73: ?tag=ชื่อแท็ก = เฉพาะแชทที่มีแท็กนั้น · tags = แท็กที่ใช้อยู่ทั้งหมดพร้อมจำนวนแชท (ตัวกรองในหน้าแอดมิน)
+    const tagQ = (lq.get('tag') || '').trim();
+    const tagsOf = (id) => { const c = crm.get(id); return c && Array.isArray(c.tags) ? c.tags : []; };
+    const hits = [...sessions.entries()].filter(([id, s]) => inRange(s) && (!tagQ || tagsOf(id).includes(tagQ)));
+    const tagCount = {};
+    for (const id of sessions.keys()) for (const t of tagsOf(id)) tagCount[t] = (tagCount[t] || 0) + 1;
+    const tags = Object.keys(tagCount).sort((a, b) => tagCount[b] - tagCount[a] || a.localeCompare(b, 'th')).map((t) => ({ t, n: tagCount[t] }));
     // v3.69: ?month=YYYY-MM = จำนวนแชทที่มีข้อความในแต่ละวันของเดือนนั้น (เวลาไทย) และเดือนที่มีแชท สำหรับปฏิทินรายเดือน
     let monthDays;
     let months;
@@ -5147,13 +5524,13 @@ function handleAdmin(req, res, path, body) {
       months = [...seenMonths].sort().reverse();
     }
     const list = hits
-      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none'), score: scoreFor(id, s), ref: s.ref ? { step: s.ref.step, dealerName: s.ref.dealerName || '' } : null }))
+      .map(([id, s]) => ({ id, name: s.name, pic: s.pic, type: s.type, lastText: s.lastText, lastAt: s.lastAt, mutedUntil: s.mutedUntil, handoff: !!s.handoff, cb: s.cb || null, cbDone: s.cbDone || null, crm: crmSummary(id), reg: s.reg ? 'asking:' + s.reg.step : (regDone(crm.get(id)) ? 'done' : 'none'), score: scoreFor(id, s), ref: s.ref ? { step: s.ref.step, dealerName: s.ref.dealerName || '' } : null, bl: blacklist.has(id) ? { at: blacklist.get(id).at || 0, blocked: blacklist.get(id).blocked || 0, lastAt: blacklist.get(id).lastAt || 0 } : null }))
       // ธงรอติดต่อกลับอยู่บนสุด (คนที่รอนานสุดขึ้นก่อน) -> ขอแอดมิน -> ล่าสุดก่อน
       .sort((a, b) => rank(b) - rank(a) || ((a.cb && b.cb) ? a.cb.at - b.cb.at : b.lastAt - a.lastAt))
       .slice(0, 100);
     const pending = [...sessions.values()].filter((s) => s.cb).length;
     const posSt = POS_ON ? { on: true, rows: pos.rows.length, loadedAt: pos.loadedAt, error: pos.error, writeback: !!(pos.cols && pos.cols.line) } : { on: false };
-    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, regUi: REG_UI, liffUrl: LIFF_URL, unregistered: regUnregisteredIds().length, pending, now, range, matched: hits.length, monthDays, months, sessions: list });
+    return sendJson(res, 200, { ok: true, muteMinutes: MUTE_MINUTES, persist: persistOK, notify: ADMIN_NOTIFY_IDS.length, sb: SB_ON, pos: posSt, reg: REG_MODE, regUi: REG_UI, liffUrl: LIFF_URL, unregistered: regUnregisteredIds().length, pending, now, range, matched: hits.length, monthDays, months, tags, tag: tagQ || null, blacklisted: blacklist.size, sessions: list });
   }
 
   // ---- CRM ----
@@ -5409,7 +5786,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.72', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), spamGuard: spamGuard.summary(), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.73', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), spamGuard: spamGuard.summary(), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

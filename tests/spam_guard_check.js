@@ -170,13 +170,43 @@ test('knownBefore: a real answer before today counts, today or a guard notice do
   assert.strictEqual(knownBefore(undefined, now), false);
 });
 
-test('SPAM_GUARD=off answers everything, groups included', () => {
+test('SPAM_GUARD=off answers every chat without limits; group chats still follow SPAM_GROUPS', () => {
   const g = createGuard({ env: { SPAM_GUARD: 'off', SPAM_BURST_MAX: '1', SPAM_HOUR_MAX: '1' }, now: clock().now });
   for (let i = 0; i < 5; i++) { assert.strictEqual(ask(g, A, 'x' + i).action, 'answer'); g.noteTurn(A); }
-  assert.strictEqual(g.check({ sid: G, stype: 'group', kind: 'text', text: 'x' }).action, 'answer');
+  assert.deepStrictEqual(g.check({ sid: G, stype: 'group', kind: 'text', text: 'x' }), { action: 'drop', reason: 'group' });
+  assert.strictEqual(g.groupAllowed(G), false);
+  assert.strictEqual(g.summary().on, false);
+  assert.deepStrictEqual(g.report({}).top, []);
+  const open = createGuard({ env: { SPAM_GUARD: 'off', SPAM_GROUPS: 'on' }, now: clock().now });
+  assert.strictEqual(open.check({ sid: G, stype: 'group', kind: 'text', text: 'x' }).action, 'answer');
+});
+
+test('v3.73 admin settings replace the env values while running; an empty value goes back to the env value', () => {
+  const c = clock();
+  const g = createGuard({ env: { SPAM_HOUR_MAX: '5' }, now: c.now });
+  const s0 = g.settings();
+  assert.deepStrictEqual([s0.defaults.hourMax, s0.defaults.budgetThb, s0.defaults.groups, s0.defaults.on], [5, 0, false, true]);
+  g.configure({ hourMax: 1, budgetThb: '500', groups: false, on: true, allow: [B] });
+  assert.deepStrictEqual([g.cfg.hourMax, g.cfg.budgetThb, g.limits().budgetThb], [1, 500, 500]);
+  assert.strictEqual(ask(g, A, 'คำถามแรกของวันนี้').action, 'answer');
+  g.noteTurn(A);
+  assert.strictEqual(ask(g, A, 'คำถามที่สองของวันนี้').action, 'notice', 'the hour limit from the admin page applies at once');
+  for (let i = 0; i < 3; i++) { assert.strictEqual(ask(g, B, 'allow ' + i).action, 'answer'); g.noteTurn(B); }
+  assert.strictEqual(g.budgetLevel(400), 'warn', '80% of the 500 THB budget');
+  assert.strictEqual(g.budgetLevel(500), 'stop');
+  assert.deepStrictEqual(g.settings().values.hourMax, 1);
+  g.configure({ hourMax: '' });
+  assert.deepStrictEqual([g.cfg.hourMax, g.cfg.budgetThb, g.cfg.allow.has(B)], [5, 0, false], 'cleared values go back to the env values');
+  g.configure({ hourMax: -3 });
+  assert.strictEqual(g.cfg.hourMax, 5, 'a negative number is ignored');
+  g.configure({ hourMax: 'abc' });
+  assert.strictEqual(g.cfg.hourMax, 5, 'a value that is not a number is ignored');
+  g.configure({ hourMax: 1, on: false });
+  assert.strictEqual(ask(g, A, 'ปิดตัวกันแล้วถามต่อ').action, 'answer', 'guard off: no limits');
+  g.configure({ groups: true });
   assert.strictEqual(g.groupAllowed(G), true);
-  assert.deepStrictEqual(g.summary(), { on: false });
-  assert.strictEqual(g.report({}).top, undefined);
+  g.configure({ groups: 'off' });
+  assert.strictEqual(g.groupAllowed(G), false);
 });
 
 test('/health summary has counts only; the admin report has limits, names and limited chats first', () => {
