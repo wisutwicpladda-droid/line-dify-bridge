@@ -41,4 +41,18 @@ assert.strictEqual(compactResponse(withRate, 'ใช้อะไรดี', ['�
 const perRai = long.replace('ควรสำรวจซ้ำหลายต้น', 'ใช้ 100 กรัม/ไร่ ควรสำรวจซ้ำหลายต้น');
 assert.strictEqual(compactResponse(perRai, 'ใช้อะไรดี', ['แกนเตอร์']), perRai, 'a per-rai rate must stay whole');
 
+// v3.71 (warm character tone, 4 Nov 2026): a short opening that acknowledges the customer's worry stays with the
+// answer and does not count against ORDINARY_MAX; a follow-up question ending in คะ is kept.
+const lime = 'ฝนตกหนักจนใบร่วงแบบนี้น่าเห็นใจและน่าห่วงจริง ๆ ค่ะ เบื้องต้นอาการใบร่วงหลังฝนชุกอาจเกิดจากดินแฉะน้ำขังจนรากขาดอากาศ หรือเกิดจากเชื้อรากลุ่มโรครากเน่าโคนเน่าเข้าทำลาย หากสงสัยปัญหาเชื้อรา ทางเรามี "วอร์แรนต์" (สารฟอสอีทิล อะลูมิเนียม) ซึ่งเป็นสารดูดซึมใช้ป้องกันกำจัดโรครากเน่าโคนเน่าได้ โดยอัตราการใช้สำหรับมะนาวแนะนำสอบถามพนักงานขายเพิ่มเติมนะคะ เพื่อช่วยดูให้ตรงจุด บริเวณโคนต้นหรือกิ่งมีรอยแผลน้ำเยิ้ม หรือดินระบายน้ำทันไหมคะ';
+assert(lime.length > ORDINARY_MAX, 'fixture is over the ordinary size');
+assert.strictEqual(compactResponse(lime, 'ฝนตกหนักทั้งอาทิตย์ มะนาวใบร่วงหมดเลย ท้อมาก', ['วอร์แรนต์']), lime,
+  'a warm opening must not push a reply under the ordinary size into compaction');
+const warmLong = 'ใบเหลืองร่วงเยอะแบบนี้น่าห่วงจริง ๆ ค่ะ\n' + long;
+const warmOut = compactResponse(warmLong, 'ใช้อะไรดี', ['แกนเตอร์']);
+assert(warmOut.startsWith('ใบเหลืองร่วงเยอะแบบนี้น่าห่วงจริง ๆ ค่ะ\nอาการนี้น่าจะเป็นเพลี้ยไฟค่ะ'), 'the opening and the answer after it are kept: ' + warmOut);
+assert(warmOut.includes('แกนเตอร์'), 'product line must survive compaction after a warm opening');
+const asked = long.replace('ตอนนี้พบมากที่ยอดหรือดอกคะ', 'ตอนนี้ดินในแปลงระบายน้ำทันไหมคะ');
+assert(compactResponse(asked, 'ใช้อะไรดี', ['แกนเตอร์']).includes('ตอนนี้ดินในแปลงระบายน้ำทันไหมคะ'), 'a follow-up question ending in คะ must be kept');
+assert(!compactResponse(long, 'ใช้อะไรดี', ['แกนเตอร์']).startsWith('ตอนนี้'), 'a reply without an opening still starts with its answer');
+
 console.log('PASS: ordinary replies compact while detail requests remain intact');
