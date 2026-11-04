@@ -4655,7 +4655,7 @@ function renderCost(d) {
   if (d.error) h += '<div class="cv-warn">⚠️ ' + esc(d.error) + '</div>';
   h += cvWebhook(d);
   if (!d.since) {
-    h += '<div class="cv-sec"><div class="cv-empty">ยังไม่มีค่าใช้จ่ายที่นับได้ ระบบเริ่มนับจากคำถามแรกที่เข้ามาหลังอัปเดต<br>' + cvLastLine(d) + '</div></div>' + cvBaselines(d.baselines) + cvNotes(d);
+    h += '<div class="cv-sec"><div class="cv-empty">ยังไม่มีค่าใช้จ่ายที่นับได้ ระบบเริ่มนับจากคำถามแรกที่เข้ามาหลังอัปเดต<br>' + cvLastLine(d) + '</div></div>' + cvSpam(d.spam) + cvBaselines(d.baselines) + cvNotes(d);
     document.getElementById('cvbody').innerHTML = h;
     return;
   }
