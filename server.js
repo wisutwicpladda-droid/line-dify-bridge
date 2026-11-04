@@ -146,6 +146,13 @@
 //       ข้อ 20: สินค้าที่คำตอบบอกว่าไม่แนะนำ/ยังไม่มีคำแนะนำ (ราเซอร์กับแตงโม) ไม่ส่งรูปและไม่มีปุ่มดูรูป (answer_products.js)
 //       ข้อ 18, 23: ป้ายปุ่มดูรูปย่อสูตรยา (ไดพิม 90 WG) แทนการตัดกลางคำที่ 20 ตัวอักษร
 //       ข้อ 15: เบอร์พนักงานขายในคำตอบของ Dify เป็นรูปแบบเดียวกับเมนูทีมขาย (063-205-9079)
+//     v3.71 (4 พ.ย. 2569 โทนพี่สาว ทดสอบบน V.2): response_compactor เก็บประโยครับรู้ความรู้สึกสั้น ๆ ที่ขึ้นต้นคำตอบ และคำถามต่อที่ลงท้ายคะ/ค่ะ
+//     v3.72 (4 พ.ย. 2569 เจ้าของสั่ง กันสแปมที่ทำให้เสียค่า AI ทดสอบบน V.2 ก่อน): spam_guard.js ตรวจก่อนทุกขั้นที่เสียเงิน (ถอดเสียงและ Dify)
+//       ต่อแชท: ส่งเกิน 8 ข้อความใน 1 นาทีไม่ตอบส่วนเกิน · คำตอบ AI ไม่เกิน 20 ครั้งต่อชั่วโมงและ 50 ครั้งต่อวัน · เสียง 10 และรูป 15 ต่อวัน
+//       ครบแล้วส่งข้อความแจ้งพร้อมปุ่มทีมขายครั้งเดียวด้วย reply (ไม่ใช้โควตา push) ข้อความถัดไปในช่วงนั้นไม่ตอบ
+//       ถามคำถามเดิมซ้ำใน 10 นาที = ส่งคำตอบเดิมโดยไม่เรียก AI · ข้อความยาวเกิน 1,000 ตัวอักษรตัดก่อนส่งให้ AI · ไม่ตอบในกลุ่ม (SPAM_GROUPS)
+//       งบต่อวัน (SPAM_DAILY_BUDGET_THB ค่าเริ่มปิด): ถึงงบแล้วแชทที่ไม่เคยได้คำตอบก่อนวันนี้ได้ข้อความให้ติดต่อพนักงานขาย แจ้ง LINE ที่ 80% และ 100%
+//       แอดมิน (ADMIN_NOTIFY_IDS) ร้านที่ผูกแล้ว และ SPAM_ALLOW ไม่ถูกจำกัด · ตัวเลขใน /health (spamGuard) หน้า 💰 และ /admin/api/spam
 //
 // ENV ที่ต้องตั้งใน Railway -> Variables:
 //  LINE_CHANNEL_SECRET        จาก LINE Developers -> Basic settings
@@ -208,6 +215,16 @@
 //  SHEET_PROXY_KEY            (v3.58, บอทจริง) รหัสยาว 24 ตัวขึ้นไป ให้ Dify และ V.2 อ่านชีทผ่าน /sheets/v4/... (header x-sheet-key)
 //  PRODUCT_SHEET_PROXY_URL / PRODUCT_SHEET_PROXY_KEY
 //                             (v3.58, V.2) อ่านชีทสินค้าผ่านบอทจริง URL = https://<บอทจริง>/sheets · KEY = SHEET_PROXY_KEY ของบอทจริง
+//  SPAM_GUARD                 (ไม่บังคับ, v3.72) off = ปิดตัวกันสแปมทั้งหมด
+//  SPAM_BURST_MAX / SPAM_HOUR_MAX / SPAM_DAY_MAX
+//                             (ไม่บังคับ) ต่อแชท: ข้อความต่อ 1 นาที / คำตอบ AI ต่อ 60 นาที / คำตอบ AI ต่อวัน ค่าเริ่ม 8 / 20 / 50 (0 = ไม่จำกัด)
+//  SPAM_VOICE_DAY_MAX / SPAM_IMAGE_DAY_MAX
+//                             (ไม่บังคับ) ข้อความเสียง / รูป ต่อแชทต่อวัน ค่าเริ่ม 10 / 15
+//  SPAM_TEXT_MAX              (ไม่บังคับ) ตัวอักษรต่อข้อความที่ส่งให้ AI ค่าเริ่ม 1000
+//  SPAM_REPEAT_MINUTES        (ไม่บังคับ) ถามคำถามเดิมซ้ำภายในกี่นาทีจึงส่งคำตอบเดิมโดยไม่เรียก AI ค่าเริ่ม 10 (0 = ปิด)
+//  SPAM_DAILY_BUDGET_THB      (ไม่บังคับ) งบค่า AI ต่อวันของบอทนี้ (บาท) ค่าเริ่ม 0 = ไม่ใช้ · แจ้งเตือนส่งถึง OPENAI_ALERT_TO หรือ ADMIN_NOTIFY_IDS
+//  SPAM_GROUPS                (ไม่บังคับ) on = ตอบในกลุ่มและห้องแชท ค่าเริ่มไม่ตอบ · SPAM_GROUP_ALLOW = groupId ที่ให้ตอบ คั่นด้วย ,
+//  SPAM_ALLOW                 (ไม่บังคับ) LINE userId ที่ไม่จำกัด (พนักงาน บัญชีทดสอบ) คั่นด้วย , แอดมินใน ADMIN_NOTIFY_IDS และร้านที่ผูกแล้วไม่จำกัดอยู่แล้ว
 //  PORT                       Railway ตั้งให้อัตโนมัติ
 // ============================================================
 
@@ -280,6 +297,9 @@ const LEAD_LINE_TOKEN = process.env.LEAD_LINE_TOKEN || '';
 const LEAD_TARGETS = (process.env.SALES_LEAD_TARGETS || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
 // v3.39: ผู้รับแจ้งเตือนเครดิต OpenAI หมด (kb_health.js) ไม่ตั้ง = ADMIN_NOTIFY_IDS
 const OPENAI_ALERT_TO = (process.env.OPENAI_ALERT_TO || '').split(/[\s,]+/).filter((x) => /^[UCR][0-9a-f]{32}$/.test(x));
+// v3.72: กันสแปมที่ทำให้เสียค่า AI (spam_guard.js) แอดมินและร้านที่ผูก LINE แล้วไม่ถูกจำกัด
+const spamGuardLib = require('./spam_guard');
+const spamGuard = spamGuardLib.createGuard({ env: process.env, allow: (id) => ADMIN_NOTIFY_IDS.includes(id) || DEALERS.some((d) => d.userId && d.userId === id) });
 const kbHealth = require('./kb_health').createKbHealth({
   api: kbSync.api, datasetId: kbSync.DATASET_ID, sheetDocName: kbSync.DOC_NAME,
   resync: () => kbSync.syncOnce(true),
@@ -839,6 +859,7 @@ async function recoverDifyAnswer(sessionId, conversationId, messageId) {
 // v3.50 (28 Oct 2026): opts.userText = คำที่ลูกค้าพิมพ์หรือพูดเอง (ไม่รวมคำสั่งอ่านรูปของ bridge) ใช้ตัดสินก้อนข้อมูลชีท
 // opts.info = ออบเจกต์ที่รับผลระหว่างทาง (โหนดใน Dify ที่พัง/ลองใหม่) สำหรับสถิติคุณภาพ
 async function askDify(sessionId, text, files, opts) {
+  spamGuard.noteTurn(sessionId); // v3.72: นับทุกครั้งที่เรียก Dify รวมรอบที่ถูกยกเลิก (เสียเงินแล้ว)
   if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
   const o = opts || {};
   const info = o.info || {};
@@ -2846,6 +2867,12 @@ async function handleEvent(ev) {
   // v3.31: OA ถูกเชิญเข้ากลุ่ม -> log id ไว้ตั้ง SALES_LEAD_TARGETS; กลุ่มรับเคสบอทไม่ตอบแชท
   if (ev.type === 'join') { console.log(`[group] OA joined ${stype} ${pushTarget} — ใส่ id นี้ใน SALES_LEAD_TARGETS เพื่อรับเคสลูกค้า`); return; }
   if (stype !== 'user' && LEAD_TARGETS.includes(pushTarget)) return;
+  // v3.72: ไม่ตอบในกลุ่มและห้องแชท (คนนอกเชิญ OA เข้ากลุ่มแล้วส่งข้อความรัว ๆ ได้) เปิดด้วย SPAM_GROUPS=on หรือ SPAM_GROUP_ALLOW
+  if (ev.type === 'message' && stype !== 'user' && !spamGuard.groupAllowed(pushTarget)) {
+    spamGuard.noteGroupDrop();
+    console.log('[spam] ' + stype + ' ' + pushTarget.slice(0, 8) + ' skip: no answers in group chats (SPAM_GROUPS)');
+    return;
+  }
 
   // ลูกค้าแอดเพื่อน (follow) -> ทักทาย + เริ่มลงทะเบียน (ถ้ายังไม่เคย)
   if (ev.type === 'follow') {
@@ -2885,6 +2912,15 @@ async function handleEvent(ev) {
       console.log(`[muted] ${sessionId.slice(0, 8)} skip voice message`);
       return;
     }
+    // v3.72: ถอดเสียงเสียเงินก่อนถึง Dify จึงตรวจกันสแปมก่อน (ข้อความที่ถอดได้ไม่ตรวจซ้ำ)
+    const vg = spamGuard.check({ sid: sessionId, stype, kind: 'voice', text: '', known: spamKnown(sessionId), spentToday: cost.spentToday() });
+    if (vg.action !== 'answer') {
+      const s0 = touchSession(sessionId, stype, '🎤 (ข้อความเสียง)');
+      pushHist(s0, 'u', '🎤 (ข้อความเสียง)');
+      console.log('[spam] ' + sessionId.slice(0, 8) + ' voice ' + vg.action + ' (' + vg.reason + ')');
+      if (vg.action === 'notice') await sendAnswer(s0, ev, '', vg.message, { system: true }); // reply เท่านั้น ไม่ใช้โควตา push
+      return;
+    }
     if (stype === 'user') lineLoading(userId);
     const hearP = hearLineAudio(ev.message, sessionId);
     hearing.set(sessionId, hearP);
@@ -2896,7 +2932,7 @@ async function handleEvent(ev) {
       await sendAnswer(s0, ev, pushTarget, heard.reply, { system: true });
       return;
     }
-    ev = Object.assign({}, ev, { voiceIn: true, message: Object.assign({}, ev.message, { type: 'text', text: heard.text }) });
+    ev = Object.assign({}, ev, { voiceIn: true, spamChecked: true, message: Object.assign({}, ev.message, { type: 'text', text: heard.text }) });
   }
 
   let text = null;
@@ -3104,6 +3140,20 @@ async function handleEvent(ev) {
     return;
   }
 
+  // v3.72: กันสแปมก่อนเข้าคิวรอบคำถาม (ขั้นที่เรียก Dify และเสียเงิน) คำสั่งที่ตอบเองโดยไม่ใช้ AI ด้านบนไม่ถูกจำกัด
+  // ข้อความแจ้งและคำตอบเดิมที่ส่งซ้ำใช้ reply เท่านั้น (fallbackTo ว่าง) จึงไม่ใช้โควตา push
+  if (!ev.spamChecked) {
+    const kind = ev.message.type === 'image' ? 'image' : (ev.message.type === 'sticker' ? 'sticker' : 'text');
+    const g = spamGuard.check({ sid: sessionId, stype, kind, text: kind === 'text' ? text : '', known: spamKnown(sessionId), spentToday: cost.spentToday() });
+    if (g.action !== 'answer') {
+      console.log('[spam] ' + sessionId.slice(0, 8) + ' ' + kind + ' ' + g.action + ' (' + g.reason + ')');
+      if (g.action === 'notice') await sendAnswer(s, ev, '', g.message, { system: true });
+      else if (g.action === 'repeat') await sendAnswer(s, ev, '', g.answer, { system: true });
+      return;
+    }
+    if (g.truncated) { console.log('[spam] ' + sessionId.slice(0, 8) + ' long message cut to ' + g.text.length + ' characters'); text = g.text; }
+  }
+
   // v3.38 (FB-02): ข้อความ/รูปที่ส่งติดกันรวมเป็นคำถามเดียว และแต่ละแชทตอบทีละคำถาม (กลุ่มตอบทันทีแบบเดิม)
   const item = ev.message.type === 'image' ? { kind: 'image', id: ev.message.id }
     : (ev.message.type === 'sticker' ? { kind: 'sticker' } : { kind: 'text', text });
@@ -3203,6 +3253,8 @@ async function answerTurn(ctx, items, stopLoading, turn) {
     return;
   }
   const delivery = await sendAnswer(s, ev, pushTarget, msgs);
+  // v3.72: เก็บคำตอบของคำถามที่พิมพ์ ถ้าถามซ้ำภายใน SPAM_REPEAT_MINUTES จะส่งคำตอบนี้อีกครั้งโดยไม่เรียก AI
+  if (fromDify && !images.length && !items.some((x) => x.voice) && userText) spamGuard.noteAnswer(sessionId, userText, answer.slice(0, 4900));
   // v3.50: สถิติคุณภาพ (ไม่เก็บข้อความหรือ userId) งานตรวจรายวันอ่านจาก /health · v3.52: เก็บผลการส่งด้วย
   const turnKind = images.length ? 'image' : (items.some((x) => x.voice) ? 'voice' : 'text');
   quality.record({ kind: turnKind, ms: Date.now() - turnStart, ok: fromDify, fallback: fallbackKind, issues: difyInfo.issues, retries: difyInfo.retries, delivery });
@@ -3219,7 +3271,33 @@ function recordCost(t) {
     costForward.send(rec);
     console.log('[cost] ' + String(t.sid || '').slice(0, 8) + (rec.n ? ' answer ' : ' voice-in ') + cost.thb(rec.u).toFixed(2) + ' THB (' + rec.t + ' tokens' + (rec.s ? ', web search' : '') + ')');
     markDirty();
+    spamBudgetCheck(); // v3.72
   } catch (e) { console.log('[cost] record error:', e.message); }
+}
+
+// v3.72: งบค่า AI ต่อวัน (SPAM_DAILY_BUDGET_THB) แจ้ง LINE แอดมินเมื่อถึง 80% และเมื่อถึงงบ อย่างละครั้งต่อวัน
+function spamBudgetCheck() {
+  const spent = cost.spentToday();
+  const level = spamGuard.budgetLevel(spent);
+  if (!level) return;
+  const budget = spamGuard.cfg.budgetThb;
+  const msg = level === 'stop'
+    ? '⛔ น้องลัดดา: ค่า AI วันนี้ ' + spent.toFixed(2) + ' บาท ถึงงบต่อวัน ' + budget + ' บาทแล้ว\nตั้งแต่นี้ถึงเที่ยงคืน แชทที่ไม่เคยได้คำตอบก่อนวันนี้จะได้ข้อความให้ติดต่อพนักงานขายแทนคำตอบ AI ลูกค้าที่เคยคุยก่อนวันนี้ยังได้คำตอบตามปกติ\nดูแชทที่ถามมากที่สุดได้ที่หน้า 💰 ในเว็บแอดมิน ถ้าต้องการเพิ่มงบ แก้ SPAM_DAILY_BUDGET_THB ใน Railway'
+    : '⚠️ น้องลัดดา: ค่า AI วันนี้ ' + spent.toFixed(2) + ' บาท ถึง 80% ของงบต่อวัน ' + budget + ' บาทแล้ว\nถ้าถึงงบ แชทที่ไม่เคยได้คำตอบก่อนวันนี้จะได้ข้อความให้ติดต่อพนักงานขายแทนคำตอบ AI\nดูแชทที่ถามมากที่สุดได้ที่หน้า 💰 ในเว็บแอดมิน';
+  const to = OPENAI_ALERT_TO.length ? OPENAI_ALERT_TO : ADMIN_NOTIFY_IDS;
+  console.log('[spam] budget ' + level + ': ' + spent.toFixed(2) + ' of ' + budget + ' THB today -> ' + to.length + ' LINE');
+  for (const id of to) linePush(id, msg).catch(() => {});
+}
+
+// v3.72: แชทที่เคยได้คำตอบจริงก่อนวันนี้ ไม่ถูกงบต่อวันของตัวกันสแปมหยุด
+function spamKnown(sessionId) {
+  const s = sessions.get(sessionId);
+  return !!s && spamGuardLib.knownBefore(s.history, Date.now());
+}
+
+// v3.72: ตัวเลขกันสแปมสำหรับหน้า 💰 และ /admin/api/spam (มี id แชท ต้องใส่รหัสแอดมิน)
+function spamReport() {
+  return spamGuard.report({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid), spentToday: cost.spentToday() });
 }
 
 // v3.55: ชื่อแชทในหน้าค่าใช้จ่าย (ชื่อจริงใน CRM ก่อน แล้วจึงชื่อ LINE)
@@ -4543,6 +4621,34 @@ function cvNotes(d) {
     + '</div>';
 }
 
+// v3.72: กันสแปมวันนี้ (spam_guard.js) ตัวเลขนับใหม่ทุกวันและเมื่อระบบรีสตาร์ต
+var SPAM_WHY = { burst: 'ส่งถี่เกิน', hour: 'ครบต่อชั่วโมง', day: 'ครบต่อวัน', voice: 'เสียงครบต่อวัน', image: 'รูปครบต่อวัน', budget: 'เกินงบต่อวัน' };
+function cvSpamWarn(sp) {
+  var t = sp && sp.on && sp.today;
+  if (!t || (!t.limitedChats && !t.budgetLevel)) return '';
+  var b = t.budgetLevel === 'stop' ? ' · ค่า AI วันนี้ถึงงบต่อวันแล้ว แชทใหม่ได้ข้อความให้ติดต่อพนักงานขายแทนคำตอบ AI' : (t.budgetLevel === 'warn' ? ' · ค่า AI วันนี้เกิน 80% ของงบต่อวันแล้ว' : '');
+  return '<div class="cv-warn">🛡️ วันนี้ตัวกันสแปมจำกัด ' + nfmt(t.limitedChats) + ' แชท' + b + ' ดูรายละเอียดที่ "กันสแปมวันนี้" ด้านล่าง</div>';
+}
+function cvSpam(sp) {
+  if (!sp) return '';
+  if (!sp.on) return '<div class="cv-sec"><h3>🛡️ กันสแปม</h3><div class="cv-empty">ปิดอยู่ (SPAM_GUARD=off)</div></div>';
+  var t = sp.today || {}, l = sp.limits || {};
+  var lim = 'เพดานต่อแชท: ข้อความ ' + nfmt(l.burstPerMinute) + ' ต่อนาที · คำตอบ AI ' + nfmt(l.hour) + ' ต่อชั่วโมง และ ' + nfmt(l.day) + ' ต่อวัน · เสียง ' + nfmt(l.voiceDay) + ' และรูป ' + nfmt(l.imageDay) + ' ต่อวัน · ถามซ้ำใน ' + nfmt(l.repeatMinutes) + ' นาทีส่งคำตอบเดิม · ' + (l.groups === 'on' ? 'ตอบในกลุ่ม' : (l.groups === 'allowlist' ? 'ตอบเฉพาะกลุ่มที่อนุญาต' : 'ไม่ตอบในกลุ่ม'));
+  var bud = sp.budget ? 'งบค่า AI ต่อวัน ' + baht(sp.budget.thb) + ' วันนี้ใช้ไป ' + baht(sp.budget.spentToday) : 'ยังไม่ได้ตั้งงบค่า AI ต่อวัน (SPAM_DAILY_BUDGET_THB)';
+  var h = '<div class="cv-sec"><h3>🛡️ กันสแปมวันนี้</h3><div class="d">' + esc(lim) + '<br>' + esc(bud) + '</div>'
+    + '<div class="cv-sub">ส่งข้อความแจ้ง ' + nfmt(t.notices) + ' ครั้ง · ไม่ตอบ ' + nfmt(t.dropped) + ' ข้อความ · ส่งคำตอบเดิมโดยไม่เรียก AI ' + nfmt(t.repeats) + ' ครั้ง · ตัดข้อความยาว ' + nfmt(t.truncated) + ' ครั้ง · ข้อความในกลุ่มที่ไม่ตอบ ' + nfmt(t.groupDropped) + '</div>';
+  var top = (sp.top || []).filter(function(x) { return x.answersToday > 0 || x.limited; });
+  if (top.length) {
+    h += '<div class="cv-scroll" style="margin-top:8px"><table class="cv-t"><tr><th>แชท</th><th class="n">คำตอบ AI วันนี้</th><th class="n">ชั่วโมงล่าสุด</th><th class="n mh">เสียง / รูป</th><th>สถานะ</th></tr>';
+    top.forEach(function(x) {
+      var st = x.allowed ? 'ไม่จำกัด' : (x.limited ? '⛔ ' + esc(SPAM_WHY[x.limited] || x.limited) : 'ปกติ');
+      h += '<tr' + cvRow(x) + '><td><b>' + esc(x.name || (String(x.sid).slice(0, 10) + '…')) + '</b></td><td class="n">' + nfmt(x.answersToday) + '</td><td class="n">' + nfmt(x.answersLastHour) + '</td><td class="n mh">' + nfmt(x.voice) + ' / ' + nfmt(x.image) + '</td><td>' + st + '</td></tr>';
+    });
+    h += '</table></div>';
+  }
+  return h + '<div class="cv-sub" style="margin-top:8px">นับใหม่ทุกวันและเมื่อระบบรีสตาร์ต · กดที่แถวเพื่อเปิดแชท ถ้าเป็นสแปม กด "⏸ หยุดบอท ตอบเอง" เพื่อหยุดตอบแชทนั้นจนกว่าจะเปิดเอง</div></div>';
+}
+
 function renderCost(d) {
   costData = d;
   var h = '';
@@ -4570,6 +4676,7 @@ function renderCost(d) {
     + '</div>';
   if (pj && pj.next) h += '<div class="cv-warn">📈 ราคา Gemini ปรับขึ้นตั้งแต่ ' + cvDate(pj.next.from, true) + ' ถ้าลูกค้าถามเท่าเดิม ค่าใช้จ่ายจะประมาณ <b>' + baht(pj.next.month) + ' ต่อเดือน</b></div>';
   if (d.search && d.search.overThb > 0) h += '<div class="cv-warn">🔎 เดือนนี้ค้นเว็บ ' + nfmt(d.search.month) + ' ครั้ง เกินโควตาฟรี ' + nfmt(d.search.free) + ' ครั้งแล้ว ส่วนเกินประมาณ ' + baht(d.search.overThb) + ' รวมอยู่ในยอดเดือนนี้</div>';
+  h += cvSpamWarn(d.spam);
   h += cvFilter(d, per);
   h += '<div class="cv-sec"><h3>' + (chart.unit === 'hour' ? 'ค่าใช้จ่ายรายชั่วโมง ' : 'ค่าใช้จ่ายรายวัน ') + esc(label) + '</h3>'
     + '<div class="cv-ptot">' + baht(tot.thb) + '<small>' + nfmt(tot.turns) + ' ข้อความ · เฉลี่ย ' + (tot.turns ? baht(tot.perMsg) : '–') + ' ต่อข้อความ' + (d.search ? ' · ค้นเว็บ ' + nfmt(d.search.period || 0) + ' ครั้ง' : '') + '</small></div>'
@@ -4580,6 +4687,7 @@ function renderCost(d) {
   h += '<div class="cv-grid2"><div class="cv-sec"><h3>แยกตามชนิดคำถาม (' + esc(label) + ')</h3>' + cvKinds(d.byKind) + '</div><div class="cv-sec"><h3>' + (per.type === 'month' ? 'ค้นเว็บ ' + cvMonth(per.key) : 'ค้นเว็บเดือนนี้') + '</h3>' + cvSearch(d.search, d.prices || {}, per, d.month.key) + '</div></div>';
   h += '<div class="cv-sec"><h3>คำตอบที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น</div>' + cvTurns(d.topTurns) + '</div>';
   h += '<div class="cv-sec"><h3>แชทที่ใช้เงินมากที่สุด (' + esc(label) + ')</h3><div class="d">กดที่แถวเพื่อเปิดแชทนั้น' + (per.chatsFrom ? ' · ยอดรายแชทเก็บย้อนหลัง 62 วัน ตารางนี้นับตั้งแต่ ' + cvDate(per.chatsFrom, true) : '') + '</div>' + cvChats(d.topChats) + '</div>';
+  h += cvSpam(d.spam);
   h += cvBaselines(d.baselines);
   h += cvNotes(d);
   document.getElementById('cvbody').innerHTML = h;
@@ -4995,8 +5103,11 @@ function handleAdmin(req, res, path, body) {
     // v3.57: ?day=YYYY-MM-DD หรือ ?month=YYYY-MM · v3.67: ?from=YYYY-MM-DD&to=YYYY-MM-DD (ค่าที่ผิดหรืออยู่ในอนาคต = 30 วันล่าสุด)
     const qp = new URL(req.url, 'http://x').searchParams;
     const period = qp.get('day') ? { type: 'day', key: qp.get('day') } : (qp.get('month') ? { type: 'month', key: qp.get('month') } : (qp.get('from') && qp.get('to') ? { type: 'range', from: qp.get('from'), to: qp.get('to') } : null));
-    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid), period }), { line: { lastCustomerAt: lastCustomerAt || null, webhook: lw }, forward: fw, ingest: !!COST_INGEST_KEY }));
+    return sendJson(res, 200, Object.assign({ ok: true }, cost.summary({ nameOf: costChatName, hasChat: (sid) => sessions.has(sid), period }), { line: { lastCustomerAt: lastCustomerAt || null, webhook: lw }, forward: fw, ingest: !!COST_INGEST_KEY, spam: spamReport() }));
   }
+
+  // v3.72: ตัวเลขกันสแปมวันนี้ เพดาน และแชทที่ถามมากที่สุด
+  if (path === '/admin/api/spam' && req.method === 'GET') return sendJson(res, 200, Object.assign({ ok: true }, spamReport()));
 
   if (path === '/admin/api/list' && req.method === 'GET') {
     const now = Date.now();
@@ -5298,7 +5409,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.71', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.72', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), spamGuard: spamGuard.summary(), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

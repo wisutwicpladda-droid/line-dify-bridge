@@ -739,7 +739,15 @@ function createCost(opts) {
     }
   }
 
-  return { record, ingest, setBaseline, summary, dump, load, thb, prices, error: cfg.error, app: cfg.app, src: cfg.src };
+  // v3.72: ค่า AI วันนี้ (บาท เวลาไทย) ของบอทนี้เองจากข้อความ LINE สำหรับงบต่อวันของตัวกันสแปม (spam_guard.js)
+  // ไม่นับบันทึกที่ bridge อื่นส่งเข้ามา (V.2 และชุดทดสอบ) งบของบอทจริงจึงไม่ถูกการทดสอบใช้ไป
+  function spentToday() {
+    const d = days[dayKey(now())];
+    const v = d && d.s && d.s[srcKey(cfg.app, cfg.src)];
+    return thb(v ? v.u : 0);
+  }
+
+  return { record, ingest, setBaseline, summary, dump, load, thb, spentToday, prices, error: cfg.error, app: cfg.app, src: cfg.src };
 }
 
 module.exports = { createCost, config, dayKey, monthDays, DEFAULT_PRICES };
