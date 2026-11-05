@@ -309,6 +309,7 @@ const OPENAI_ALERT_TO = (process.env.OPENAI_ALERT_TO || '').split(/[\s,]+/).filt
 // v3.72: กันสแปมที่ทำให้เสียค่า AI (spam_guard.js) แอดมินและร้านที่ผูก LINE แล้วไม่ถูกจำกัด
 const spamGuardLib = require('./spam_guard');
 // v3.75: ตามลิงก์หลักฐานของขั้นค้นเว็บใน Dify ว่าเป็นเว็บกรมวิชาการเกษตรไหม (ดู link_check.js)
+// v3.76: Dify ต่อท้ายคำตอบด้วย [[no_img:...]] = สินค้าที่ลูกค้าบอกว่าใช้แล้วไม่ได้ผล bridge ตัดออกและไม่ส่งรูป/ปุ่มของสินค้านั้น (answer_products.splitNoImageTag)
 const linkCheck = require('./link_check').create({ keys: [process.env.SHEET_PROXY_KEY, process.env.PRODUCT_SHEET_PROXY_KEY] });
 const spamGuard = spamGuardLib.createGuard({ env: process.env, allow: (id) => ADMIN_NOTIFY_IDS.includes(id) || DEALERS.some((d) => d.userId && d.userId === id) });
 // v3.73 (เจ้าของสั่ง 4 พ.ย. 2569): ค่ากันสแปม ผู้รับแจ้งเตือนงบ รายชื่อที่ไม่จำกัด และ blacklist แก้ได้ในหน้าแอดมิน (🛡️ กันสแปม)
@@ -892,7 +893,7 @@ async function recoverDifyAnswer(sessionId, conversationId, messageId) {
 // opts.info = ออบเจกต์ที่รับผลระหว่างทาง (โหนดใน Dify ที่พัง/ลองใหม่) สำหรับสถิติคุณภาพ
 async function askDify(sessionId, text, files, opts) {
   spamGuard.noteTurn(sessionId); // v3.72: นับทุกครั้งที่เรียก Dify รวมรอบที่ถูกยกเลิก (เสียเงินแล้ว)
-  if (process.env.FAKE_DIFY_ANSWER) return process.env.FAKE_DIFY_ANSWER; // สำหรับเทสอัตโนมัติเท่านั้น
+  if (process.env.FAKE_DIFY_ANSWER) { const fk = answerProducts.splitNoImageTag(process.env.FAKE_DIFY_ANSWER); if (opts && opts.info) opts.info.noImages = fk.names; return fk.text; } // สำหรับเทสอัตโนมัติเท่านั้น
   const o = opts || {};
   const info = o.info || {};
   info.issues = info.issues || [];
@@ -955,6 +956,11 @@ async function askDify(sessionId, text, files, opts) {
     if (!answer && attempt === 1) console.log(`[dify] ${sid} retry once`);
   }
   if (own) recordCost({ sid: sessionId, kind: hasImage ? 'image' : 'text', q: o.userText != null ? o.userText : text, nodes: info.nodes, message: info.message });
+  if (!answer) return '';
+  // v3.76: สินค้าที่ลูกค้าบอกว่าใช้ไม่ได้ผล (Dify ต่อท้าย [[no_img:...]]) ไม่ส่งรูปและไม่มีปุ่ม ตัดเครื่องหมายก่อนตัวกรองอื่น
+  const tagged = answerProducts.splitNoImageTag(answer);
+  if (tagged.names.length) { info.noImages = tagged.names; console.log('[pimg] ' + sid + ' no image (customer says it did not work): ' + tagged.names.join(', ')); }
+  answer = tagged.text;
   if (!answer) return '';
   const guarded = guardSystemWords(guardOrder(guardInternal(guardPhones(guardRate(guardCalc(answer.trim(), sessionId), text, sessionId), sessionId), sessionId), sessionId), sessionId);
   const visible = stripVisibleCitations(guarded);
@@ -1257,8 +1263,9 @@ function pimgBuild(names) {
   const m = productImageMsg(names.join('\n'));
   return m ? [].concat(m) : [];
 }
-function pimgPlan(s, userText, answer) {
+function pimgPlan(s, userText, answer, skip) {
   const none = { images: [], buttons: [] };
+  const skipSet = new Set((skip || []).map((x) => String(x).trim())); // v3.76: สินค้าที่ลูกค้าบอกว่าใช้ไม่ได้ผล
   if (!PIMG_ON || !PUBLIC_URL || !PIMG_NAMES.length) return none;
   if (/1669|โรงพยาบาล/.test(answer)) return none; // เคสฉุกเฉิน ไม่ส่งรูปสินค้า
   const seenFile = new Set();
@@ -1266,7 +1273,7 @@ function pimgPlan(s, userText, answer) {
   // v3.70 (Feedback ข้อ 20): สินค้าที่คำตอบบอกว่าไม่แนะนำ/ยังไม่มีคำแนะนำ ไม่ส่งรูปและไม่มีปุ่ม
   const negated = answerProducts.negatedProducts(answer, found);
   if (negated.size) console.log('[pimg] skip not recommended: ' + [...negated].join(', '));
-  const names = found.filter((n) => !negated.has(n) && !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
+  const names = found.filter((n) => !negated.has(n) && !skipSet.has(n) && !seenFile.has(PIMG[n]) && seenFile.add(PIMG[n]));
   if (!names.length) return none;
   const now = Date.now();
   s.pimgSent = s.pimgSent || {};
@@ -3248,7 +3255,7 @@ async function answerTurn(ctx, items, stopLoading, turn) {
   }
   if (!answer) { answer = 'ขออภัยค่ะ ระบบขัดข้องชั่วคราว รบกวนลองใหม่อีกครั้งนะคะ 🙏'; fallbackKind = fallbackKind || 'no-answer'; }
   const msgs = [answer.slice(0, 4900)];
-  const pplan = pimgPlan(s, userText, answer); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ
+  const pplan = pimgPlan(s, userText, answer, difyInfo.noImages); // v3.14: รูปสินค้า 1 รูป + ปุ่มดูรูป ไม่ส่งซ้ำ (v3.76: ไม่รวมสินค้าที่ลูกค้าบอกว่าไม่ได้ผล)
   if (pplan.images.length) msgs.push(...pplan.images);
   // REGISTER=soft: ทักครั้งแรก -> ตอบคำถามก่อน แล้วขอข้อมูลต่อท้าย 1 ครั้ง (ไม่บังคับ; ถ้าลูกค้าตอบชื่อมา wizard จะเดินต่อ)
   if (stype === 'user' && REG_MODE === 'soft') {
@@ -5800,7 +5807,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.75', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), linkCheck: linkCheck.summary(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), spamGuard: spamGuard.summary(), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
+    return res.end(JSON.stringify({ ok: true, service: 'line-dify-bridge', version: '3.76', voice: VOICE.sttOn ? { stt: VOICE.sttModel, tts: VOICE.ttsOn ? VOICE.ttsModel : false, reply: VOICE.mode, files: !!VOICE_DIR } : false, leadScore: LEAD_SCORE_ON, referral: REFERRAL_ON ? { dealers: DEALERS.length, bound: DEALERS.filter((d) => d.userId).length, error: DEALER_CFG.error || undefined } : false, conciseReplies: true, citations: false, visibleCitations: false, sheetContext: true, rateGuard: RATE_GUARD_ON, productImages: PIMG_NAMES.length, persist: persistOK, chats: sessions.size, callbacks: [...sessions.values()].filter((s) => s.cb).length, crm: crm.size, supabase: SB_ON, pos: POS_ON, posRows: pos.rows.length, posLinked: [...crm.values()].filter((c) => c.pos_id).length, posError: pos.error ? true : false, posExtras: !!(pos.cols && (pos.cols.crops || pos.cols.rai || pos.cols.areas)), productMaster: productMaster.ok ? { ok: true, products: productMaster.products, at: productMaster.at } : { ok: false, error: productMaster.error || 'loading', cachedAt: productMaster.cachedAt || undefined, products: productMaster.cachedAt ? productMaster.products : undefined }, sheetAuth: kbSync.sheets.status(), sheetProxy: sheetProxyView(), linkCheck: linkCheck.summary(), productValidation: { ok: productValidation.ok, at: productValidation.at, errors: productValidation.errors.length, warnings: productValidation.warnings.length, notices: (productValidation.notices || []).length, problems: sheetProblems(productValidation).map((p) => p.line).slice(0, 20), summary: productValidation.summary, error: productValidation.error || undefined }, sheetAlert: SHEET_ALERT_ON, quality: quality.summary(24), spamGuard: spamGuard.summary(), kbSync: kbSync.state.enabled ? { ok: kbSync.state.ok, at: kbSync.state.at, products: kbSync.state.products, action: kbSync.state.action, failStreak: kbSync.state.failStreak || undefined, error: kbSync.state.error || undefined, orderLevels: kbSync.levels.names.length } : 'off', kbHealth: kbSync.hasKey() ? kbHealth.status() : 'off', kbIndex: kbSync.hasKey() ? kbIndex.status() : 'off', lineWebhook: lineWebhookView(), costForward: costForward.state.on ? { sent: costForward.state.sent, pending: costForward.pending(), error: costForward.state.error || undefined } : false, costIngest: !!COST_INGEST_KEY, salesLeads: LEAD_TARGETS.length, salesLeadBot: !!LEAD_LINE_TOKEN, loadingSeconds: LOADING_SEC, loadingRefreshSeconds: LOADING_REFRESH_MS / 1000, imageWaitSeconds: IMG_WAIT_MS / 1000, textWaitSeconds: TURN_JOIN_ON ? TEXT_WAIT_MS / 1000 : 0, fragmentWaitSeconds: TURN_JOIN_ON ? FRAGMENT_WAIT_MS / 1000 : 0, mergeWindowSeconds: TURN_JOIN_ON ? MERGE_WINDOW_MS / 1000 : 0, imageResize: imageShrink.available ? imageShrink.maxSide : false, difyRetryWithinSeconds: DIFY_RETRY_WITHIN_MS / 1000, node: process.version, difyMode: DIFY_MODE, teamSheet: teamSheet.ok ? { zones: teamSheet.zones, people: teamSheet.people, at: teamSheet.at } : { error: teamSheet.error || 'loading' }, register: REG_MODE, regUi: REG_UI, liff: !!LIFF_ID, registered: [...crm.values()].filter((c) => regDone(c)).length, registering: [...sessions.values()].filter((s) => s.reg).length, ts: Date.now() }));
   }
   if (req.method !== 'POST') { res.writeHead(404); return res.end('Not found'); }
 

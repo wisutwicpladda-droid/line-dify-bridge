@@ -4,7 +4,20 @@
 // ข้อความคำตอบในเทสนี้ลอกมาจาก log ของ Dify V.2 วันที่ 3 พ.ย. 2569 (ผู้ใช้ทดสอบ)
 const assert = require('assert');
 const path = require('path');
-const { negatedProducts, buttonLabel, shortName, LABEL_MAX } = require('../answer_products');
+const { negatedProducts, buttonLabel, shortName, LABEL_MAX, splitNoImageTag } = require('../answer_products');
+
+// v3.76: เครื่องหมาย [[no_img:...]] จาก Dify ถูกตัดออกและคืนรายชื่อ
+{
+  const r = splitNoImageTag('แนะนำ "ซิมเมอร์" อัตรา 330 ซีซี ต่อ 1 ไร่ค่ะ\n[[no_img:อัพดาว|ไฮซีส]]');
+  assert.strictEqual(r.text, 'แนะนำ "ซิมเมอร์" อัตรา 330 ซีซี ต่อ 1 ไร่ค่ะ');
+  assert.deepStrictEqual(r.names, ['อัพดาว', 'ไฮซีส']);
+  const none = splitNoImageTag('ไม่มีเครื่องหมาย');
+  assert.strictEqual(none.text, 'ไม่มีเครื่องหมาย');
+  assert.deepStrictEqual(none.names, []);
+  const empty = splitNoImageTag('ก\n[[no_img:]]');
+  assert.strictEqual(empty.text, 'ก');
+  assert.deepStrictEqual(empty.names, []);
+}
 
 // ข้อ 20: "ราเซอร์ใช้กับแตงโมได้ไหม" (V.2 19:55)
 const fb20 = 'ไม่แนะนำให้ใช้ "ราเซอร์" กับแตงโมค่ะ เนื่องจากเป็นยาคุมกำจัดวัชพืชที่เหมาะกับพืชไร่ เช่น ข้าวโพด อ้อย และมันสำปะหลัง แตงโมเป็นพืชตระกูลแตงที่ไวต่อสารกำจัดวัชพืชมาก อาจทำให้ต้นชะงัก ชะงักการเจริญเติบโต หรือเกิดความเป็นพิษต่อพืชได้ค่ะ';

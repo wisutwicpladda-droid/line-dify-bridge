@@ -54,5 +54,18 @@ function buttonLabel(name) {
   return (sp >= 6 ? cut.slice(0, sp) : cut).trim() + '…';
 }
 
-module.exports = { negatedProducts, isNegative, sentences, buttonLabel, shortName, LABEL_MAX };
+// v3.76 (5 พ.ย. 2569): Dify (โหนดตรวจหลักฐานและรูปแบบ LINE v11) ต่อท้ายคำตอบด้วย [[no_img:ชื่อ|ชื่อ]]
+// = สินค้าที่ลูกค้าบอกว่าใช้แล้วไม่ได้ผลหรืออยากเปลี่ยน (บทบาทสินค้าที่ AI ขั้นวิเคราะห์อ่าน) ห้ามส่งรูปหรือปุ่มดูรูป
+// ตัดเครื่องหมายออกทุกจุดก่อนข้อความถึงลูกค้า
+const NO_IMG_RX = /\[\[no_img:([^\]\n]*)\]\]/g;
+function splitNoImageTag(answer) {
+  const names = [];
+  const text = String(answer == null ? '' : answer).replace(NO_IMG_RX, (_, list) => {
+    for (const n of String(list).split('|')) if (n.trim() && !names.includes(n.trim())) names.push(n.trim());
+    return '';
+  }).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, names };
+}
+
+module.exports = { negatedProducts, isNegative, sentences, buttonLabel, shortName, LABEL_MAX, splitNoImageTag };
 

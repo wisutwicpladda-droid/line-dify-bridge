@@ -31,6 +31,7 @@ const ANSWERS = [
   [/แตงโม/, 'ไม่แนะนำให้ใช้ "ราเซอร์" กับแตงโมค่ะ เนื่องจากเป็นยาคุมกำจัดวัชพืชที่เหมาะกับพืชไร่ เช่น ข้าวโพด อ้อย และมันสำปะหลัง แตงโมเป็นพืชตระกูลแตงที่ไวต่อสารกำจัดวัชพืชมาก อาจเกิดความเป็นพิษต่อพืชได้ค่ะ'],
   [/ข้าวโพด/, '"ราเซอร์" ใช้กับข้าวโพดได้ค่ะ ฉีดพ่นหลังปลูก 0-3 วัน อัตรา 800 ซีซี ต่อน้ำ 100 ลิตร ต่อไร่'],
   [/มันสำปะหลัง/, 'สำหรับคุมฆ่าหญ้าในไร่มันสำปะหลังระยะแรก น้องลัดดาแนะนำดังนี้ค่ะ\n\n"ไดยูแมกซ์ 80 ดับเบิ้ลยู.พี." คุมฆ่าหญ้าใบแคบและใบกว้าง อัตรา 500 กรัม ต่อน้ำ 100 ลิตร ต่อไร่\n"ไดพิม 90 ดับเบิลยูจี" อัตรา 450 กรัม ต่อน้ำ 100 ลิตร ต่อไร่\n"บอมส์ ไรซ์ บูสเตอร์" ใช้บำรุงหลังพ่นยา อัตรา 50 ซีซี ต่อน้ำ 20 ลิตร\n\nไม่ทราบว่าแปลงปลูกได้กี่วันแล้วคะ'],
+  [/^FAILED/, '"อัพดาว" เป็นสารไม่เลือกทำลายที่ใช้ล้างแปลงก่อนทำนาหรือหัวคันนาเท่านั้นค่ะ สำหรับแห้วหมูในนาข้าว แนะนำเปลี่ยนมาใช้ "ซิมเมอร์" อัตรา 330 ซีซี ต่อ 1 ไร่ พ่นหลังหว่านหรือปักดำ 15 วันค่ะ\n[[no_img:อัพดาว]]'],
   [/^PHONE/, 'สามารถหาซื้อได้ผ่านร้านค้าตัวแทนจำหน่ายในพื้นที่ค่ะ ติดต่อพนักงานขายที่ดูแล จ.สุราษฎร์ธานี ได้แก่ คุณวิลาสินี ขวัญเมือง (เมย์) โทร 063-2059079 ได้เลยค่ะ']
 ];
 const sseLine = (o) => 'data: ' + JSON.stringify(o) + '\n\n';
@@ -105,13 +106,14 @@ mock.listen(0, '127.0.0.1', async () => {
     let h = null;
     for (let i = 0; i < 50 && !h; i++) { await sleep(200); h = await getJson(port, '/'); }
     assert(h, 'server did not start');
-    const U = { long: uid('long'), neg: uid('neg'), pos: uid('pos'), btn: uid('btn'), phone: uid('phone') };
+    const U = { long: uid('long'), neg: uid('neg'), pos: uid('pos'), btn: uid('btn'), phone: uid('phone'), failed: uid('failed') };
     const t = {
       long: await post(port, U.long, 'LONG ทุเรียนโดนน้ำท่วม 1 อาทิตย์ ใช้ยาตัวไหนช่วยได้'),
       neg: await post(port, U.neg, 'ราเซอร์ใช้กับแตงโมได้ไหม'),
       pos: await post(port, U.pos, 'ราเซอร์ใช้กับข้าวโพดได้ไหม'),
       btn: await post(port, U.btn, 'ยาคุมฆ่าหญ้าในไร่มันสำปะหลัง ระยะแรก'),
-      phone: await post(port, U.phone, 'PHONE ซื้อได้ที่ไหน')
+      phone: await post(port, U.phone, 'PHONE ซื้อได้ที่ไหน'),
+      failed: await post(port, U.failed, 'FAILED แห้วหมูในนาข้าว ใช้อัพดาวแล้วไม่ตาย ใช้อะไรดี')
     };
     for (let i = 0; i < 80 && Object.values(t).some((x) => !msgsOf(x).length); i++) await sleep(200);
 
@@ -138,6 +140,15 @@ mock.listen(0, '127.0.0.1', async () => {
     assert.strictEqual(byText['ขอรูป ไดยูแมกซ์ 80 ดับเบิ้ลยู.พี.'], '📷 ไดยูแมกซ์ 80 WP');
     assert.strictEqual(byText['ขอรูป ไดพิม 90 ดับเบิลยูจี'], '📷 ไดพิม 90 WG');
     assert.strictEqual(byText['ขอรูป บอมส์ ไรซ์ บูสเตอร์'], 'บอมส์ ไรซ์ บูสเตอร์');
+
+    // v3.76: ลูกค้าบอกว่าอัพดาวไม่ได้ผล (Dify ส่ง [[no_img:อัพดาว]]) -> ไม่มีรูปหรือปุ่มอัพดาว แม้ลูกค้าพิมพ์ชื่อมาเอง และเครื่องหมายไม่ถึงลูกค้า
+    const fMsgs = msgsOf(t.failed);
+    assert(!/no_img|\[\[/.test(textOf(t.failed)), 'the tag must not reach the customer: ' + textOf(t.failed));
+    assert(textOf(t.failed).includes('15 วันค่ะ'), 'answer text intact: ' + textOf(t.failed));
+    const upFile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'product_images', 'index.json'), 'utf8'))['อัพดาว'];
+    assert(upFile && !fMsgs.some((m) => m.type === 'image' && m.originalContentUrl.endsWith('/' + upFile)), 'no image of the failed product: ' + JSON.stringify(fMsgs));
+    assert(!labelsOf(t.failed).some((a) => /อัพดาว/.test(a.label + a.text)), 'no button for it: ' + JSON.stringify(labelsOf(t.failed)));
+    assert(/no image \(customer says it did not work\): อัพดาว/.test(log), 'log should name the skipped product');
 
     // ข้อ 15
     assert(textOf(t.phone).includes('โทร 063-205-9079') && !textOf(t.phone).includes('063-2059079'), 'phone format: ' + textOf(t.phone));
